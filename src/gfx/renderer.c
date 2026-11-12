@@ -1464,6 +1464,30 @@ static void choose_quality(void)
     sample_count = counts[want];
 }
 
+/* VSync (Options > Display): the swapchain's present mode, whenever the
+ * setting changes. Off falls back to Fast, Fast to On, if the display
+ * cannot; benchmarks and Lossless Scaling keep their own. */
+static void apply_vsync(void)
+{
+    static int applied = -1;
+    int want = pdo_settings_get()->vsync;
+    static const SDL_GPUPresentMode modes[] = { SDL_GPU_PRESENTMODE_VSYNC, SDL_GPU_PRESENTMODE_MAILBOX,
+                                                SDL_GPU_PRESENTMODE_IMMEDIATE };
+    static const char *names[] = { "on", "fast (mailbox)", "off (immediate)" };
+
+    if (want == applied || !have_swapchain || lsfg_on || getenv("PDO_BENCHMARK"))
+        return;
+    applied = want;
+    for (int m = SDL_clamp(want, 0, 2); m >= 0; m--)
+        if (m == 0 || SDL_WindowSupportsGPUPresentMode(dev, window, modes[m])) {
+            if (SDL_SetGPUSwapchainParameters(dev, window, SDL_GPU_SWAPCHAINCOMPOSITION_SDR, modes[m])) {
+                SDL_Log("gfx: vsync %s", names[m]);
+                return;
+            }
+        }
+    SDL_Log("gfx: vsync stays as it was (%s)", SDL_GetError());
+}
+
 /* The frame after the gamma ramp, at our size. */
 static SDL_GPUTexture *make_output(void)
 {
@@ -4903,6 +4927,7 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
         capture_vsh();
     }
     apply_quality();
+    apply_vsync();
     cmd = SDL_AcquireGPUCommandBuffer(dev);
     if (!cmd)
         return;

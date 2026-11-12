@@ -6,6 +6,11 @@
 
 #define PDO_PATH_MAX 1024
 
+/* VSync: On waits for the display (FIFO); Fast shows the newest frame at
+ * each refresh without tearing (mailbox); Off shows frames at once (may
+ * tear). */
+enum { PDO_VSYNC_ON, PDO_VSYNC_FAST, PDO_VSYNC_OFF };
+
 typedef struct pdo_config {
     char game_dir[PDO_PATH_MAX];    /* folder holding default.xbe and media/ */
 } pdo_config;
@@ -28,6 +33,7 @@ typedef struct pdo_settings {
     char lsfg_dll[PDO_PATH_MAX];    /* the player's Lossless.dll; "" looks in the usual places */
     bool fullscreen;        /* borderless, the whole monitor (Alt+Enter) */
     bool fxaa;              /* edge smoothing on the finished frame (shaders/screen.frag) */
+    int  vsync;             /* PDO_VSYNC_*: how frames reach the screen (renderer.c) */
     int  anisotropy;        /* 1 off, 2, 4, 8, 16: anisotropic filtering of smooth-filtered textures */
     int  bloom;             /* 0 off, 1 low, 2 high: on the scene, before the HUD (renderer.c) */
     int  win_x, win_y, win_w, win_h;    /* the window when not fullscreen (w 0: not set yet) */

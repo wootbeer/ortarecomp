@@ -8,6 +8,9 @@
   75 % or 100 % (the default).
 - Resolution scale 1.5x (Options > Display), between 1x and 2x: about
   half of 2x's work, for laptops and integrated graphics.
+- VSync: Options > Display, On (the default), Fast or Off. Fast and Off
+  show more frames when the PC cannot keep up with the display instead of
+  dropping to half; Off may tear.
 
 ## v0.1.4 (beta)
 
