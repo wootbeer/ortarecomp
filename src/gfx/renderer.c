@@ -1800,7 +1800,15 @@ static bool init_here(int width, int height)
         SDL_Log("gfx: no GPU device (%s)", SDL_GetError());
         return false;
     }
-    SDL_Log("gfx: GPU driver %s", SDL_GetGPUDeviceDriver(dev));
+    {
+        /* Which GPU and driver: performance reports name a laptop, not its
+         * graphics. */
+        SDL_PropertiesID pr = SDL_GetGPUDeviceProperties(dev);
+        SDL_Log("gfx: GPU driver %s: %s (%s %s)", SDL_GetGPUDeviceDriver(dev),
+                SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_NAME_STRING, "unknown GPU"),
+                SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "driver"),
+                SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "?"));
+    }
 
     window_thread = SDL_GetCurrentThreadID();
     {   /* Where the window was last time (pdo_gfx_pump_events), if it fits
