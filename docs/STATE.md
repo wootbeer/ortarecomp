@@ -61,6 +61,12 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
+6. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
+   letterboxed by the game. Movies: find the bars in the picture and zoom
+   on wide windows without cutting subtitles. Cutscenes: the game draws the
+   bars itself, so its cutscene state has to be found first. Gameplay
+   ultrawide is not planned. Rumble is passed through (XInputSetState); the
+   log says when the game first sends it.
 
 ## Testing
 
