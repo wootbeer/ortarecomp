@@ -13,7 +13,7 @@
 static char data_dir[PDO_PATH_MAX];
 char pdo_log_file[PDO_PATH_MAX];
 
-static pdo_settings settings = { .render_scale = 1, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
+static pdo_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
                                   .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
                                   .skip_logos = true, .rumble = 100, .depth_reversed = true, .pic_contrast = 100,
@@ -119,7 +119,7 @@ bool pdo_config_load(pdo_config *cfg)
         if (strcmp(line, "game_dir") == 0)
             SDL_strlcpy(cfg->game_dir, eq + 1, sizeof cfg->game_dir);
         else if (strcmp(line, "render_scale") == 0)
-            settings.render_scale = clamp_int(SDL_atoi(eq + 1), 1, 8);
+            settings.render_scale2 = clamp_int((int)SDL_lround(SDL_atof(eq + 1) * 2.0), 2, 16);
         else if (strcmp(line, "msaa") == 0) {
             int m = SDL_atoi(eq + 1);
             settings.msaa = m >= 8 ? 8 : m >= 4 ? 4 : m >= 2 ? 2 : 1;
@@ -207,7 +207,7 @@ bool pdo_config_save(const pdo_config *cfg)
     n = snprintf(text, sizeof text,
                  "# Orta Recomp settings\n"
                  "game_dir=%s\n"
-                 "render_scale=%d\n"
+                 "render_scale=%g\n"
                  "msaa=%d\n"
                  "aspect=%s\n"
                  "fit=%s\n"
@@ -240,7 +240,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "picture_saturation=%d\n"
                  "audio_3d=%s\n"
                  "save_slot=%d\n",
-                 cfg->game_dir, settings.render_scale, settings.msaa,
+                 cfg->game_dir, settings.render_scale2 / 2.0, settings.msaa,
                  settings.aspect == PDO_ASPECT_16_9 ? "16:9" : "4:3",
                  settings.fit == PDO_FIT_STRETCH ? "stretch" : settings.fit == PDO_FIT_ZOOM ? "zoom" : "bars",
                  settings.soft_filter,

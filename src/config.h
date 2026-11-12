@@ -12,7 +12,7 @@ typedef struct pdo_config {
 
 /* Options the overlay menu (F1) changes; saved with the rest. */
 typedef struct pdo_settings {
-    int  render_scale;      /* 1-8: render targets at this multiple of the game's size */
+    int  render_scale2;     /* 2-16: render targets at half this multiple of the game's size (3: 1.5x) */
     int  msaa;              /* 1, 2, 4 or 8 samples */
     int  aspect;            /* PDO_ASPECT_*; 16:9 is the game's own widescreen mode */
     int  fit;               /* PDO_FIT_*: how the picture fills the window */

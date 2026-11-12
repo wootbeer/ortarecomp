@@ -61,7 +61,14 @@ static SDL_GPUShader *vs, *fs, *fs_ps, *vsh_vs, *fvf_vs;
  * samples. A target whose resolved texture was written directly (a copy, a
  * new target) is stale: its multisampled buffer is seeded from it before the
  * next draw. */
-static int rscale = 1, nsamples = 1;
+static float rscale = 1.0f;         /* 1, 1.5, 2 .. 8 */
+static int nsamples = 1;
+
+/* A length in the game's pixels, in ours. */
+static int sc(int v)
+{
+    return (int)lroundf((float)v * rscale);
+}
 static SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1;
 static SDL_GPUTexture *frame_ms;
 static bool frame_stale;
@@ -1113,8 +1120,8 @@ static rtarget *target_for_surface_as(const pdo_surface *s, bool depth_only)
     r->data = phys(s->data);
     r->w = (uint32_t)w;
     r->h = (uint32_t)h;
-    r->pw = r->w * (uint32_t)rscale;
-    r->ph = r->h * (uint32_t)rscale;
+    r->pw = (uint32_t)sc((int)r->w);
+    r->ph = (uint32_t)sc((int)r->h);
     r->depth_only = depth_only;
     if (!make_target_as(r->pw, r->ph, &r->color, &r->depth, &r->ms, depth_only)) {
         SDL_Log("gfx: cannot create a %ux%u render target (%s)", r->pw, r->ph, SDL_GetError());
@@ -1452,7 +1459,7 @@ static void choose_quality(void)
     while (want > 0 && !(SDL_GPUTextureSupportsSampleCount(dev, SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, counts[want])
                          && SDL_GPUTextureSupportsSampleCount(dev, depth_format, counts[want])))
         want--;
-    rscale = SDL_clamp(st->render_scale, 1, 8);
+    rscale = (float)SDL_clamp(st->render_scale2, 2, 16) / 2.0f;
     nsamples = 1 << want;
     sample_count = counts[want];
 }
@@ -1466,8 +1473,8 @@ static SDL_GPUTexture *make_output(void)
     ti.type = SDL_GPU_TEXTURETYPE_2D;
     ti.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
     ti.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPU_TEXTUREUSAGE_SAMPLER;
-    ti.width = (Uint32)(frame_w * rscale);
-    ti.height = (Uint32)(frame_h * rscale);
+    ti.width = (Uint32)sc(frame_w);
+    ti.height = (Uint32)sc(frame_h);
     ti.layer_count_or_depth = 1;
     ti.num_levels = 1;
     return SDL_CreateGPUTexture(dev, &ti);
@@ -1506,7 +1513,8 @@ static void make_seed_pipeline(void)
  * and the pipelines for the new sample count. */
 static void apply_quality(void)
 {
-    int old_scale = rscale, old_samples = nsamples;
+    float old_scale = rscale;
+    int old_samples = nsamples;
 
     choose_quality();
     if (rscale == old_scale && nsamples == old_samples)
@@ -1519,11 +1527,12 @@ static void apply_quality(void)
     SDL_ReleaseGPUTexture(dev, frame_depth);
     SDL_ReleaseGPUTexture(dev, frame_ms);
     SDL_ReleaseGPUTexture(dev, output);
-    if (!make_target((Uint32)(frame_w * rscale), (Uint32)(frame_h * rscale), &frame_color, &frame_depth,
+    if (!make_target((Uint32)sc(frame_w), (Uint32)sc(frame_h), &frame_color, &frame_depth,
                      &frame_ms)) {
-        SDL_Log("gfx: cannot render at %dx with %d samples (%s); back to 1x, no anti-aliasing",
-                rscale, nsamples, SDL_GetError());
-        rscale = nsamples = 1;
+        SDL_Log("gfx: cannot render at %gx with %d samples (%s); back to 1x, no anti-aliasing",
+                (double)rscale, nsamples, SDL_GetError());
+        rscale = 1.0f;
+        nsamples = 1;
         sample_count = SDL_GPU_SAMPLECOUNT_1;
         make_target((Uint32)frame_w, (Uint32)frame_h, &frame_color, &frame_depth, &frame_ms);
     }
@@ -1536,8 +1545,8 @@ static void apply_quality(void)
         SDL_ReleaseGPUTexture(dev, r->color);
         SDL_ReleaseGPUTexture(dev, r->depth);
         SDL_ReleaseGPUTexture(dev, r->ms);
-        r->pw = r->w * (uint32_t)rscale;
-        r->ph = r->h * (uint32_t)rscale;
+        r->pw = (uint32_t)sc((int)r->w);
+        r->ph = (uint32_t)sc((int)r->h);
         r->stale = false;
         if (!make_target_as(r->pw, r->ph, &r->color, &r->depth, &r->ms, r->depth_only)) {
             targets[i--] = targets[--ntargets];
@@ -1548,7 +1557,7 @@ static void apply_quality(void)
     output = make_output();
     make_seed_pipeline();
     warm_pipelines();
-    SDL_Log("gfx: rendering at %dx (%dx%d), %d sample%s", rscale, frame_w * rscale, frame_h * rscale,
+    SDL_Log("gfx: rendering at %gx (%dx%d), %d sample%s", (double)rscale, sc(frame_w), sc(frame_h),
             nsamples, nsamples > 1 ? "s" : "");
 }
 
@@ -1860,7 +1869,7 @@ static bool init_here(int width, int height)
                 depth_rev ? "reversed" : "as the game writes it");
     }
     choose_quality();
-    if (!make_target((Uint32)(width * rscale), (Uint32)(height * rscale), &frame_color, &frame_depth, &frame_ms))
+    if (!make_target((Uint32)sc(width), (Uint32)sc(height), &frame_color, &frame_depth, &frame_ms))
         frame_color = NULL;
 
     SDL_zero(ti);
@@ -1907,7 +1916,7 @@ static bool init_here(int width, int height)
 
     if (!init_present())
         return false;
-    SDL_Log("gfx: rendering at %dx (%dx%d), %d sample%s", rscale, frame_w * rscale, frame_h * rscale,
+    SDL_Log("gfx: rendering at %gx (%dx%d), %d sample%s", (double)rscale, sc(frame_w), sc(frame_h),
             nsamples, nsamples == 1 ? "" : "s");
     warm_pipelines();
 
@@ -1990,8 +1999,8 @@ static SDL_GPUTexture *cur_color(void)
 
 static void cur_size(Uint32 *w, Uint32 *h)
 {
-    *w = cur_target ? cur_target->pw : (Uint32)(frame_w * rscale);
-    *h = cur_target ? cur_target->ph : (Uint32)(frame_h * rscale);
+    *w = cur_target ? cur_target->pw : (Uint32)sc(frame_w);
+    *h = cur_target ? cur_target->ph : (Uint32)sc(frame_h);
 }
 
 static SDL_GPUTexture *snapshot(SDL_GPUCommandBuffer *cmd);
@@ -2392,10 +2401,13 @@ static void copy_rect(SDL_GPUCommandBuffer *cmd, const command *c)
     rtarget *rs = c->surf.data ? target_for_surface(&c->surf) : NULL;
     rtarget *rd = c->surf2.data ? target_for_surface(&c->surf2) : NULL;
     SDL_GPUTexture *ts = rs ? rs->color : frame_color, *td = rd ? rd->color : frame_color;
-    int sw = rs ? (int)rs->pw : frame_w * rscale, sh = rs ? (int)rs->ph : frame_h * rscale;
-    int dw = rd ? (int)rd->pw : frame_w * rscale, dh = rd ? (int)rd->ph : frame_h * rscale;
-    int x = c->rect[0] * rscale, y = c->rect[1] * rscale, w = c->rect[2] * rscale, h = c->rect[3] * rscale;
-    int dx = c->rect[4] * rscale, dy = c->rect[5] * rscale;
+    int sw = rs ? (int)rs->pw : sc(frame_w), sh = rs ? (int)rs->ph : sc(frame_h);
+    int dw = rd ? (int)rd->pw : sc(frame_w), dh = rd ? (int)rd->ph : sc(frame_h);
+    /* Both edges scaled and rounded, so neighbouring copies still meet at
+     * a fractional scale. */
+    int x = sc(c->rect[0]), y = sc(c->rect[1]);
+    int w = sc(c->rect[0] + c->rect[2]) - x, h = sc(c->rect[1] + c->rect[3]) - y;
+    int dx = sc(c->rect[4]), dy = sc(c->rect[5]);
     SDL_GPUTextureLocation src, dst;
     SDL_GPUCopyPass *copy;
 
@@ -2710,7 +2722,7 @@ static void save_screenshot(SDL_GPUCommandBuffer **cmdp, const char *dir, const 
     char path[1024];
 
     snprintf(path, sizeof path, "%s/%s_%05llu.bmp", dir, name, (unsigned long long)F->frame);
-    save_texture(cmdp, output, frame_w * rscale, frame_h * rscale, path);
+    save_texture(cmdp, output, sc(frame_w), sc(frame_h), path);
 }
 
 /* PDO_CAPTURE_NOSHADOW=1: at the capture frame, save the frame's last

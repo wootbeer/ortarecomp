@@ -241,7 +241,16 @@ static void change(int dir)
     case ITEM_SLOT:   s->save_slot = (s->save_slot - 1 + 3 + dir) % 3 + 1; break;
     case ITEM_FULLSCREEN: s->fullscreen = !s->fullscreen; break;
     case ITEM_GPU:    break;      /* Vulkan only, for now: the shaders are SPIR-V */
-    case ITEM_SCALE:  s->render_scale = SDL_clamp(s->render_scale + dir, 1, 8); break;
+    case ITEM_SCALE: {
+        /* 1x, 1.5x (for integrated graphics, between 1x and 2x's four
+         * times the pixels), then whole steps to 8x; in halves. */
+        static const int steps[] = { 2, 3, 4, 6, 8, 10, 12, 14, 16 };
+        int i = 0, n = (int)SDL_arraysize(steps);
+        while (i < n - 1 && steps[i] < s->render_scale2)
+            i++;
+        s->render_scale2 = steps[SDL_clamp(i + dir, 0, n - 1)];
+        break;
+    }
     case ITEM_MSAA:   next_aa(s, dir); break;
     case ITEM_ANISO: {      /* off, 2x, 4x, 8x, 16x */
         int i = s->anisotropy >= 16 ? 4 : s->anisotropy >= 8 ? 3 : s->anisotropy >= 4 ? 2 : s->anisotropy >= 2 ? 1 : 0;
@@ -617,7 +626,7 @@ static float value_of(int item, char *v, size_t n)
 
     v[0] = 0;
     switch (item) {
-    case ITEM_SCALE:  snprintf(v, n, "%dx", s->render_scale); break;
+    case ITEM_SCALE:  snprintf(v, n, "%gx", s->render_scale2 / 2.0); break;
     case ITEM_MSAA:
         if (s->msaa > 1) snprintf(v, n, "%dx MSAA", s->msaa);
         else snprintf(v, n, "%s", s->fxaa ? "FXAA" : "Off");
