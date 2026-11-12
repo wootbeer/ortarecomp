@@ -156,6 +156,7 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         src/guest/intro_skip.c
         src/guest/launch_guard.c
         src/audio/mixer.c
+        src/audio/aix.c
         src/audio/reverb.c
         src/gfx/renderer.c
         src/gfx/overlay.c

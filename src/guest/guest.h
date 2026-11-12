@@ -9,6 +9,8 @@
  * function dispatch table. Does not run any game code. */
 bool pdo_guest_init(const void *xbe_data, size_t xbe_size,
                     const char *game_dir, const char *save_dir);
+/* The game files' folder given to pdo_guest_init. */
+const char *pdo_guest_game_dir(void);
 
 /* Run the title from its entry point. Returns when the title exits. */
 void pdo_guest_run(uint32_t entry);

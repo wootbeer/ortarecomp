@@ -26,8 +26,10 @@
 
 #include "recomp_types.h"
 
+#include "audio/aix.h"
 #include "audio/mixer.h"
 #include "config.h"
+#include "guest/guest.h"
 #include "xbox_memory_layout.h"
 
 #include <SDL3/SDL.h>
@@ -506,6 +508,114 @@ void sub_002C12AE(void)
     RETURN(4, voice_of(b) ? (MEM32(b + OBJ_REFS) += 1) : 0);
 }
 
+/* ── 5.1 movie soundtracks (PDO_TEST_AC3) ────────────────────────────────
+ * With a surround console reported, a movie that has an .aix (opening_bs,
+ * ins1_bs, ins2_bs) plays its 5.1 soundtrack: CRI makes a stereo buffer per
+ * speaker pair at 48 kHz and routes them front (mixbins 0/1), back (4/5) and
+ * centre/LFE (2/3), the .aix's streams 0, 1 and 2 in that order. CRI's own
+ * decoding under us fills only some of the six channels, so we decode the
+ * .aix (src/audio/aix.c) and overwrite each chunk CRI unlocks with the same
+ * stretch of the soundtrack: CRI still paces the writes to the picture. A
+ * chunk at the offset CRI wrote last is a rewrite of it (CRI locks each
+ * chunk twice); any other is the next stretch. */
+static pdo_aix movie_aix;
+static struct { uint32_t buf; int stream; uint32_t last_off, last_pos, last_frames; bool any; } movie_out[4];
+
+static bool test_ac3(void)
+{
+    const char *t = getenv("PDO_TEST_AC3");
+    return t && *t == '1' && pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND;
+}
+
+static void movie51_start(uint32_t name_va)
+{
+    char name[128], path[PDO_PATH_MAX];
+    const char *base;
+    size_t n = 0;
+
+    pdo_aix_free(&movie_aix);
+    memset(movie_out, 0, sizeof movie_out);
+    if (!name_va)
+        return;
+    while (n + 1 < sizeof name && MEM8(name_va + n))
+        name[n] = (char)MEM8(name_va + n), n++;
+    name[n] = 0;
+    base = name;
+    for (const char *c = name; *c; c++)
+        if (*c == '\\' || *c == '/' || *c == ':')
+            base = c + 1;
+    static const char *dirs[] = { "Movie", "movie", "MOVIE" };
+    for (size_t i = 0; i < SDL_arraysize(dirs); i++) {
+        snprintf(path, sizeof path, "%s/%s/%s", pdo_guest_game_dir(), dirs[i], base);
+        if (pdo_aix_load(path, &movie_aix)) {
+            SDL_Log("dsound: 5.1 movie soundtrack %s, %d streams, %.1f s", base, movie_aix.streams,
+                    movie_aix.rate[0] ? movie_aix.frames[0] / (double)movie_aix.rate[0] : 0.0);
+            return;
+        }
+    }
+    SDL_Log("dsound: 5.1 movie soundtrack %s (%s) not found or not decodable", base, name);
+}
+
+/* SetMixBins on a movie buffer: which .aix stream it plays. */
+static void movie51_route(uint32_t buf, uint32_t first_bin)
+{
+    int stream = first_bin == 0 ? 0 : first_bin == 4 ? 1 : first_bin == 2 ? 2 : -1;
+    int slot = -1;
+
+    if (!movie_aix.streams || stream < 0 || stream >= movie_aix.streams || movie_aix.channels[stream] != 2)
+        return;
+    for (int i = 0; i < 4 && slot < 0; i++)
+        if (movie_out[i].buf == buf)
+            slot = i;
+    for (int i = 0; i < 4 && slot < 0; i++)
+        if (!movie_out[i].buf)
+            slot = i;
+    if (slot < 0)
+        return;
+    memset(&movie_out[slot], 0, sizeof movie_out[slot]);
+    movie_out[slot].buf = buf;
+    movie_out[slot].stream = stream;
+}
+
+static void movie51_forget(uint32_t buf)
+{
+    for (int i = 0; i < 4; i++)
+        if (movie_out[i].buf == buf)
+            memset(&movie_out[i], 0, sizeof movie_out[i]);
+}
+
+/* Unlock of a chunk CRI wrote: the soundtrack over it. */
+static void movie51_fill(uint32_t buf, uint32_t p1, uint32_t n1, uint32_t p2, uint32_t n2)
+{
+    for (int i = 0; i < 4; i++) {
+        if (!buf || movie_out[i].buf != buf)
+            continue;
+        uint32_t data = MEM32(buf + OBJ_DATA), off = p1 - data, frames = (n1 + n2) / 4;
+        const int16_t *pcm = movie_aix.pcm[movie_out[i].stream];
+        uint32_t total = movie_aix.frames[movie_out[i].stream], pos;
+
+        if (!data || !p1)
+            return;
+        pos = movie_out[i].any && off != movie_out[i].last_off ? movie_out[i].last_pos + movie_out[i].last_frames
+                                                               : movie_out[i].last_pos;
+        movie_out[i].any = true;
+        movie_out[i].last_off = off;
+        movie_out[i].last_pos = pos;
+        movie_out[i].last_frames = frames;
+        for (uint32_t f = 0; f < frames; f++) {
+            uint32_t at = f < n1 / 4 ? p1 + f * 4 : p2 + (f - n1 / 4) * 4;
+            int16_t l = 0, r = 0;
+            if (pos + f < total) {
+                l = pcm[(size_t)(pos + f) * 2];
+                r = pcm[(size_t)(pos + f) * 2 + 1];
+            }
+            MEM16(at) = (uint16_t)l;
+            MEM16(at + 2) = (uint16_t)r;
+        }
+        return;
+    }
+}
+
 /* IDirectSoundBuffer_Release(pBuf) */
 void sub_002C12C4(void)
 {
@@ -515,6 +625,7 @@ void sub_002C12C4(void)
     if (id && MEM32(b + OBJ_REFS)) {
         refs = (MEM32(b + OBJ_REFS) -= 1);
         if (!refs) {
+            movie51_forget(b);
             if (id < MAX_3D)
                 src3d[id].used = false;
             pdo_voice_destroy(id);
@@ -567,8 +678,14 @@ void sub_002C2652(void)
     RETURN(32, DS_OK);
 }
 
-/* IDirectSoundBuffer_Unlock: nothing to do, the voice reads the memory. */
-void sub_002C12A9(void) { RETURN(20, DS_OK); }
+/* IDirectSoundBuffer_Unlock(pBuf, pv1, dw1, pv2, dw2): the voice reads the
+ * memory; a 5.1 movie buffer gets its soundtrack written over (above). */
+void sub_002C12A9(void)
+{
+    if (movie_aix.streams)
+        movie51_fill(ARG(0), ARG(1), ARG(2), ARG(3), ARG(4));
+    RETURN(20, DS_OK);
+}
 
 /* IDirectSoundBuffer_Play(pBuf, reserved1, reserved2, flags) */
 void sub_002C2582(void)
@@ -679,6 +796,8 @@ void sub_002C254A(void)
             bins[n].volume = (int32_t)MEM32(pairs + i * 8 + 4);
         }
         pdo_voice_set_bins(id, bins, n);
+        if (n && test_ac3())
+            movie51_route(ARG(0), bins[0].bin);
     }
     for (int i = 0; i < n; i++)
         TRACE("  0x%08x bin %u volume %d", ARG(0), bins[i].bin, bins[i].volume);
@@ -798,6 +917,10 @@ void sub_002C242A(void)
 
     if (t && *t == '1' && pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND)
         cfg = 0x00010004u;
+    /* From the movie setup (0x000687B0, call at 0x000687E4): ebx holds the
+     * .aix name, or 0 for a movie with only the .sfd's stereo. */
+    if (test_ac3() && MEM32(g_esp) == 0x000687E9u)
+        movie51_start(g_ebx);
     TRACE("GetSpeakerConfig -> 0x%08x", cfg);
     if (ARG(1))
         MEM32(ARG(1)) = cfg;

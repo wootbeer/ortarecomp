@@ -71,6 +71,13 @@ const char *pdo_guest_built_from(void)
     return PDO_BUILD_IMAGE_SHA256;
 }
 
+static char s_game_dir[PDO_PATH_MAX];
+
+const char *pdo_guest_game_dir(void)
+{
+    return s_game_dir;
+}
+
 bool pdo_guest_init(const void *xbe_data, size_t xbe_size,
                     const char *game_dir, const char *save_dir)
 {
@@ -125,6 +132,7 @@ bool pdo_guest_init(const void *xbe_data, size_t xbe_size,
         xbox_path_set_hdd_dir(hdd);
     }
     xbox_path_init(game_dir, save_dir);
+    SDL_strlcpy(s_game_dir, game_dir, sizeof s_game_dir);
     xbox_kernel_bridge_init();
 
     if (!recomp_dispatch_init())
