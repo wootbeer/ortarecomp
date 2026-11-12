@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_VOLUME,
+enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D,
        ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
@@ -44,10 +44,10 @@ static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT };
 static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
-static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_FPS,
-                                    ITEM_BACK };
+static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS,
+                                    ITEM_FPS, ITEM_BACK };
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_FULLSCREEN, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_FPS, ITEM_BACK };
+                                        ITEM_VSYNC, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_BACK };
@@ -267,6 +267,7 @@ static void change(int dir)
     case ITEM_LOGOS:  s->skip_logos = !s->skip_logos; break;
     case ITEM_LAUNCHER: s->skip_launcher = !s->skip_launcher; break;
     case ITEM_VSYNC:  s->vsync = (s->vsync + (dir < 0 ? 2 : 1)) % 3; break;
+    case ITEM_SHADOWS: s->shadow_original = !s->shadow_original; break;
     case ITEM_RUMBLE: s->rumble = SDL_clamp(s->rumble + 25 * dir, 0, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
@@ -658,6 +659,7 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_LOGOS:  snprintf(v, n, "%s", s->skip_logos ? "On" : "Off"); break;
     case ITEM_LAUNCHER: snprintf(v, n, "%s", s->skip_launcher ? "On" : "Off"); break;
     case ITEM_VSYNC:  snprintf(v, n, "%s", s->vsync == PDO_VSYNC_OFF ? "Off" : s->vsync == PDO_VSYNC_FAST ? "Fast" : "On"); break;
+    case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Original" : "Sharp"); break;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);
@@ -731,6 +733,7 @@ static const char *label_of(int item)
     case ITEM_LOGOS:  return "Skip logos";
     case ITEM_LAUNCHER: return "Skip launcher";
     case ITEM_VSYNC:  return "VSync";
+    case ITEM_SHADOWS: return "Shadows";
     case ITEM_RUMBLE: return "Vibration";
     case ITEM_3D:     return "Output";
     case ITEM_VSH:    return "Vertex programs";
@@ -781,6 +784,7 @@ static const char *help_of(int item)
     case ITEM_LOGOS:  return "A press skips the boot logos.";
     case ITEM_LAUNCHER: return "Start at once. Shift: launcher.";
     case ITEM_VSYNC:  return "Fast/Off: more fps. Off tears.";
+    case ITEM_SHADOWS: return "Original: lighter on the GPU.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",

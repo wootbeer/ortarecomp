@@ -69,6 +69,17 @@ static int sc(int v)
 {
     return (int)lroundf((float)v * rscale);
 }
+
+/* Shadows (Options > Display): Original keeps shadow maps (depth-only
+ * targets) at the game's size, lighter on the GPU at high scales; Sharp
+ * scales them with everything else. Read by choose_quality. */
+static bool shadow_native;
+
+/* A target's size in our pixels. */
+static uint32_t target_px(uint32_t v, bool depth_only)
+{
+    return depth_only && shadow_native ? v : (uint32_t)sc((int)v);
+}
 static SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1;
 static SDL_GPUTexture *frame_ms;
 static bool frame_stale;
@@ -1120,17 +1131,17 @@ static rtarget *target_for_surface_as(const pdo_surface *s, bool depth_only)
     r->data = phys(s->data);
     r->w = (uint32_t)w;
     r->h = (uint32_t)h;
-    r->pw = (uint32_t)sc((int)r->w);
-    r->ph = (uint32_t)sc((int)r->h);
+    r->pw = target_px(r->w, depth_only);
+    r->ph = target_px(r->h, depth_only);
     r->depth_only = depth_only;
     if (!make_target_as(r->pw, r->ph, &r->color, &r->depth, &r->ms, depth_only)) {
         SDL_Log("gfx: cannot create a %ux%u render target (%s)", r->pw, r->ph, SDL_GetError());
         return NULL;
     }
     clear_texture(r->color, r->ms);
-    SDL_Log("gfx: render target %ux%u at 0x%08x (%s)%s", r->w, r->h, r->data,
+    SDL_Log("gfx: render target %ux%u at 0x%08x (%s)%s, drawn at %ux%u", r->w, r->h, r->data,
             pdo_xtex_format_name((s->format_word >> 8) & 0xFF),
-            depth_only ? ", depth only: a shadow map" : "");
+            depth_only ? ", depth only: a shadow map" : "", r->pw, r->ph);
     ntargets++;
     return r;
 }
@@ -1460,6 +1471,7 @@ static void choose_quality(void)
                          && SDL_GPUTextureSupportsSampleCount(dev, depth_format, counts[want])))
         want--;
     rscale = (float)SDL_clamp(st->render_scale2, 2, 16) / 2.0f;
+    shadow_native = st->shadow_original;
     nsamples = 1 << want;
     sample_count = counts[want];
 }
@@ -1539,9 +1551,10 @@ static void apply_quality(void)
 {
     float old_scale = rscale;
     int old_samples = nsamples;
+    bool old_shadow = shadow_native;
 
     choose_quality();
-    if (rscale == old_scale && nsamples == old_samples)
+    if (rscale == old_scale && nsamples == old_samples && shadow_native == old_shadow)
         return;
     SDL_WaitForGPUIdle(dev);
     for (int i = 0; i < npipelines; i++)
@@ -1569,8 +1582,8 @@ static void apply_quality(void)
         SDL_ReleaseGPUTexture(dev, r->color);
         SDL_ReleaseGPUTexture(dev, r->depth);
         SDL_ReleaseGPUTexture(dev, r->ms);
-        r->pw = (uint32_t)sc((int)r->w);
-        r->ph = (uint32_t)sc((int)r->h);
+        r->pw = target_px(r->w, r->depth_only);
+        r->ph = target_px(r->h, r->depth_only);
         r->stale = false;
         if (!make_target_as(r->pw, r->ph, &r->color, &r->depth, &r->ms, r->depth_only)) {
             targets[i--] = targets[--ntargets];
@@ -2436,10 +2449,13 @@ static void copy_rect(SDL_GPUCommandBuffer *cmd, const command *c)
     int sw = rs ? (int)rs->pw : sc(frame_w), sh = rs ? (int)rs->ph : sc(frame_h);
     int dw = rd ? (int)rd->pw : sc(frame_w), dh = rd ? (int)rd->ph : sc(frame_h);
     /* Both edges scaled and rounded, so neighbouring copies still meet at
-     * a fractional scale. */
-    int x = sc(c->rect[0]), y = sc(c->rect[1]);
-    int w = sc(c->rect[0] + c->rect[2]) - x, h = sc(c->rect[1] + c->rect[3]) - y;
-    int dx = sc(c->rect[4]), dy = sc(c->rect[5]);
+     * a fractional scale; each side by its own target's scale (a shadow map
+     * may be at the game's size). */
+    float ssx = rs ? (float)rs->pw / (float)rs->w : rscale, ssy = rs ? (float)rs->ph / (float)rs->h : rscale;
+    float dsx = rd ? (float)rd->pw / (float)rd->w : rscale, dsy = rd ? (float)rd->ph / (float)rd->h : rscale;
+    int x = (int)lroundf(c->rect[0] * ssx), y = (int)lroundf(c->rect[1] * ssy);
+    int w = (int)lroundf((c->rect[0] + c->rect[2]) * ssx) - x, h = (int)lroundf((c->rect[1] + c->rect[3]) * ssy) - y;
+    int dx = (int)lroundf(c->rect[4] * dsx), dy = (int)lroundf(c->rect[5] * dsy);
     SDL_GPUTextureLocation src, dst;
     SDL_GPUCopyPass *copy;
 
@@ -2645,10 +2661,14 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         if (!p)
             continue;
         SDL_BindGPUGraphicsPipeline(pass, p);
-        vp.x = c->draw.viewport[0] * (float)rscale;
-        vp.y = c->draw.viewport[1] * (float)rscale;
-        vp.w = c->draw.viewport[2] * (float)rscale;
-        vp.h = c->draw.viewport[3] * (float)rscale;
+        /* The target's own scale: a shadow map may be at the game's size
+         * (Shadows: Original) while the rest is scaled. */
+        float vsx = cur_target ? (float)cur_target->pw / (float)cur_target->w : rscale;
+        float vsy = cur_target ? (float)cur_target->ph / (float)cur_target->h : rscale;
+        vp.x = c->draw.viewport[0] * vsx;
+        vp.y = c->draw.viewport[1] * vsy;
+        vp.w = c->draw.viewport[2] * vsx;
+        vp.h = c->draw.viewport[3] * vsy;
         vp.min_depth = depth_rev ? 1.0f - c->draw.viewport[5] : c->draw.viewport[4];
         vp.max_depth = depth_rev ? 1.0f - c->draw.viewport[4] : c->draw.viewport[5];
         SDL_SetGPUViewport(pass, &vp);

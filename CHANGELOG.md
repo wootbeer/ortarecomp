@@ -11,6 +11,12 @@
 - VSync: Options > Display, On (the default), Fast or Off. Fast and Off
   show more frames when the PC cannot keep up with the display instead of
   dropping to half; Off may tear.
+- Shadows: Options > Display, Sharp (scaled with the resolution, the
+  default) or Original (the game's own size, lighter on the GPU).
+
+### Fixed
+
+- Controls: a button rebound in the menu was lost when the menu closed.
 
 ## v0.1.4 (beta)
 
