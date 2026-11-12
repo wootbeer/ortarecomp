@@ -58,7 +58,9 @@ static bool decode_adx(const uint8_t *s, size_t len, pdo_aix *out, int k)
         return false;
     }
 
-    double a = M_SQRT2 - cos(2.0 * M_PI * hp / rate), b = M_SQRT2 - 1.0;
+    /* sqrt(2) and pi spelled out: MSVC's math.h has no M_SQRT2 or M_PI. */
+    const double sqrt2 = 1.41421356237309504880, pi = 3.14159265358979323846;
+    double a = sqrt2 - cos(2.0 * pi * hp / rate), b = sqrt2 - 1.0;
     double c = (a - sqrt((a + b) * (a - b))) / b;
     int c1 = (int)(c * 8192.0), c2 = (int)(c * c * -4096.0);
 
