@@ -489,7 +489,15 @@ void sub_0030C809(void)
 {
     uint32_t fb = ARG(1);
     int port = port_of(ARG(0));
+    static bool first = true;
 
+    if (first) {
+        /* Once: that the game asks for vibration at all, and where it goes. */
+        first = false;
+        SDL_Log("input: first XInputSetState, handle 0x%08x -> %s%d (%u, %u)%s", ARG(0),
+                port < 0 ? "no port " : "port ", port < 0 ? 0 : port + 1, fb ? MEM16(fb + 66) : 0,
+                fb ? MEM16(fb + 68) : 0, port >= 0 && !pads[port] ? ", no controller open there" : "");
+    }
     if (port < 0)
         RETURN(8, ERROR_DEVICE_NOT_CONNECTED);
     if (fb) {
