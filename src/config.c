@@ -158,6 +158,8 @@ bool pdo_config_load(pdo_config *cfg)
             settings.fullscreen = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "fxaa") == 0)
             settings.fxaa = SDL_atoi(eq + 1) != 0;
+        else if (strcmp(line, "shadows") == 0)
+            settings.shadow_original = strcmp(eq + 1, "original") == 0;
         else if (strcmp(line, "vsync") == 0)
             settings.vsync = strcmp(eq + 1, "off") == 0 ? PDO_VSYNC_OFF
                            : strcmp(eq + 1, "fast") == 0 ? PDO_VSYNC_FAST : PDO_VSYNC_ON;
@@ -228,6 +230,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "fullscreen=%d\n"
                  "fxaa=%d\n"
                  "vsync=%s\n"
+                 "shadows=%s\n"
                  "window=%d,%d,%d,%d\n"
                  "window_maximized=%d\n"
                  "mouse_aim=%d\n"
@@ -253,6 +256,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.lsfg_multiplier, settings.lsfg_performance,
                  settings.lsfg_dll, settings.fullscreen, settings.fxaa,
                  settings.vsync == PDO_VSYNC_OFF ? "off" : settings.vsync == PDO_VSYNC_FAST ? "fast" : "on",
+                 settings.shadow_original ? "original" : "sharp",
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
                  settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
@@ -268,13 +272,18 @@ bool pdo_config_save(const pdo_config *cfg)
 bool pdo_settings_save(void)
 {
     /* The file's game folder, not this run's: --game-dir is not saved. The
-     * load would also read the file's settings over ours, so keep them. */
+     * load would also read the file's settings and its key_/pad_/mouse_
+     * bindings over ours, so keep both: a rebinding made in Controls was
+     * lost as the menu closed (shown, then gone, never working). */
     pdo_settings keep = settings;
+    pdo_binding keep_bind[PDO_IN_COUNT];
     pdo_config cfg;
     bool ok;
 
+    SDL_memcpy(keep_bind, pdo_input_bindings(), sizeof keep_bind);
     pdo_config_load(&cfg);
     settings = keep;
+    SDL_memcpy(pdo_input_bindings(), keep_bind, sizeof keep_bind);
     ok = pdo_config_save(&cfg);
     if (!ok)
         SDL_Log("settings: could not save (%s)", SDL_GetError());
