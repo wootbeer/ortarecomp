@@ -659,7 +659,7 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_LOGOS:  snprintf(v, n, "%s", s->skip_logos ? "On" : "Off"); break;
     case ITEM_LAUNCHER: snprintf(v, n, "%s", s->skip_launcher ? "On" : "Off"); break;
     case ITEM_VSYNC:  snprintf(v, n, "%s", s->vsync == PDO_VSYNC_OFF ? "Off" : s->vsync == PDO_VSYNC_FAST ? "Fast" : "On"); break;
-    case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Original" : "Sharp"); break;
+    case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Low" : "High"); break;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);
@@ -784,7 +784,7 @@ static const char *help_of(int item)
     case ITEM_LOGOS:  return "A press skips the boot logos.";
     case ITEM_LAUNCHER: return "Start at once. Shift: launcher.";
     case ITEM_VSYNC:  return "Fast/Off: more fps. Off tears.";
-    case ITEM_SHADOWS: return "Original: lighter on the GPU.";
+    case ITEM_SHADOWS: return "Low: lighter on the GPU.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",

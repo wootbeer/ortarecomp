@@ -70,9 +70,9 @@ static int sc(int v)
     return (int)lroundf((float)v * rscale);
 }
 
-/* Shadows (Options > Display): Original keeps shadow maps (depth-only
- * targets) at the game's size, lighter on the GPU at high scales; Sharp
- * scales them with everything else. Read by choose_quality. */
+/* Shadows (Options > Display): Low keeps shadow maps (depth-only targets)
+ * at the game's size, lighter on the GPU at high scales; High scales them
+ * with everything else. Read by choose_quality. */
 static bool shadow_native;
 
 /* A target's size in our pixels. */
@@ -2662,7 +2662,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             continue;
         SDL_BindGPUGraphicsPipeline(pass, p);
         /* The target's own scale: a shadow map may be at the game's size
-         * (Shadows: Original) while the rest is scaled. */
+         * (Shadows: Low) while the rest is scaled. */
         float vsx = cur_target ? (float)cur_target->pw / (float)cur_target->w : rscale;
         float vsy = cur_target ? (float)cur_target->ph / (float)cur_target->h : rscale;
         vp.x = c->draw.viewport[0] * vsx;

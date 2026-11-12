@@ -159,7 +159,7 @@ bool pdo_config_load(pdo_config *cfg)
         else if (strcmp(line, "fxaa") == 0)
             settings.fxaa = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "shadows") == 0)
-            settings.shadow_original = strcmp(eq + 1, "original") == 0;
+            settings.shadow_original = strcmp(eq + 1, "low") == 0 || strcmp(eq + 1, "original") == 0;
         else if (strcmp(line, "vsync") == 0)
             settings.vsync = strcmp(eq + 1, "off") == 0 ? PDO_VSYNC_OFF
                            : strcmp(eq + 1, "fast") == 0 ? PDO_VSYNC_FAST : PDO_VSYNC_ON;
@@ -256,7 +256,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.lsfg_multiplier, settings.lsfg_performance,
                  settings.lsfg_dll, settings.fullscreen, settings.fxaa,
                  settings.vsync == PDO_VSYNC_OFF ? "off" : settings.vsync == PDO_VSYNC_FAST ? "fast" : "on",
-                 settings.shadow_original ? "original" : "sharp",
+                 settings.shadow_original ? "low" : "high",
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
                  settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,

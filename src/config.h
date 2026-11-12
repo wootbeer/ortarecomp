@@ -34,7 +34,7 @@ typedef struct pdo_settings {
     bool fullscreen;        /* borderless, the whole monitor (Alt+Enter) */
     bool fxaa;              /* edge smoothing on the finished frame (shaders/screen.frag) */
     int  vsync;             /* PDO_VSYNC_*: how frames reach the screen (renderer.c) */
-    bool shadow_original;   /* shadow maps at the game's size, not scaled (renderer.c) */
+    bool shadow_original;   /* Shadows: Low, shadow maps at the game's size, not scaled (renderer.c) */
     int  anisotropy;        /* 1 off, 2, 4, 8, 16: anisotropic filtering of smooth-filtered textures */
     int  bloom;             /* 0 off, 1 low, 2 high: on the scene, before the HUD (renderer.c) */
     int  win_x, win_y, win_w, win_h;    /* the window when not fullscreen (w 0: not set yet) */
