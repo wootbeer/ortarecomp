@@ -572,6 +572,10 @@ static void movie51_route(uint32_t buf, uint32_t first_bin)
             slot = i;
     if (slot < 0)
         return;
+    if (movie_out[slot].buf != buf || movie_out[slot].stream != stream)
+        SDL_Log("dsound: 5.1 movie buffer 0x%08x plays soundtrack stream %d", buf, stream);
+    else
+        return;                     /* the same routing again: keep the position */
     memset(&movie_out[slot], 0, sizeof movie_out[slot]);
     movie_out[slot].buf = buf;
     movie_out[slot].stream = stream;
@@ -598,6 +602,8 @@ static void movie51_fill(uint32_t buf, uint32_t p1, uint32_t n1, uint32_t p2, ui
             return;
         pos = movie_out[i].any && off != movie_out[i].last_off ? movie_out[i].last_pos + movie_out[i].last_frames
                                                                : movie_out[i].last_pos;
+        if (!movie_out[i].any)
+            SDL_Log("dsound: 5.1 movie buffer 0x%08x: soundtrack written from frame %u", buf, pos);
         movie_out[i].any = true;
         movie_out[i].last_off = off;
         movie_out[i].last_pos = pos;
@@ -944,6 +950,8 @@ void sub_002C2566(void)
             bins[n].volume = (int32_t)MEM32(pairs + i * 8 + 4);
         }
         pdo_voice_set_bins(id, bins, n);
+        if (n && test_ac3())
+            movie51_route(ARG(0), bins[0].bin);
     }
     for (int i = 0; i < n; i++)
         TRACE("  0x%08x bin %u volume %d", ARG(0), bins[i].bin, bins[i].volume);
