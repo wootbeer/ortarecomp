@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Vibration strength: Options > Gameplay > Vibration, Off, 25 %, 50 %,
+  75 % or 100 % (the default).
+
 ## v0.1.4 (beta)
 
 ### Added

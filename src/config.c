@@ -16,7 +16,7 @@ char pdo_log_file[PDO_PATH_MAX];
 static pdo_settings settings = { .render_scale = 1, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
                                   .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
-                                  .skip_logos = true, .depth_reversed = true, .pic_contrast = 100,
+                                  .skip_logos = true, .rumble = 100, .depth_reversed = true, .pic_contrast = 100,
                                   .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
 
 pdo_settings *pdo_settings_get(void)
@@ -172,6 +172,8 @@ bool pdo_config_load(pdo_config *cfg)
             settings.skip_logos = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "skip_launcher") == 0)
             settings.skip_launcher = SDL_atoi(eq + 1) != 0;
+        else if (strcmp(line, "rumble") == 0)
+            settings.rumble = clamp_int(SDL_atoi(eq + 1), 0, 100);
         else if (strcmp(line, "depth_reversed") == 0)
             settings.depth_reversed = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "picture_crt") == 0)
@@ -229,6 +231,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "unlock_box=%d\n"
                  "skip_logos=%d\n"
                  "skip_launcher=%d\n"
+                 "rumble=%d\n"
                  "depth_reversed=%d\n"
                  "picture_crt=%d\n"
                  "picture_brightness=%d\n"
@@ -246,7 +249,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.lsfg_multiplier, settings.lsfg_performance,
                  settings.lsfg_dll, settings.fullscreen, settings.fxaa,
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
-                 settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.depth_reversed,
+                 settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
                  settings.pic_saturation, settings.audio_out == PDO_AUDIO_HEADPHONES ? "headphones"
                  : settings.audio_out == PDO_AUDIO_SURROUND ? "surround" : "speakers",

@@ -494,7 +494,9 @@ void sub_0030C809(void)
         RETURN(8, ERROR_DEVICE_NOT_CONNECTED);
     if (fb) {
         if (pads[port]) {
-            uint16_t lo = MEM16(fb + 66), hi = MEM16(fb + 68);
+            /* Vibration strength (Options > Gameplay), 0-100 %. */
+            uint32_t k = (uint32_t)pdo_settings_get()->rumble;
+            uint16_t lo = (uint16_t)(MEM16(fb + 66) * k / 100), hi = (uint16_t)(MEM16(fb + 68) * k / 100);
             bool ok = SDL_RumbleGamepad(pads[port], lo, hi, 1000);
             static bool logged;
             if ((lo || hi || !ok) && !logged) {

@@ -25,7 +25,7 @@
 #include <string.h>
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VOLUME,
-       ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_3D,
+       ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D,
        ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
        ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_FULLSCREEN, ITEM_EXIT,
@@ -50,7 +50,7 @@ static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_BACK };
-static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_BACK };
+static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
 static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
                                          ITEM_BACK };
@@ -256,6 +256,7 @@ static void change(int dir)
     case ITEM_BOX:    s->unlock_box = !s->unlock_box; break;
     case ITEM_LOGOS:  s->skip_logos = !s->skip_logos; break;
     case ITEM_LAUNCHER: s->skip_launcher = !s->skip_launcher; break;
+    case ITEM_RUMBLE: s->rumble = SDL_clamp(s->rumble + 25 * dir, 0, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
         pdo_mixer_apply_output();
@@ -645,6 +646,12 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_BOX:    snprintf(v, n, "%s", s->unlock_box ? "All open" : "Normal"); break;
     case ITEM_LOGOS:  snprintf(v, n, "%s", s->skip_logos ? "On" : "Off"); break;
     case ITEM_LAUNCHER: snprintf(v, n, "%s", s->skip_launcher ? "On" : "Off"); break;
+    case ITEM_RUMBLE:
+        if (s->rumble)
+            snprintf(v, n, "%d%%", s->rumble);
+        else
+            snprintf(v, n, "Off");
+        return s->rumble / 100.0f;
     case ITEM_3D: {
         static const char *outs[PDO_AUDIO_COUNT] = { "Stereo", "Headphones", "5.1" };
         snprintf(v, n, "%s", outs[s->audio_out]);
@@ -711,6 +718,7 @@ static const char *label_of(int item)
     case ITEM_BOX:    return "Pandora's Box";
     case ITEM_LOGOS:  return "Skip logos";
     case ITEM_LAUNCHER: return "Skip launcher";
+    case ITEM_RUMBLE: return "Vibration";
     case ITEM_3D:     return "Output";
     case ITEM_VSH:    return "Vertex programs";
     case ITEM_FVF:    return "Fixed function";
@@ -759,6 +767,7 @@ static const char *help_of(int item)
     case ITEM_BOX:    return "All open: every extra unlocked.";
     case ITEM_LOGOS:  return "A press skips the boot logos.";
     case ITEM_LAUNCHER: return "Start at once. Shift: launcher.";
+    case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",
                                                       "5.1 speakers: sound all around." };
