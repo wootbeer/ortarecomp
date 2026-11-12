@@ -72,4 +72,5 @@ own code.
 - `src/guest/`: bring-up of the recompiled title and overrides
 - `src/gfx/`, `src/audio/`: renderer, launcher/menu overlay, mixer
 - `tools/package.py`: release zip; `tools/make_icon.py`: the app icon
+- `tools/check_menu_text.py`: run after changing menu labels, values or help
 - `external/xboxrecomp`, `external/SDL`: pinned submodules

@@ -643,7 +643,7 @@ void sub_002ADF50(void)
 }
 
 /* D3DDevice_SetRenderTarget(pRenderTarget, pNewZStencil). NULL keeps the
- * current colour target; the depth surface goes to the renderer each time,
+ * current color target; the depth surface goes to the renderer each time,
  * since a depth-only pass is keyed by it (a shadow map). */
 extern void sub_002AD9C0_gen(void);
 void sub_002AD9C0(void)
@@ -773,7 +773,7 @@ static float lf(uint32_t bits)
 /* Direct3D fixed-function lighting for one vertex, world-space position p
  * and normal n (unit, or zero without normals): emissive + global ambient
  * x ambient + per light (ambient + diffuse N.L) x attenuation, with
- * material colours taken from the vertex where the material sources say
+ * material colors taken from the vertex where the material sources say
  * so. Specular highlights are not computed. Returns a D3DCOLOR. */
 static uint32_t light_vertex(const float p[3], const float n[3], uint32_t vdiffuse, uint32_t vspecular,
                              bool has_diffuse, bool has_specular, const uint32_t *lights, int nlights)

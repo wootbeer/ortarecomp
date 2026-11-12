@@ -88,7 +88,7 @@ vec4 sample_tex(int s, vec2 uv)
     return c;
 }
 
-// Shadow maps. On the Xbox a depth-format texture is not read as colour:
+// Shadow maps. On the Xbox a depth-format texture is not read as color:
 // the texel is the outcome of comparing the stored depth with r/q, in that
 // order (stored SHADOWFUNC r/q), 1 or 0, filtered between the four nearest
 // texels. The order is the reverse of OpenGL's. Orta sets GREATER and
@@ -476,7 +476,7 @@ void main()
         // read opaque white and replaced it (JSRF leaves
         // stage 1 at SELECTARG1 TEXTURE, unbound, on car shadows and
         // outlines, which turned white). A first stage modulating a missing
-        // texture with the diffuse colour still gives the diffuse colour
+        // texture with the diffuse color still gives the diffuse color
         // (Orta's menu highlights).
         if (stage_misc[s].y == 0 && (uses_texture(color_op[s]) || uses_texture(alpha_op[s])))
             continue;

@@ -597,7 +597,7 @@ static void draw_controls(void)
             snprintf(line, sizeof line, "%-9s %-9.9s %-9.9s %.6s", pdo_input_button_name(i), k[0] ? k : "?",
                      pdo_input_pad_label(b[i].pad), pdo_input_mouse_name(b[i].mouse));
             if (i == selected && capture)
-                snprintf(line, sizeof line, "%-9s press a key, button or click", pdo_input_button_name(i));
+                snprintf(line, sizeof line, "%-9s press a key/button/click", pdo_input_button_name(i));
         } else if (i == CTL_MOUSE) {
             snprintf(line, sizeof line, "%-9s %s", "Mouse aim", pdo_settings_get()->mouse_aim ? "On" : "Off");
         } else if (i == CTL_MSPEED) {
@@ -778,7 +778,7 @@ static const char *help_of(int item)
     case ITEM_PIC_BRIGHT:   return "Lighter or darker overall.";
     case ITEM_PIC_CONTRAST: return "Darks darker, lights lighter.";
     case ITEM_PIC_GAMMA:    return "Above 1 lifts the midtones.";
-    case ITEM_PIC_SAT:      return "How strong the colours are.";
+    case ITEM_PIC_SAT:      return "How strong the colors are.";
     case ITEM_PIC_RESET:    return "Back to the game's own picture.";
     case ITEM_BOX:    return "All open: every extra unlocked.";
     case ITEM_LOGOS:  return "A press skips the boot logos.";
@@ -824,7 +824,7 @@ static const char *help_of(int item)
     case ITEM_BACK:   return "Back to the main list.";
     case ITEM_CONTROLS:    return "Keys, pad and mouse.";
     case ITEM_GO_DISPLAY:  return "Resolution, aspect, window.";
-    case ITEM_GO_PICTURE:  return "CRT look, brightness, colour.";
+    case ITEM_GO_PICTURE:  return "CRT look, brightness, color.";
     case ITEM_GO_SOUND:    return "Volume, stereo or 5.1.";
     case ITEM_GO_GAMEPLAY: return "Pandora's Box, boot logos.";
     case ITEM_GO_ADVANCED: return "Frame generation and more.";

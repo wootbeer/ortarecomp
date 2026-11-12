@@ -143,7 +143,7 @@ virtual addresses in the USA `default.xbe`.
 - Episode 2 water uses bump environment mapping (V8U8 textures, texture
   modes BUMPENVMAP and BUMPENVMAP_LUM).
 
-- Shadow map: each frame starts with a depth-only pass (a colour surface
+- Shadow map: each frame starts with a depth-only pass (a color surface
   without memory, 512x512, depth surface LIN_D16 at 0x00718000 in episode
   1, polygon offset 256 16-bit units) and then samples that depth surface
   as a texture on stage 1 of the scene's pixel shaders. The coordinates

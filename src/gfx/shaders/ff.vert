@@ -1,7 +1,7 @@
 #version 450
 // Fixed-function vertex stage. Positions arrive already in clip space
 // (transformed on the CPU from the game's matrices or screen coordinates);
-// colours arrive as D3DCOLOR bytes (B, G, R, A in memory).
+// colors arrive as D3DCOLOR bytes (B, G, R, A in memory).
 
 layout(location = 0) in vec4 in_pos;
 layout(location = 1) in vec4 in_diffuse;

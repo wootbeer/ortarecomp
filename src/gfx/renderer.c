@@ -791,7 +791,7 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
     pi.rasterizer_state.fill_mode = SDL_GPU_FILLMODE_FILL;
     /* D3D culls by screen-space winding, which ours matches: clip space is
      * D3D's (y up) and SDL presents it the same way up. JSRF's outlines are
-     * the mesh drawn again, inflated, in one colour, with the other side
+     * the mesh drawn again, inflated, in one color, with the other side
      * culled; without culling that shell covers the whole character. */
     pi.rasterizer_state.cull_mode = ps->cull ? SDL_GPU_CULLMODE_BACK : SDL_GPU_CULLMODE_NONE;
     pi.rasterizer_state.front_face = ps->cull == 1 ? SDL_GPU_FRONTFACE_COUNTER_CLOCKWISE
@@ -1002,8 +1002,8 @@ static rtarget *find_target(uint32_t data, uint32_t w, uint32_t h)
     return NULL;
 }
 
-/* A target's textures at our size: the sampled colour, depth, and with
- * multisampling the multisampled colour (depth is multisampled then too). */
+/* A target's textures at our size: the sampled color, depth, and with
+ * multisampling the multisampled color (depth is multisampled then too). */
 static bool make_target_as(Uint32 w, Uint32 h, SDL_GPUTexture **color, SDL_GPUTexture **depth,
                            SDL_GPUTexture **ms, bool depth_only)
 {
@@ -1065,11 +1065,11 @@ static void clear_texture(SDL_GPUTexture *t, SDL_GPUTexture *ms)
 }
 
 /* The GPU target for a guest surface, created on first use. */
-/* A colour surface without memory (data 0, with a format and size): the
+/* A color surface without memory (data 0, with a format and size): the
  * game draws depth only into it, e.g. a shadow map whose depth buffer is a
- * texture. Its colour goes to a scratch target of that size, not the frame
+ * texture. Its color goes to a scratch target of that size, not the frame
  * (data 0 with no format is the back buffer). */
-#define NO_COLOUR_DATA 0x7FFFF000u
+#define NO_COLOR_DATA 0x7FFFF000u
 
 static rtarget *target_for_surface_as(const pdo_surface *s, bool depth_only);
 
@@ -1094,7 +1094,7 @@ static rtarget *target_of(const pdo_surface *s, const pdo_surface *z)
         scratch.data = z->data;
         return target_for_surface_as(&scratch, true);
     }
-    scratch.data = NO_COLOUR_DATA;
+    scratch.data = NO_COLOR_DATA;
     return target_for_surface(&scratch);
 }
 
@@ -1175,7 +1175,7 @@ static void note_target(const pdo_surface *s, bool depth_only)
         return;
     i = target_index(s->data, (uint32_t)w, (uint32_t)h);
     if (i >= 0) {
-        tkeys[i].depth_only = depth_only;       /* drawn now with colour, or not */
+        tkeys[i].depth_only = depth_only;       /* drawn now with color, or not */
         return;
     }
     for (i = 0; i < ntkeys; i++)        /* same memory, other size: the old one is gone */
@@ -1203,7 +1203,7 @@ static void note_target_of(const pdo_surface *s, const pdo_surface *z)
     if (!s->format_word)
         return;
     scratch = *s;
-    scratch.data = z && z->data ? z->data : NO_COLOUR_DATA;
+    scratch.data = z && z->data ? z->data : NO_COLOR_DATA;
     note_target(&scratch, true);
 }
 
@@ -1276,14 +1276,14 @@ static tex_slot texture_for(const pdo_tex_ref *t)
     tex_slot slot = { white, 0, 0, 0 };
 
     if (!t->data)
-        return slot;    /* white: untextured MODULATE quads show their colour (menu highlights) */
+        return slot;    /* white: untextured MODULATE quads show their color (menu highlights) */
     pdo_xtex_describe(t->format_word, t->size_word, &info);
     if (!info.width || !info.height || info.width > 4096 || info.height > 4096)
         return slot;
-    /* A depth-only target (a shadow map) sampled as a colour texture: the
+    /* A depth-only target (a shadow map) sampled as a color texture: the
      * game has put a texture in that memory since -- the title screen's
      * menu bands sit where a shadow map was, and drew as solid red, the
-     * shadow map's depth read as colour. The texture is in memory. */
+     * shadow map's depth read as color. The texture is in memory. */
     if (target_known(t->data, info.width, info.height) &&
         !(tkeys[target_index(t->data, info.width, info.height)].depth_only &&
           !(info.format >= 0x2A && info.format <= 0x31))) {
@@ -1459,7 +1459,7 @@ static SDL_GPUShader *make_shader(const uint8_t *code, size_t len, SDL_GPUShader
 static SDL_GPUShader *screen_vs, *screen_fs;
 
 /* Render scale and samples from the settings, the samples as many as both
- * the colour and the depth format take. */
+ * the color and the depth format take. */
 static void choose_quality(void)
 {
     static const SDL_GPUSampleCount counts[] = { SDL_GPU_SAMPLECOUNT_1, SDL_GPU_SAMPLECOUNT_2,
@@ -1936,7 +1936,7 @@ static bool init_here(int width, int height)
     }
     {
         /* Fill the 1x1 stand-in for an unbound stage: white, so untextured
-         * MODULATE quads show their colour (Orta's menu highlights). */
+         * MODULATE quads show their color (Orta's menu highlights). */
         static const uint8_t px[4] = { 255, 255, 255, 255 };
         SDL_GPUTransferBufferCreateInfo tbi = { SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, 4, 0 };
         SDL_GPUTransferBuffer *tb = SDL_CreateGPUTransferBuffer(dev, &tbi);
@@ -2059,7 +2059,7 @@ static SDL_GPURenderPass *begin_pass(SDL_GPUCommandBuffer *cmd, const command *c
     bool *stale = cur_target ? &cur_target->stale : &frame_stale;
 
     /* The resolved texture holds what the multisampled buffer does not:
-     * draw it in first, unless this pass clears the colour anyway. */
+     * draw it in first, unless this pass clears the color anyway. */
     if (ms && *stale && !(clear && (clear->clear_flags & 0xF0)))
         seed = snapshot(cmd);
     *stale = false;
@@ -2272,7 +2272,7 @@ static void log_command(uint32_t i, const command *c, SDL_GPUTexture *const *tex
             d->ff.alpha_test[0], d->ff.alpha_test[1], d->ff.alpha_test[2], d->ff.alpha_test[3],
             d->ff.fog_mode[0], d->ff.fog_mode[1], d->ff.fog_params[0], d->ff.fog_params[1], d->ff.fog_params[2],
             d->ff.fog_color[0], d->ff.fog_color[1], d->ff.fog_color[2]);
-    SDL_Log("capture:     drawn from 0x%08x, 0x%08x, 0x%08x; colour write %08x", d->caller[0], d->caller[1],
+    SDL_Log("capture:     drawn from 0x%08x, 0x%08x, 0x%08x; color write %08x", d->caller[0], d->caller[1],
             d->caller[2], d->ps.color_write);
     if (c->fvf >= 0) {  /* its matrices: world, and world * view * projection */
         const pdo_fvf_uniforms *u = &F->fvf_us[c->fvf];
@@ -2344,7 +2344,7 @@ static void log_command(uint32_t i, const command *c, SDL_GPUTexture *const *tex
         const pdo_fvf_uniforms *u = &F->fvf_us[c->fvf];
         SDL_Log("capture:     fixed-function vertices on the GPU: flags %x, %d lights%s",
                 u->layout0[2], u->light_info[0], c->has_cpu ? "; the CPU's vertices:" : "");
-        /* The first vertex as the game wrote it: position, colours. */
+        /* The first vertex as the game wrote it: position, colors. */
         if ((uint32_t)u->layout0[0] + (uint32_t)u->layout0[1] <= F->nblob && u->layout0[1] >= 16) {
             const uint8_t *v = F->blob + u->layout0[0];
             float p[4];
@@ -3297,7 +3297,7 @@ static SDL_GPUTexture *lsfg_target(Uint32 *w, Uint32 *h)
         SDL_zero(ti);
         ti.type = SDL_GPU_TEXTURETYPE_2D;
         ti.format = SDL_GetGPUSwapchainTextureFormat(dev, window);
-        ti.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;     /* kept as a colour target between passes */
+        ti.usage = SDL_GPU_TEXTUREUSAGE_COLOR_TARGET;     /* kept as a color target between passes */
         ti.width = (Uint32)ww;
         ti.height = (Uint32)wh;
         ti.layer_count_or_depth = 1;

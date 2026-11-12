@@ -34,7 +34,7 @@ void pdo_gfx_game_finished(void);
  * first), since the last call. */
 void pdo_gfx_take_frame_counts(uint32_t *drawn, uint32_t *dropped);
 
-/* One vertex as the shaders see it. Positions are in clip space; colours are
+/* One vertex as the shaders see it. Positions are in clip space; colors are
  * D3DCOLORs; four texture coordinate sets of up to four components; fog is
  * the fog coordinate (eye distance, or the fog factor itself when the fog
  * table mode is NONE). psize is the point size in pixels, for point lists
@@ -80,7 +80,7 @@ typedef struct pdo_ff_uniforms {
      * w: 1 if red and green are signed (V8U8), stored offset by 128. */
     float   tc_scale[4][4];
     /* Fog: enable, D3DFOGMODE (0 NONE: the coordinate is the factor,
-     * 1 EXP, 2 EXP2, 3 LINEAR); colour; start, end, density. */
+     * 1 EXP, 2 EXP2, 3 LINEAR); color; start, end, density. */
     int32_t fog_mode[4];
     float   fog_color[4];
     float   fog_params[4];
@@ -155,7 +155,7 @@ typedef struct pdo_surface {
 void pdo_gfx_set_target(const pdo_surface *color);
 
 /* The depth-stencil surface set with it (pNewZStencil; data 0 for none).
- * A depth-only pass (a colour surface without memory) renders into a
+ * A depth-only pass (a color surface without memory) renders into a
  * target keyed by this surface, and a depth-format texture over the same
  * memory samples that target's depth: a shadow map. */
 void pdo_gfx_set_depth(const pdo_surface *depth);

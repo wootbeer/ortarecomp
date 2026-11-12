@@ -4,7 +4,7 @@
  * Everything is recorded into SDL's own command buffers between its passes
  * (patches/SDL gives out the Vulkan objects). SDL keeps each texture in one
  * layout between passes, its "default usage": COLOR_ATTACHMENT_OPTIMAL for
- * a colour target without SAMPLER, and for a swap chain image once
+ * a color target without SAMPLER, and for a swap chain image once
  * acquired. What is recorded here moves the textures it uses out of that
  * layout and back.
  *
@@ -83,7 +83,7 @@ void barrier(VkCommandBuffer cmd, VkImage image, VkImageLayout from, VkImageLayo
     vkCmdPipelineBarrier(cmd, src_stage, dst_stage, 0, 0, nullptr, 0, nullptr, 1, &b);
 }
 
-/* SDL's colour target layout to a transfer one, and back. */
+/* SDL's color target layout to a transfer one, and back. */
 void to_transfer(VkCommandBuffer cmd, VkImage image, VkImageLayout layout, VkAccessFlags access)
 {
     barrier(cmd, image, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, layout, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,

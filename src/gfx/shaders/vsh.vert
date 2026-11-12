@@ -263,7 +263,7 @@ void main()
         run(info.x, info.y);
         gl_Position = to_clip(R[12], vp_scale, vp_offset);
     }
-    // Colours as the CPU packs them: NaN as 0, clamped, to 8 bits.
+    // Colors as the CPU packs them: NaN as 0, clamped, to 8 bits.
     vec4 d0 = mix(clamp(O[3], 0.0, 1.0), vec4(0.0), isnan(O[3]));
     vec4 d1 = mix(clamp(O[4], 0.0, 1.0), vec4(0.0), isnan(O[4]));
     v_diffuse = interp.z != 0 ? vec4(1.0, 0.0, 1.0, 1.0) : floor(d0 * 255.0 + 0.5) / 255.0;
