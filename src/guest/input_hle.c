@@ -493,8 +493,16 @@ void sub_0030C809(void)
     if (port < 0)
         RETURN(8, ERROR_DEVICE_NOT_CONNECTED);
     if (fb) {
-        if (pads[port])
-            SDL_RumbleGamepad(pads[port], MEM16(fb + 66), MEM16(fb + 68), 1000);
+        if (pads[port]) {
+            uint16_t lo = MEM16(fb + 66), hi = MEM16(fb + 68);
+            bool ok = SDL_RumbleGamepad(pads[port], lo, hi, 1000);
+            static bool logged;
+            if ((lo || hi || !ok) && !logged) {
+                logged = true;
+                SDL_Log("input: rumble on port %d (%u, %u)%s%s", port + 1, lo, hi,
+                        ok ? "" : ": not supported, ", ok ? "" : SDL_GetError());
+            }
+        }
         MEM32(fb + 0) = ERROR_SUCCESS;
         static bool noted;
         if (MEM32(fb + 4) && !noted) {
