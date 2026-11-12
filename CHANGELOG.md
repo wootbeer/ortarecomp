@@ -4,8 +4,8 @@
 
 ### Added
 
-- Vibration strength: Options > Gameplay > Vibration, Off, 25 %, 50 %,
-  75 % or 100 % (the default).
+- Vibration strength: Options > Gameplay > Vibration, Off or 10 % to
+  100 % (the default) in steps of 10.
 - Resolution scale 1.5x (Options > Display), between 1x and 2x: about
   half of 2x's work, for laptops and integrated graphics.
 - VSync: Options > Display, On (the default), Fast or Off. Fast and Off

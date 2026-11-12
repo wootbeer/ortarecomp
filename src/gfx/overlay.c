@@ -268,7 +268,7 @@ static void change(int dir)
     case ITEM_LAUNCHER: s->skip_launcher = !s->skip_launcher; break;
     case ITEM_VSYNC:  s->vsync = (s->vsync + (dir < 0 ? 2 : 1)) % 3; break;
     case ITEM_SHADOWS: s->shadow_original = !s->shadow_original; break;
-    case ITEM_RUMBLE: s->rumble = SDL_clamp(s->rumble + 25 * dir, 0, 100); break;
+    case ITEM_RUMBLE: s->rumble = SDL_clamp((s->rumble + 10 * dir) / 10 * 10, 0, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
         pdo_mixer_apply_output();
