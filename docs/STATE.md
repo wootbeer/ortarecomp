@@ -1,6 +1,6 @@
 # Current state
 
-v0.1.5 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
+v0.1.6 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
 through all ten episodes and the ending, with music, movies, saves, bosses
 and Pandora's Box. Changes are listed in `CHANGELOG.md`.
 History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
@@ -23,14 +23,18 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
   vertex programs and fixed-function vertices on the GPU. Frame
   interpolation pairs the draws of the last two frames (`match_frames`) and
   blends them; see the archive for what is and is not blended, and why.
+  Movies (Display > Movies, Original by default): `d3d_hle.c` marks a
+  movie's picture (its size from the .sfd), the window pass shows it alone
+  with subtitles laid over its bottom (`movie_only`).
 - Lossless Scaling frame generation (experimental): `lib/lsfg` (lsfg-vk and
   DXVK's DXBC compiler, from the BattleTanx port), run on SDL's own device
   through `patches/SDL/0001` (local, applied by CMake), host side in
   `src/gfx/lsfg_present.cpp`; needs SPIR-V headers to build and the
   player's Lossless.dll to run. F1 > Advanced > Frame gen.
-- `src/audio/`: mixer, I3DL2 reverb, output Stereo / Headphones (a model
-  head) / 5.1 (the six speaker bins out as they are, 3D voices panned around
-  the corners). With 5.1, GetSpeakerConfig reports a Dolby Digital console
+- `src/audio/`: mixer, I3DL2 reverb, output Stereo / Headphones / 5.1 (the
+  six speaker bins out as they are, 3D voices panned around the corners).
+  On Stereo and Headphones 3D voices go through the game's own HRTF
+  tables (Sound > 3D sound; Off: a pan, or the model head on Headphones). With 5.1, GetSpeakerConfig reports a Dolby Digital console
   and movies with an .aix (opening_bs, ins1_bs, ins2_bs: three stereo ADX
   streams) play it: CRI routes a buffer per speaker pair, and we write our
   own decoding (`src/audio/aix.c`) over its chunks, since CRI's fills only
@@ -57,27 +61,24 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    wrong-pair check, lazy bounds.
 2. A full play on the release build with no `[ICALL] Failed` in the log.
 3. First-time pipeline stalls (kept in `pipelines.bin` after).
-4. Steam Deck movies at 20 fps (issue 11): in the reporter's log the
-   game's threads waited 126 ms a second for the guest CPU at each vblank
-   (2 ms here; the decode takes under half a core on a 2.1 GHz Xeon). Not
-   reproduced; needs a log with the Deck's frame limit off.
+4. Steam Deck movies at 20 fps (issue 11). On Windows the same was MSVC
+   leaving the huge generated functions (the movie decoder) unoptimised,
+   fixed with /d2OptimizeHugeFunctions (v0.1.6). The Deck builds with GCC,
+   which has no such limit: if it persists, F11 during a movie shows which
+   thread is busy.
 5. Android (Vulkan/Turnip): measure the recompiled code and the guest CPU
    lock on ARM; Linux's WaitForMultipleObjects polls with sleeps.
-6. Gunfire sounds stacked and loud (issue 15). Fixed so far: the mixbins'
-   -6 dB headroom and the reverb send following distance. Left: up to 12
-   machine-gun copies play at once, started by the sound library at
-   0x225417 (`PDO_TEST_NEWEST=1` keeps only the newest and sounds closer to
-   the Xbox). The copies are the game's own (it stops each after one
-   pass, see `docs/orta-facts.md`); left to explain the Xbox's lighter
-   sound: the dsstdfx.bin effects on the 3D mixbins (not reproduced). The
-   per-voice HRTF filters are in (Stereo/Headphones, taps / 512 by ear).
+6. Gunfire (issue 15): the mixbins' -6 dB headroom, the reverb send by
+   distance and the HRTF filters (taps / 512, chosen by ear against the
+   console) are in; up to 12 machine-gun copies at once are the game's own.
+   Not reproduced: the dsstdfx.bin effects on the 3D mixbins.
 7. Wishlist: the European (PAL) disc. Only the USA default.xbe is
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
 8. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
-   letterboxed by the game. Movies: find the bars in the picture and zoom
-   on wide windows without cutting subtitles. Cutscenes: the game draws the
+   letterboxed by the game. Movies: Display > Movies (Zoom) fills a wide
+   window, subtitles kept. Cutscenes: the game draws the
    bars itself, so its cutscene state has to be found first. Gameplay
    ultrawide is not planned. Rumble is passed through (XInputSetState); the
    log says when the game first sends it.

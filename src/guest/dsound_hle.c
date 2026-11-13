@@ -23,9 +23,8 @@
  * image's own effects (its I3DL2 reverb is ours, in
  * src/audio/reverb.c).
  *
- * PDO_DSOUND_TRACE=1 logs every call. Listening tests, off unless set:
- * PDO_TEST_NEWEST=1 (src/audio/mixer.c); PDO_HRTF=n (below);
- * PDO_MOVIE51=0 keeps movies stereo.
+ * PDO_DSOUND_TRACE=1 logs every call; PDO_HRTF=n sets the HRTF filters'
+ * scale (below); PDO_MOVIE51=0 keeps movies stereo.
  */
 
 #include "recomp_types.h"
@@ -39,6 +38,7 @@
 #include <SDL3/SDL.h>
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -250,12 +250,11 @@ void sub_002C4833(void)
     RETURN(16, DS_OK);
 }
 
-/* DirectSound HRTF setup (called once during sound init). The Xbox's
- * tables are not used: with the 3D audio setting on Headphones, our mixer
- * runs its own model head (src/audio/mixer.c). Takes no arguments. */
+/* DirectSoundUseFullHRTF() (called once during sound init): selects the
+ * full HRTF tables, which apply_3d reads itself (hrtf_filters). Nothing to
+ * set up; takes no arguments. */
 void sub_002C12DA(void)
 {
-    note_once("HRTF");
     g_esp += 4;
 }
 
@@ -361,10 +360,10 @@ static float fval(uint32_t v)
 
 /* Stereo and Headphones outputs, Sound > 3D sound On (the default):
  * mono 3D voices go through the Xbox's own HRTF filters, as the APU placed
- * them; Off pans them (or on Headphones, the model head). The APU's scale for the taps is not
- * known: / 512 sounded closest to the console by ear (256 is 6 dB louder).
- * PDO_HRTF=n divides by n instead; PDO_HRTF=0 pans as before (equal power,
- * or on Headphones the model head). DirectSound's lookup
+ * them; Off pans them (equal power, or on Headphones the model head). The
+ * APU's scale for the taps is not known: / 512 sounded closest to the
+ * console by ear (256 is 6 dB louder); PDO_HRTF=n divides by n instead,
+ * PDO_HRTF=0 is the same as Off. DirectSound's lookup
  * (0x002C5497): elevation rounded to 6 degrees, azimuth folded to 0-180 and
  * rounded to 3 degrees (6 above 30 degrees of elevation, 12 above 60, 0 at
  * the poles), a uint16 index of 61 x 31 at 0x002DE590 to a pair of 32-byte
@@ -380,7 +379,7 @@ static float hrtf_scale(void)
         const char *e = getenv("PDO_HRTF");
         scale = e ? (float)(atoi(e) > 0 ? atoi(e) : 0) : 512.0f;
         if (e)
-            SDL_Log("dsound: PDO_HRTF: %s", scale > 0.0f ? "HRTF taps scaled by the value" : "panned, no HRTF");
+            SDL_Log("dsound: PDO_HRTF: %s %g", scale > 0.0f ? "HRTF taps /" : "off,", scale);
     }
     return scale;
 }
@@ -998,13 +997,15 @@ void sub_002C242A(void)
 {
     uint32_t cfg = test_ac3() ? 0x00010004u : 0x00000002u;    /* or DSSPEAKER_STEREO */
 
-    /* From the movie setup (call at 0x000687E4): ebx holds the .aix name,
-     * or 0 for a movie with only the .sfd's stereo. */
-    if (MEM32(g_esp) == 0x000687E9u)   /* the setup's argument, the .sfd name, above our two
-                                        * arguments, its saved edi, ebp, ebx and return */
+    /* From the movie setup (call at 0x000687E4): its argument, the .sfd
+     * name, is above our two arguments and its saved edi, ebp, ebx and
+     * return; ebx holds the .aix name, or 0 for a movie with only the
+     * .sfd's stereo. */
+    if (MEM32(g_esp) == 0x000687E9u) {
         pdo_movie_opened(MEM32(g_esp + 0x1C));
-    if (test_ac3() && MEM32(g_esp) == 0x000687E9u)
-        movie51_start(g_ebx);
+        if (test_ac3())
+            movie51_start(g_ebx);
+    }
     TRACE("GetSpeakerConfig -> 0x%08x", cfg);
     if (ARG(1))
         MEM32(ARG(1)) = cfg;
