@@ -239,13 +239,20 @@ virtual addresses in the USA `default.xbe`.
 
 ## Movies
 
-- The .sfd movies are 640 x 368 MPEG (640 x 360 shown, 16:9). The game
-  draws each picture as one screen-space quad (the draw returns to
-  0x000688E3): a 640 x 480 texture placed 56 lines down, its top 360 lines
-  the picture, so the 640 x 480 frame has 56-line black bars. It draws them
-  the same way in its 16:9 mode, where the anamorphic frame stretched them.
-  We show that rectangle alone when it is the frame's only draw
-  (pdo_gfx_mark_movie).
+- The .sfd movies are MPEG; the opening's is 640 x 368 (640 x 360 shown,
+  16:9). The game draws each picture as one screen-space quad (the draw
+  returns to 0x000688E3), the decoded frames its texture with the picture
+  at the top left: for the opening a 640 x 480 texture placed 56 lines
+  down, so the 640 x 480 frame has 56-line black bars. It draws them the
+  same way in its 16:9 mode, where the anamorphic frame stretched them.
+  Pandora's Box has more movies (ALEL_ENDING, AZEL_opening, flash_azel,
+  PDzewi_shortopening_snd, PDzwei_ending_snd, ins1_bs, ins2_bs), some
+  smaller pictures. The movie setup (0x000687B0) takes the .sfd name as
+  its argument (at +0x1C at its GetSpeakerConfig call, returning to
+  0x000687E9). A movie fades in and out under an untextured full-frame
+  quad (0x0006A0A8). We show the picture's rectangle alone, its size from
+  the .sfd's sequence header and placed through the quad's texture
+  coordinates, when nothing but a fade is drawn over it.
 
 ## Widescreen
 
