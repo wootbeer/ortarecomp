@@ -138,12 +138,12 @@ void pdo_gfx_draw(const pdo_draw *d, const pdo_vertex *v, uint32_t nv,
  * of the game's vertex data), so frame interpolation can find the same
  * draw in the next frame. */
 void pdo_gfx_set_draw_source(const void *src);
-/* This frame shows a movie (id: which, new for each one played), its
- * picture in that rectangle of the back buffer (pixels). If nothing else
- * is drawn but fades and screen-space words (subtitles), the window shows
+/* This frame shows a movie, its picture in that rectangle of the back
+ * buffer (pixels). If nothing else is drawn but fades and screen-space
+ * words (subtitles, laid over the picture's bottom), the window shows
  * the picture alone, at its own shape, as the Movies setting says -- not the
  * letterboxed frame, which in the game's 16:9 mode came out stretched. */
-void pdo_gfx_mark_movie(uint32_t id, float x0, float y0, float x1, float y1);
+void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1);
 
 /* D3DCLEAR_* flags: TARGET 0xF0, ZBUFFER 0x01, STENCIL 0x02. color is a
  * D3DCOLOR (ARGB). */

@@ -99,6 +99,8 @@ static SDL_AtomicInt pause_on;
 /* Window pass: the frame (aspect, softening) and the overlay over it; and the
  * seed pass that copies a resolved target back into its multisampled one. */
 static SDL_GPUGraphicsPipeline *screen_pipeline, *overlay_pipeline, *seed_pipeline;
+/* the window pass with a lighter-of-the-two blend: a movie's caption over its picture */
+static SDL_GPUGraphicsPipeline *caption_pipeline;
 static SDL_GPUSampler *linear;
 static SDL_GPUTexture *overlay_tex;
 
@@ -238,7 +240,6 @@ typedef struct frame_data {
     Uint64 stamp;           /* when it was handed over */
     bool movie;             /* pdo_gfx_mark_movie: the movie's picture, x0 y0 x1 y1 */
     float movie_rect[4];
-    uint32_t movie_id;
     /* Main thread: the frame's own GPU copies, uploaded once (on_gpu) and
      * used for every frame shown from it. */
     SDL_GPUBuffer *gvb, *gib, *gblob, *gconst;
@@ -414,10 +415,9 @@ void pdo_gfx_set_draw_source(const void *src)
     draw_src = (uintptr_t)src;
 }
 
-void pdo_gfx_mark_movie(uint32_t id, float x0, float y0, float x1, float y1)
+void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1)
 {
     F->movie = x1 > x0 && y1 > y0;
-    F->movie_id = id;
     F->movie_rect[0] = x0;
     F->movie_rect[1] = y0;
     F->movie_rect[2] = x1;
@@ -453,11 +453,13 @@ static bool screen_rect(const frame_data *f, const command *c, float r[4])
 /* The movie picture of frame f, in frame pixels, if it is a movie frame
  * with nothing over it but fades (an untextured quad over the whole frame,
  * 0x0006A0A8 at a movie's start and end) and screen-space draws such as
- * subtitles, whose rectangles are added so they are not cut off. Anything
- * else (3D, a vertex program): the whole frame instead. */
-static bool movie_only(const frame_data *f, float r[4])
+ * subtitles. Those outside the picture make its caption (cap, false if
+ * none): drawn over the bottom of the picture instead of being cut off.
+ * Anything else (3D, a vertex program): the whole frame instead. */
+static bool movie_only(const frame_data *f, float r[4], float cap[4], bool *has_cap)
 {
     bool movie = false;
+    *has_cap = false;
     if (!f || !f->movie)
         return false;
     r[0] = SDL_max(f->movie_rect[0], 0.0f);
@@ -478,39 +480,32 @@ static bool movie_only(const frame_data *f, float r[4])
         if (!c->draw.tex[0].data && d[0] <= 0.5f && d[1] <= 0.5f && d[2] >= (float)frame_w - 0.5f &&
             d[3] >= (float)frame_h - 0.5f)
             continue;           /* a fade */
-        r[0] = SDL_min(r[0], SDL_max(d[0], 0.0f));
-        r[1] = SDL_min(r[1], SDL_max(d[1], 0.0f));
-        r[2] = SDL_max(r[2], SDL_min(d[2], (float)frame_w));
-        r[3] = SDL_max(r[3], SDL_min(d[3], (float)frame_h));
+        d[0] = SDL_max(d[0], 0.0f);
+        d[1] = SDL_max(d[1], 0.0f);
+        d[2] = SDL_min(d[2], (float)frame_w);
+        d[3] = SDL_min(d[3], (float)frame_h);
+        if (d[0] >= r[0] && d[1] >= r[1] && d[2] <= r[2] && d[3] <= r[3])
+            continue;           /* on the picture: shown with it */
+        if (!*has_cap) {
+            memcpy(cap, d, sizeof d);
+            *has_cap = true;
+        } else {
+            cap[0] = SDL_min(cap[0], d[0]);
+            cap[1] = SDL_min(cap[1], d[1]);
+            cap[2] = SDL_max(cap[2], d[2]);
+            cap[3] = SDL_max(cap[3], d[3]);
+        }
     }
+    if (*has_cap && (cap[2] - cap[0] < 1.0f || cap[3] - cap[1] < 1.0f))
+        *has_cap = false;
     return r[2] - r[0] >= 16.0f && r[3] - r[1] >= 16.0f;
 }
 
-/* The frame on the screen's movie picture, worked out when it was drawn:
- * the window pass also runs under the options menu, after the game has
- * moved on to recording the next frame. Within one movie it only grows
- * (pdo_gfx_mark_movie's movie number): the first subtitle widens it once
- * for the rest of the movie, rather than the picture jumping each line. */
-static bool shown_movie;
-static float shown_movie_rect[4];
-static uint32_t shown_movie_id;
-
-static void update_shown_movie(const frame_data *f)
-{
-    float r[4];
-    shown_movie = movie_only(f, r);
-    if (!shown_movie)
-        return;
-    if (f->movie_id != shown_movie_id) {
-        shown_movie_id = f->movie_id;
-        memcpy(shown_movie_rect, r, sizeof r);
-        return;
-    }
-    shown_movie_rect[0] = SDL_min(shown_movie_rect[0], r[0]);
-    shown_movie_rect[1] = SDL_min(shown_movie_rect[1], r[1]);
-    shown_movie_rect[2] = SDL_max(shown_movie_rect[2], r[2]);
-    shown_movie_rect[3] = SDL_max(shown_movie_rect[3], r[3]);
-}
+/* The frame on the screen's movie picture and caption, worked out when it
+ * was drawn: the window pass also runs under the options menu, after the
+ * game has moved on to recording the next frame. */
+static bool shown_movie, shown_cap;
+static float shown_movie_rect[4], shown_cap_rect[4];
 
 int32_t pdo_gfx_vsh_program(const uint32_t *code, uint32_t count)
 {
@@ -1756,6 +1751,14 @@ static bool init_present(void)
         ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
         ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
         overlay_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        /* max(caption, picture): white words show, their black goes */
+        ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        ct.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        ct.blend_state.color_blend_op = SDL_GPU_BLENDOP_MAX;
+        ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
+        ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_MAX;
+        caption_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
         if (!screen_pipeline || !overlay_pipeline)
             SDL_Log("gfx: cannot create the window pass (%s)", SDL_GetError());
     }
@@ -3278,7 +3281,9 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
     bool changed;
     SDL_GPUColorTargetInfo ct;
     SDL_GPURenderPass *pass;
-    SDL_GPUViewport vp, fitv;
+    SDL_GPUViewport vp, fitv, cvp;
+    SDL_Rect csc;
+    bool cap_draw = false;
 
     if (!have_swapchain || !screen_pipeline)
         return;
@@ -3360,6 +3365,28 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
             vp.h = SDL_floorf(frame_h * ky);
             vp.x = SDL_floorf(((float)sw - rw * kx) / 2 - mr[0] * kx);
             vp.y = SDL_floorf(((float)sh - rh * ky) / 2 - mr[1] * ky);
+            if (shown_cap && caption_pipeline) {
+                /* The caption (subtitles outside the picture) over the
+                 * picture's bottom, at the picture's scale or smaller to
+                 * fit the window's width, centred, a little above the
+                 * bottom of the picture or of the window. */
+                const float *cr = shown_cap_rect;
+                float cw = cr[2] - cr[0], ch = cr[3] - cr[1];
+                float kc = SDL_min(SDL_min(kx, ky), (float)sw / cw);
+                float bottom = SDL_min((float)sh, ((float)sh + rh * ky) / 2) - 0.03f * (float)sh;
+                float tx = SDL_floorf(((float)sw - cw * kc) / 2), ty = SDL_floorf(bottom - ch * kc);
+                SDL_zero(cvp);
+                cvp.w = SDL_floorf(frame_w * kc);
+                cvp.h = SDL_floorf(frame_h * kc);
+                cvp.x = tx - SDL_floorf(cr[0] * kc);
+                cvp.y = ty - SDL_floorf(cr[1] * kc);
+                cvp.max_depth = 1.0f;
+                csc.x = (int)tx;
+                csc.y = (int)SDL_max(ty, 0.0f);
+                csc.w = (int)SDL_ceilf(cw * kc);
+                csc.h = (int)SDL_ceilf(ch * kc);
+                cap_draw = csc.w > 0 && csc.h > 0;
+            }
             {
                 static Uint32 told_w, told_h;
                 static float told_r[4];
@@ -3398,6 +3425,16 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
         SDL_PushGPUFragmentUniformData(cmd, 0, params, sizeof params);
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+        if (cap_draw) {
+            SDL_Rect all = { 0, 0, (int)sw, (int)sh };
+            SDL_SetGPUViewport(pass, &cvp);
+            SDL_SetGPUScissor(pass, &csc);
+            SDL_BindGPUGraphicsPipeline(pass, caption_pipeline);
+            SDL_BindGPUFragmentSamplers(pass, 0, &tsb, 1);
+            SDL_PushGPUFragmentUniformData(cmd, 0, params, sizeof params);
+            SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
+            SDL_SetGPUScissor(pass, &all);
+        }
     }
     if (img && overlay_tex && overlay_pipeline) {
         SDL_GPUTextureSamplerBinding tsb = { overlay_tex, linear };
@@ -5075,7 +5112,7 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
     F = f;
     P = prev;
     blend = t;
-    update_shown_movie(f);
+    shown_movie = movie_only(f, shown_movie_rect, shown_cap_rect, &shown_cap);
     if (f->gamma_new) {
         memcpy(gamma_rgba, f->gamma, sizeof gamma_rgba);
         gamma_dirty = true;
