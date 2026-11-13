@@ -11,6 +11,13 @@
   Options > Sound > 3D sound: On (the default) or Off (the earlier
   left/right pan).
 
+### Fixed
+
+- Movies: shown at their own 16:9 shape without the game's black bars,
+  filling a 16:9 window edge to edge. In the game's 16:9 mode they were
+  stretched a third too wide. Fit to window applies: Bars, Stretch or Zoom
+  (issue 18).
+
 ## v0.1.5 (beta)
 
 ### Added

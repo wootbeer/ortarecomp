@@ -1140,6 +1140,30 @@ static void unpack_d3dcolor(uint32_t c, float out[4])
     out[3] = (float)(c >> 24) / 255.0f;
 }
 
+/* Movies: the game draws each picture as one screen-space quad from its
+ * movie player (the draw returning to 0x000688E3), a 640 x 480 texture
+ * placed 56 lines down whose top 360 lines are the picture -- 640 x 360,
+ * 16:9, from the .sfd's 640 x 368 -- so the frame has black bars above and
+ * below. The picture's rectangle: the quad's left, right and top, 16:9. */
+static void mark_movie(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t at = base + (first + i) * stride;
+        float x, y;
+        uint32_t ux = MEM32(at), uy = MEM32(at + 4);
+        memcpy(&x, &ux, 4);
+        memcpy(&y, &uy, 4);
+        x0 = SDL_min(x0, x);
+        x1 = SDL_max(x1, x);
+        y0 = SDL_min(y0, y);
+    }
+    x0 += 0.5f;     /* the quad's half-pixel offset */
+    x1 += 0.5f;
+    y0 += 0.5f;
+    pdo_gfx_mark_movie(x0, y0, x1, y0 + (x1 - x0) * 9.0f / 16.0f);
+}
+
 static void fill_draw_state(pdo_draw *d, bool pretransformed)
 {
     int rtw, rth;
@@ -2139,6 +2163,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         return;
     }
     fill_draw_state(&d, pre);
+    if (d.caller[0] == 0x000688E3u && pre && count >= 2 && stride >= 8)
+        mark_movie(base, stride, first, count);
     {   /* PDO_CAPTURE=frame: the render-state table around fog, once. */
         static long long cap = -2;
         if (cap == -2)

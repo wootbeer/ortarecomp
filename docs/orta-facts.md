@@ -237,6 +237,16 @@ virtual addresses in the USA `default.xbe`.
   buffer gives its voice back on Stop. We do not cap voices; episode 1's
   busiest second has 24 playing.
 
+## Movies
+
+- The .sfd movies are 640 x 368 MPEG (640 x 360 shown, 16:9). The game
+  draws each picture as one screen-space quad (the draw returns to
+  0x000688E3): a 640 x 480 texture placed 56 lines down, its top 360 lines
+  the picture, so the 640 x 480 frame has 56-line black bars. It draws them
+  the same way in its 16:9 mode, where the anamorphic frame stretched them.
+  We show that rectangle alone when it is the frame's only draw
+  (pdo_gfx_mark_movie).
+
 ## Widescreen
 
 Orta has an anamorphic 16:9 mode. The display setup (0x0003D020) asks its

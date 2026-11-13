@@ -236,6 +236,8 @@ typedef struct frame_data {
     bool progs_new, gamma_new;
     uint8_t gamma[256 * 4];
     Uint64 stamp;           /* when it was handed over */
+    bool movie;             /* pdo_gfx_mark_movie: the movie's picture, x0 y0 x1 y1 */
+    float movie_rect[4];
     /* Main thread: the frame's own GPU copies, uploaded once (on_gpu) and
      * used for every frame shown from it. */
     SDL_GPUBuffer *gvb, *gib, *gblob, *gconst;
@@ -309,6 +311,7 @@ static void reset_frame(frame_data *f)
     f->nups = 0;
     f->progs_new = f->gamma_new = false;
     f->on_gpu = false;
+    f->movie = false;
 }
 
 /* The game thread records into pool[0] first. */
@@ -408,6 +411,33 @@ void pdo_gfx_draw(const pdo_draw *d, const pdo_vertex *v, uint32_t nv,
 void pdo_gfx_set_draw_source(const void *src)
 {
     draw_src = (uintptr_t)src;
+}
+
+void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1)
+{
+    F->movie = x1 > x0 && y1 > y0;
+    F->movie_rect[0] = x0;
+    F->movie_rect[1] = y0;
+    F->movie_rect[2] = x1;
+    F->movie_rect[3] = y1;
+}
+
+/* The movie picture of the frame shown, if it is a movie frame with
+ * nothing else drawn (a menu, subtitles or a fade over it: the whole
+ * frame instead), in frame pixels. */
+static bool movie_only(float r[4])
+{
+    uint32_t draws = 0;
+    if (!F || !F->movie)
+        return false;
+    for (uint32_t i = 0; i < F->ncmds; i++)
+        if (F->cmds[i].kind == CMD_DRAW && ++draws > 1)
+            return false;
+    r[0] = SDL_max(F->movie_rect[0], 0.0f);
+    r[1] = SDL_max(F->movie_rect[1], 0.0f);
+    r[2] = SDL_min(F->movie_rect[2], (float)frame_w);
+    r[3] = SDL_min(F->movie_rect[3], (float)frame_h);
+    return r[2] - r[0] >= 16.0f && r[3] - r[1] >= 16.0f;
 }
 
 int32_t pdo_gfx_vsh_program(const uint32_t *code, uint32_t count)
@@ -3232,6 +3262,7 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         float kf = SDL_min((float)sw / aw, (float)sh / frame_h);
         float kz = SDL_max((float)sw / aw, (float)sh / frame_h);
         float k = st->fit == PDO_FIT_ZOOM ? kz : kf;
+        float mr[4];
         SDL_zero(fitv);
         fitv.w = SDL_floorf(aw * kf);
         fitv.h = SDL_floorf(frame_h * kf);
@@ -3239,7 +3270,33 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         fitv.y = SDL_floorf((sh - fitv.h) / 2);
         fitv.max_depth = 1.0f;
         SDL_zero(vp);
-        if (st->fit == PDO_FIT_STRETCH) {
+        if (movie_only(mr)) {
+            /* A movie: its picture (square pixels in the 4:3 frame, in
+             * either aspect mode) placed by the Fit setting, the frame
+             * around it -- its black bars -- off the window or black. */
+            float rw = mr[2] - mr[0], rh = mr[3] - mr[1];
+            float kx = SDL_min((float)sw / rw, (float)sh / rh), ky;
+            if (st->fit == PDO_FIT_ZOOM)
+                kx = SDL_max((float)sw / rw, (float)sh / rh);
+            ky = kx;
+            if (st->fit == PDO_FIT_STRETCH) {
+                kx = (float)sw / rw;
+                ky = (float)sh / rh;
+            }
+            vp.w = SDL_floorf(frame_w * kx);
+            vp.h = SDL_floorf(frame_h * ky);
+            vp.x = SDL_floorf(((float)sw - rw * kx) / 2 - mr[0] * kx);
+            vp.y = SDL_floorf(((float)sh - rh * ky) / 2 - mr[1] * ky);
+            {
+                static Uint32 told_w, told_h;
+                if (told_w != sw || told_h != sh) {
+                    told_w = sw;
+                    told_h = sh;
+                    SDL_Log("gfx: a movie: its %gx%g picture alone, %gx%g in the %ux%u window", rw, rh,
+                            SDL_floorf(rw * kx), SDL_floorf(rh * ky), sw, sh);
+                }
+            }
+        } else if (st->fit == PDO_FIT_STRETCH) {
             vp.w = (float)sw;
             vp.h = (float)sh;
         } else {
