@@ -92,6 +92,11 @@ void pdo_voice_set_3d_distance(int id, float gain);
  * distance gain, then where it is: lateral -1 (left) .. 1 (right), front
  * -1 (behind) .. 1 (ahead), both as cosines from the listener's axes. */
 void pdo_voice_set_3d_ears(int id, float gain, float lateral, float front);
+/* The Xbox's HRTF on a mono 3D voice: the distance gain, each ear's
+ * 31-tap FIR at 48 kHz (index 0 the newest sample; 0 left, 1 right) and
+ * each ear's delay in samples. Stereo voices are panned to the middle. */
+#define PDO_HRTF_TAPS 31
+void pdo_voice_set_3d_hrtf(int id, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2]);
 /* 5.1: a 3D voice panned between the two nearest of the four corner
  * speakers (front +-30, back +-110 degrees), as the Xbox's 3D mixing did
  * on surround; same arguments as the ears. */

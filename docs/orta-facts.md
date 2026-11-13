@@ -192,15 +192,25 @@ virtual addresses in the USA `default.xbe`.
   ours) with, per bin: 6/7 the front share, 8/9 the back share (0x002C520B
   splits a 3D voice between front and back by where it is), 10 the I3DL2
   room level, 2 a centre term when enabled. Left and right get the same
-  volume: the APU's per-voice HRTF filter places a 3D voice left or right
-  (0x002C7551 uploads 31 taps per ear and an ITD). Tables: 1,111 left/right
-  pairs of 32 bytes at 0x002CCFD0, picked through a 61 x 31 index of
-  uint16 at 0x002DE590 (rows: azimuth 0-180 in 3 degree steps, mirrored by
-  swapping ears; columns: elevation in 6 degree steps; 0x002C5497). The tap
-  format and the APU's HRTF scaling are not known: read as two's
-  complement / 128 (as xemu does) a frontal filter has about +9 dB of gain,
-  as sign-magnitude about +3 dB. Our 3D path pans instead (equal power, -3
-  dB each ear straight ahead).
+  volume: the APU's per-voice HRTF filter places a 3D voice left or right.
+  Lookup (0x002C5497): elevation rounded to 6 degrees (columns 0-30 from
+  -90), azimuth folded to 0-180 and rounded to 3 degrees (6 above 30
+  degrees of elevation, 12 above 60, 0 at the poles; rows 0-60); a uint16
+  index of 61 x 31 at 0x002DE590 gives a pair of 32-byte entries at
+  0x002CCFD0 + index * 32 (2,222 entries). An entry is 31 taps, sign and
+  magnitude (bit 7 the sign: 20 % of the bytes are 0x80-0x9F, small
+  negatives), the newest sample first, then a byte that in the pair's
+  first entry is the interaural delay in 48 kHz samples (0-32, 30 at 90
+  degrees). The first entry is the ear away from the sound (the delay, and
+  10 kHz all but gone at 90 degrees), the second the ear facing it;
+  0x002C7551 sends the two interleaved to APU methods 0x400 on, swapped by
+  the azimuth's sign, and the delay negated for the other side. The taps'
+  scale in the APU is not known: straight ahead the filter sums to 295
+  (DC) with 10 kHz 7 dB below 1 kHz. PDO_TEST_HRTF=n runs them with taps
+  / n. Our default 3D path pans instead (equal power, -3 dB each ear
+  straight ahead); against it, episode 1's machine gun alone through the
+  HRTF is +3.7, +3.1, -0.9, -1.2 dB (100-500, 500-2k, 2k-6k, 6k-16k Hz)
+  at n = 256, 6 dB less at 512.
 - Enemy machine guns (24,012 and 13,212-byte ADPCM samples, mono 44.1 kHz,
   0.97 s and 0.53 s): each sound has a template buffer; every burst moves
   the template and every copy still playing to the shooter, then starts a
