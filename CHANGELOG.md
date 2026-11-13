@@ -8,7 +8,7 @@
   own HRTF filters, read from the game: each ear hears its own filtered
   sound and delay, as on the console, on speakers or headphones (Stereo and
   Headphones outputs; 5.1 is unchanged). Gunfire is softer and less harsh.
-  Options > Sound > 3D sound: Xbox (the default) or Simple (the earlier
+  Options > Sound > 3D sound: On (the default) or Off (the earlier
   left/right pan).
 
 ## v0.1.5 (beta)

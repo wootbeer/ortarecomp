@@ -359,9 +359,9 @@ static float fval(uint32_t v)
     return f;
 }
 
-/* Stereo and Headphones outputs, Sound > 3D sound on Xbox (the default):
+/* Stereo and Headphones outputs, Sound > 3D sound On (the default):
  * mono 3D voices go through the Xbox's own HRTF filters, as the APU placed
- * them; Simple pans them (or on Headphones, the model head). The APU's scale for the taps is not
+ * them; Off pans them (or on Headphones, the model head). The APU's scale for the taps is not
  * known: / 512 sounded closest to the console by ear (256 is 6 dB louder).
  * PDO_HRTF=n divides by n instead; PDO_HRTF=0 pans as before (equal power,
  * or on Headphones the model head). DirectSound's lookup

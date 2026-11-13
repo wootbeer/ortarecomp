@@ -672,7 +672,7 @@ static float value_of(int item, char *v, size_t n)
         snprintf(v, n, "%s", outs[s->audio_out]);
         break;
     }
-    case ITEM_HRTF:   snprintf(v, n, "%s", s->hrtf ? "Xbox" : "Simple"); break;
+    case ITEM_HRTF:   snprintf(v, n, "%s", s->hrtf ? "On" : "Off"); break;
     case ITEM_VSH:    snprintf(v, n, "%s", s->gpu_vertex ? "GPU" : "CPU"); break;
     case ITEM_FVF:    snprintf(v, n, "%s", s->gpu_fixed ? "GPU" : "CPU"); break;
     case ITEM_INTERP: {
