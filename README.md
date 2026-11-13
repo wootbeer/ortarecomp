@@ -30,7 +30,7 @@ Android build is planned.
   look, optional TV softening, and bloom (Low or High) that leaves the HUD
   alone.
 - **Sound:** 3D positional audio through the Xbox's own HRTF filters (on
-  speakers or headphones), or 5.1 surround (3D sounds placed around four
+  speakers or headphones; or a simple pan), or 5.1 surround (3D sounds placed around four
   speakers, and the movies' own 5.1 soundtracks), with the game's room
   reverb and a master volume.
 - **Controls:** controllers, keyboard and mouse (with mouse aim), every

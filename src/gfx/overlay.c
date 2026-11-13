@@ -25,7 +25,7 @@
 #include <string.h>
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS, ITEM_VOLUME,
-       ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D,
+       ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
        ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
        ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_FULLSCREEN, ITEM_EXIT,
@@ -50,7 +50,7 @@ static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_
                                         ITEM_VSYNC, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
-static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_BACK };
+static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
 static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
@@ -273,6 +273,7 @@ static void change(int dir)
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
         pdo_mixer_apply_output();
         break;
+    case ITEM_HRTF:   s->hrtf = !s->hrtf; break;
     case ITEM_FPS:    s->show_fps = !s->show_fps; break;
     case ITEM_VSH:    s->gpu_vertex = !s->gpu_vertex; break;
     case ITEM_FVF:    s->gpu_fixed = !s->gpu_fixed; break;
@@ -671,6 +672,7 @@ static float value_of(int item, char *v, size_t n)
         snprintf(v, n, "%s", outs[s->audio_out]);
         break;
     }
+    case ITEM_HRTF:   snprintf(v, n, "%s", s->hrtf ? "Xbox" : "Simple"); break;
     case ITEM_VSH:    snprintf(v, n, "%s", s->gpu_vertex ? "GPU" : "CPU"); break;
     case ITEM_FVF:    snprintf(v, n, "%s", s->gpu_fixed ? "GPU" : "CPU"); break;
     case ITEM_INTERP: {
@@ -736,6 +738,7 @@ static const char *label_of(int item)
     case ITEM_SHADOWS: return "Shadows";
     case ITEM_RUMBLE: return "Vibration";
     case ITEM_3D:     return "Output";
+    case ITEM_HRTF:   return "3D sound";
     case ITEM_VSH:    return "Vertex programs";
     case ITEM_FVF:    return "Fixed function";
     case ITEM_INTERP: return "Frame gen.";
@@ -791,6 +794,10 @@ static const char *help_of(int item)
                                                       "5.1 speakers: sound all around." };
         return helps[pdo_settings_get()->audio_out];
     }
+    case ITEM_HRTF:
+        if (pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND)
+            return "Stereo/Headphones only.";
+        return pdo_settings_get()->hrtf ? "The Xbox's own 3D filters." : "A plain left/right pan.";
     case ITEM_VSH:    return "GPU is faster.";
     case ITEM_FVF:    return "GPU is faster.";
     case ITEM_INTERP: {

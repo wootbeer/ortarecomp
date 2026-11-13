@@ -359,8 +359,9 @@ static float fval(uint32_t v)
     return f;
 }
 
-/* Stereo and Headphones outputs: mono 3D voices go through the Xbox's own
- * HRTF filters, as the APU placed them. The APU's scale for the taps is not
+/* Stereo and Headphones outputs, Sound > 3D sound on Xbox (the default):
+ * mono 3D voices go through the Xbox's own HRTF filters, as the APU placed
+ * them; Simple pans them (or on Headphones, the model head). The APU's scale for the taps is not
  * known: / 512 sounded closest to the console by ear (256 is 6 dB louder).
  * PDO_HRTF=n divides by n instead; PDO_HRTF=0 pans as before (equal power,
  * or on Headphones the model head). DirectSound's lookup
@@ -452,7 +453,7 @@ static void apply_3d(int id)
         if (n > 1e-6f)
             x = (rel[0] * right[0] + rel[1] * right[1] + rel[2] * right[2]) / (d * n);
     }
-    if (hrtf_scale() > 0.0f && pdo_settings_get()->audio_out != PDO_AUDIO_SURROUND) {
+    if (pdo_settings_get()->hrtf && hrtf_scale() > 0.0f && pdo_settings_get()->audio_out != PDO_AUDIO_SURROUND) {
         const float fr[3] = { 0.0f, 0.0f, 1.0f }, up[3] = { 0.0f, 1.0f, 0.0f };
         const bool hr = src3d[id].mode == DS3DMODE_HEADRELATIVE;
         const float *ff = hr ? fr : f, *tt = hr ? up : t;
