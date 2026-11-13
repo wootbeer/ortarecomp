@@ -1,7 +1,8 @@
 # Current state
 
-v0.1.0 (beta): Panzer Dragoon Orta plays through all ten episodes and the
-ending on Windows, with music, movies, saves, bosses and Pandora's Box.
+v0.1.4 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
+through all ten episodes and the ending, with music, movies, saves, bosses
+and Pandora's Box. Changes since are under Unreleased in `CHANGELOG.md`.
 History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
 `docs/archive/state-bring-up.md`; facts about the game: `docs/orta-facts.md`.
 
@@ -58,11 +59,17 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
 3. First-time pipeline stalls (kept in `pipelines.bin` after).
 4. Android (Vulkan/Turnip): measure the recompiled code and the guest CPU
    lock on ARM; Linux's WaitForMultipleObjects polls with sleeps.
-5. Wishlist: the European (PAL) disc. Only the USA default.xbe is
+5. Gunfire sounds stacked and loud (issue 15). Fixed so far: the mixbins'
+   -6 dB headroom and the reverb send following distance. Left: up to 12
+   machine-gun copies play at once, started by the sound library at
+   0x225417 (`PDO_TEST_NEWEST=1` keeps only the newest and sounds closer to
+   the Xbox); find how often it really starts them. HRTF filters (Headphones
+   output) are not used: their tap scale is unknown (`docs/orta-facts.md`).
+6. Wishlist: the European (PAL) disc. Only the USA default.xbe is
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
-6. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
+7. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
    letterboxed by the game. Movies: find the bars in the picture and zoom
    on wide windows without cutting subtitles. Cutscenes: the game draws the
    bars itself, so its cutscene state has to be found first. Gameplay

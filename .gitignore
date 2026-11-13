@@ -18,10 +18,13 @@ build/
 listing_seeds.json
 # Reference captures (screenshots/audio from the game) used for testing
 captures/
-# F12 / CLV_CAPTURE and CLV_PS_DEBUG write these into the working directory
+# F12 / PDO_CAPTURE and PDO_PS_DEBUG write these into the working directory
 capture_*.bmp
 ps_tex_*.bmp
 *.bmp
+# PDO_AUDIO_DUMP recordings
+*.wav
+*.raw
 reference/
 # Lossless Scaling: the player's own DLL and the shaders translated from it
 Lossless.dll

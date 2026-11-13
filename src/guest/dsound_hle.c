@@ -19,9 +19,12 @@
  * and our ids; the game treats them as opaque interface pointers.
  *
  * Not implemented yet, accepted and recorded: envelopes (SetEG), LFOs,
- * filters, I3DL2 source HF levels, obstruction and occlusion, and the DSP
- * image's own effects (its I3DL2 reverb is ours, in src/audio/reverb.c). PDO_DSOUND_TRACE=1
- * logs every call.
+ * filters, I3DL2 source HF levels, obstruction and occlusion, the APU's
+ * HRTF filters (3D voices are panned instead), and the DSP image's own
+ * effects (its I3DL2 reverb is ours, in src/audio/reverb.c).
+ *
+ * PDO_DSOUND_TRACE=1 logs every call. Listening tests, off unless set:
+ * PDO_TEST_NEWEST=1 (src/audio/mixer.c); PDO_MOVIE51=0 keeps movies stereo.
  */
 
 #include "recomp_types.h"
@@ -334,11 +337,13 @@ void sub_002C2494(void)
  * min / (min + rolloff * (d - min)), held from the maximum distance on) and
  * an equal-power left/right pan from the listener's orientation, or on
  * headphones (the output setting) a model head, or on 5.1 a pan around the
- * four corner speakers. No cones or Doppler. Deferred settings apply at once. Orta gives positions
- * relative to the camera with the listener at the origin; enemy gunfire
- * (looping 3D buffers, stopped when the enemy stops) is near enough to
- * stay at full volume, panned. */
-
+ * four corner speakers. No cones or Doppler (Orta sets cones of 360 degrees
+ * and no velocity). Deferred settings apply at once. Positions are in the
+ * world, the listener moving with the player; enemy gunfire is played at
+ * the shooter, within the minimum distance of the player, so at full
+ * volume. On the Xbox the left/right placement is the APU's per-voice HRTF
+ * filter instead of a pan (docs/orta-facts.md, "DirectSound's 3D voice
+ * volumes"). */
 
 static float fget(uint32_t va)
 {
