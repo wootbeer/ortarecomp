@@ -247,7 +247,8 @@ virtual addresses in the USA `default.xbe`.
   same way in its 16:9 mode, where the anamorphic frame stretched them.
   Pandora's Box has more movies (ALEL_ENDING, AZEL_opening, flash_azel,
   PDzewi_shortopening_snd, PDzwei_ending_snd, ins1_bs, ins2_bs), some
-  smaller pictures. The movie setup (0x000687B0) takes the .sfd name as
+  smaller pictures; the original Panzer Dragoon's films are in P1Media
+  (endingmv.sfd), and the setup gets bare names. The movie setup (0x000687B0) takes the .sfd name as
   its argument (at +0x1C at its GetSpeakerConfig call, returning to
   0x000687E9). A movie fades in and out under an untextured full-frame
   quad (0x0006A0A8). We show the picture's rectangle alone, its size from

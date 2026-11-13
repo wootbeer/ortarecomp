@@ -1152,11 +1152,40 @@ static void unpack_d3dcolor(uint32_t c, float out[4])
  * goes through the quad's texture coordinates. */
 static int movie_w, movie_h;    /* the movie's picture, pixels; 0: not known */
 
+/* The picture size in an .sfd's MPEG sequence header (in its first 64 KB);
+ * false if the file is not there or has none. */
+static bool sfd_picture(const char *path, int *pw, int *ph)
+{
+    static uint8_t buf[65536];
+    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+    size_t got;
+
+    if (!io)
+        return false;
+    got = SDL_ReadIO(io, buf, sizeof buf);
+    SDL_CloseIO(io);
+    for (size_t p = 0; p + 7 < got; p++)
+        if (buf[p] == 0 && buf[p + 1] == 0 && buf[p + 2] == 1 && buf[p + 3] == 0xB3) {
+            int w = buf[p + 4] << 4 | buf[p + 5] >> 4, h = (buf[p + 5] & 15) << 8 | buf[p + 6];
+            int h169 = w * 9 / 16, h43 = w * 3 / 4;
+            if (h % 16 == 0 && h169 < h && h - h169 < 16)
+                h = h169;
+            else if (h % 16 == 0 && h43 < h && h - h43 < 16)
+                h = h43;
+            *pw = w;
+            *ph = h;
+            return w > 0 && h > 0;
+        }
+    return false;
+}
+
 void pdo_movie_opened(uint32_t name_va)
 {
     char name[128], path[PDO_PATH_MAX];
-    const char *base = name;
+    const char *base = name, *rel = name, *dir = pdo_guest_game_dir();
+    static const char *movie_dirs[] = { "Movie", "movie", "MOVIE" };
     size_t n = 0;
+    bool ok;
 
     movie_w = movie_h = 0;
     while (n + 1 < sizeof name && MEM8(name_va + n))
@@ -1165,31 +1194,37 @@ void pdo_movie_opened(uint32_t name_va)
     for (const char *c = name; *c; c++)
         if (*c == '\\' || *c == '/' || *c == ':')
             base = c + 1;
-    static const char *dirs[] = { "Movie", "movie", "MOVIE" };
-    for (size_t k = 0; k < SDL_arraysize(dirs) && !movie_w; k++) {
-        SDL_IOStream *io;
-        uint8_t buf[65536];
-        size_t got;
-        snprintf(path, sizeof path, "%s/%s/%s", pdo_guest_game_dir(), dirs[k], base);
-        io = SDL_IOFromFile(path, "rb");
-        if (!io)
-            continue;
-        got = SDL_ReadIO(io, buf, sizeof buf);
-        SDL_CloseIO(io);
-        for (size_t p = 0; p + 7 < got; p++)
-            if (buf[p] == 0 && buf[p + 1] == 0 && buf[p + 2] == 1 && buf[p + 3] == 0xB3) {
-                int w = buf[p + 4] << 4 | buf[p + 5] >> 4, h = (buf[p + 5] & 15) << 8 | buf[p + 6];
-                int h169 = w * 9 / 16, h43 = w * 3 / 4;
-                if (h % 16 == 0 && h169 < h && h - h169 < 16)
-                    h = h169;
-                else if (h % 16 == 0 && h43 < h && h - h43 < 16)
-                    h = h43;
-                movie_w = w;
-                movie_h = h;
-                break;
-            }
+    /* The name as the game gives it, if it has a folder; */
+    if (SDL_strncasecmp(rel, "\\Device\\CdRom0\\", 15) == 0)
+        rel += 15;
+    else if (rel[0] && rel[1] == ':')
+        rel += rel[2] == '\\' || rel[2] == '/' ? 3 : 2;
+    snprintf(path, sizeof path, "%s/%s", dir, rel);
+    for (char *c = path + strlen(dir); *c; c++)
+        if (*c == '\\')
+            *c = '/';
+    ok = sfd_picture(path, &movie_w, &movie_h);
+    /* else Movie/ (the game's own films); */
+    for (size_t k = 0; !ok && k < SDL_arraysize(movie_dirs); k++) {
+        snprintf(path, sizeof path, "%s/%s/%s", dir, movie_dirs[k], base);
+        ok = sfd_picture(path, &movie_w, &movie_h);
     }
-    SDL_Log("d3d: movie %s: picture %dx%d", base, movie_w, movie_h);
+    /* else any folder one down (P1Media: the original game's films). */
+    if (!ok) {
+        char pattern[160];
+        int count = 0;
+        char **hits;
+        snprintf(pattern, sizeof pattern, "*/%s", base);
+        hits = SDL_GlobDirectory(dir, pattern, SDL_GLOB_CASEINSENSITIVE, &count);
+        if (hits && count > 0) {
+            snprintf(path, sizeof path, "%s/%s", dir, hits[0]);
+            ok = sfd_picture(path, &movie_w, &movie_h);
+        }
+        SDL_free(hits);
+    }
+    if (!ok)
+        movie_w = movie_h = 0;
+    SDL_Log("d3d: movie %s: picture %dx%d", name, movie_w, movie_h);
 }
 
 static void mark_movie(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
