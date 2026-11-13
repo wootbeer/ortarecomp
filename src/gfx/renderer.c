@@ -424,29 +424,40 @@ void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1)
     F->movie_rect[3] = y1;
 }
 
-static bool draw_corners(const frame_data *f, const command *c, float out[8]);
 static bool is_3d(const frame_data *f, const command *c);
 
-/* A screen-space draw's rectangle in frame pixels, from its first and last
- * vertices: pretransformed fixed-function vertices are pixels already,
- * the CPU's are clip space. False for 3D and vertex-program draws. */
+/* A screen-space draw's rectangle in frame pixels, over all its vertices
+ * (a line of subtitles is one draw of many letters): pretransformed
+ * fixed-function vertices are pixels already, the CPU's are clip space.
+ * False for 3D and vertex-program draws. */
 static bool screen_rect(const frame_data *f, const command *c, float r[4])
 {
-    float b[8];
-    if (c->vsh || is_3d(f, c) || !draw_corners(f, c, b))
+    uint32_t n = c->id_nv ? c->id_nv : 0;
+    if (c->vsh || is_3d(f, c) || !n)
         return false;
-    if (c->fvf < 0) {           /* CPU-made: clip space to pixels */
-        for (int k = 0; k < 8; k += 4) {
-            if (b[k + 3] == 0.0f)
+    r[0] = r[1] = 1e9f;
+    r[2] = r[3] = -1e9f;
+    for (uint32_t i = 0; i < n; i++) {
+        float p[4];
+        if (c->fvf < 0) {       /* CPU-made: clip space to pixels */
+            if (c->vbase + i >= f->nverts)
                 return false;
-            b[k + 0] = (b[k + 0] / b[k + 3] + 1.0f) * 0.5f * (float)frame_w;
-            b[k + 1] = (1.0f - b[k + 1] / b[k + 3]) * 0.5f * (float)frame_h;
+            memcpy(p, f->verts[c->vbase + i].pos, 16);
+            if (p[3] == 0.0f)
+                return false;
+            p[0] = (p[0] / p[3] + 1.0f) * 0.5f * (float)frame_w;
+            p[1] = (1.0f - p[1] / p[3]) * 0.5f * (float)frame_h;
+        } else {
+            uint32_t at = (uint32_t)f->fvf_us[c->fvf].layout0[0] + i * (uint32_t)f->fvf_us[c->fvf].layout0[1];
+            if (at + 8 > f->nblob)
+                return false;
+            memcpy(p, f->blob + at, 8);
         }
+        r[0] = SDL_min(r[0], p[0]);
+        r[1] = SDL_min(r[1], p[1]);
+        r[2] = SDL_max(r[2], p[0]);
+        r[3] = SDL_max(r[3], p[1]);
     }
-    r[0] = SDL_min(b[0], b[4]);
-    r[1] = SDL_min(b[1], b[5]);
-    r[2] = SDL_max(b[0], b[4]);
-    r[3] = SDL_max(b[1], b[5]);
     return true;
 }
 
