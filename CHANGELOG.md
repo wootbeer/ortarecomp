@@ -13,10 +13,13 @@
 
 ### Fixed
 
-- Movies: shown at their own 16:9 shape without the game's black bars,
-  filling a 16:9 window edge to edge. In the game's 16:9 mode they were
-  stretched a third too wide. Fit to window applies: Bars, Stretch or Zoom
-  (issue 18).
+- Movies: shown at their own shape without the game's black bars, filling
+  a 16:9 window edge to edge. In the game's 16:9 mode they were stretched
+  a third too wide (issue 18). Options > Display > Movies: Bars (the whole
+  picture, the default), Stretch, Zoom, or Original (as the game frames
+  it).
+- Menu: long pages (Display in the launcher) ran past the bottom of the
+  screen, hiding the help line; their rows now sit closer.
 
 ## v0.1.5 (beta)
 

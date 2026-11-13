@@ -24,7 +24,7 @@
 #include <stdio.h>
 #include <string.h>
 
-enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS, ITEM_VOLUME,
+enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
        ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
@@ -44,9 +44,9 @@ static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT };
 static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
-static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS,
+static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS,
                                     ITEM_FPS, ITEM_BACK };
-static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_FULLSCREEN, ITEM_SOFT,
+static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
                                         ITEM_VSYNC, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
@@ -261,6 +261,7 @@ static void change(int dir)
     }
     case ITEM_ASPECT: s->aspect = (s->aspect + PDO_ASPECT_COUNT + dir) % PDO_ASPECT_COUNT; break;
     case ITEM_FIT:    s->fit = (s->fit + PDO_FIT_COUNT + dir) % PDO_FIT_COUNT; break;
+    case ITEM_MOVIES: s->movie_fit = (s->movie_fit + PDO_MOVIE_COUNT + dir) % PDO_MOVIE_COUNT; break;
     case ITEM_SOFT:   s->soft_filter = !s->soft_filter; break;
     case ITEM_VOLUME: s->master_volume = SDL_clamp(s->master_volume + 5 * dir, 0, 100); break;
     case ITEM_BOX:    s->unlock_box = !s->unlock_box; break;
@@ -641,6 +642,11 @@ static float value_of(int item, char *v, size_t n)
         break;
     case ITEM_ASPECT: snprintf(v, n, "%s", aspects[s->aspect]); break;
     case ITEM_FIT:    snprintf(v, n, "%s", fits[s->fit]); break;
+    case ITEM_MOVIES: {
+        static const char *mfits[PDO_MOVIE_COUNT] = { "Bars", "Stretch", "Zoom", "Original" };
+        snprintf(v, n, "%s", mfits[s->movie_fit]);
+        break;
+    }
     case ITEM_SOFT:   snprintf(v, n, "%s", s->soft_filter ? "On" : "Off"); break;
     case ITEM_FPS:    snprintf(v, n, "%s", s->show_fps ? "On" : "Off"); break;
     case ITEM_FULLSCREEN: snprintf(v, n, "%s", s->fullscreen ? "On" : "Off"); break;
@@ -720,6 +726,7 @@ static const char *label_of(int item)
     case ITEM_ANISO:  return "Texture filter";
     case ITEM_ASPECT: return "Aspect ratio";
     case ITEM_FIT:    return "Fit to window";
+    case ITEM_MOVIES: return "Movies";
     case ITEM_SOFT:   return "TV softening";
     case ITEM_FPS:    return "Show FPS";
     case ITEM_FULLSCREEN: return "Fullscreen";
@@ -772,6 +779,11 @@ static const char *help_of(int item)
     case ITEM_ANISO:  return "Anisotropic: sharper far away.";
     case ITEM_ASPECT: return "16:9 shows more to the sides.";
     case ITEM_FIT:    return "Bars, stretched or zoomed.";
+    case ITEM_MOVIES: {
+        static const char *helps[PDO_MOVIE_COUNT] = { "The whole film, its own shape.", "Film stretched to the window.",
+                                                      "Film fills; edges cut off.", "As the game frames it." };
+        return helps[pdo_settings_get()->movie_fit];
+    }
     case ITEM_SOFT:   return "A slight TV-like blur.";
     case ITEM_FPS:    return "Frames per second, top left.";
     case ITEM_FULLSCREEN: return "Fullscreen or a window.";
@@ -851,7 +863,9 @@ static void draw_menu(void)
 {
     int n;
     const int *items = page_items(&n);
-    const float w = 34, x0 = (cols - w) / 2, step = 2.0f;
+    /* rows two cells apart, closer on long pages so the panel (its title,
+     * rows and help line) stays inside the layer's 30 */
+    const float w = 34, x0 = (cols - w) / 2, step = SDL_min(2.0f, 19.5f / (float)n);
     const float h = 4.0f + n * step + 6.0f, y0 = SDL_max((30 - h) / 2, 0.5f);
     char v[40];
 
@@ -868,9 +882,9 @@ static void draw_menu(void)
         }
         if (sel) {
             COLOR(COL_SEL);
-            fill(x0 + 0.5f, y - 0.4f, w - 1, 1.8f);
+            fill(x0 + 0.5f, y - 0.4f, w - 1, SDL_min(1.8f, step));
             COLOR(COL_TITLE);
-            fill(x0 + 0.5f, y - 0.4f, 0.3f, 1.8f);
+            fill(x0 + 0.5f, y - 0.4f, 0.3f, SDL_min(1.8f, step));
         }
         if (off)
             COLOR(COL_OFF);

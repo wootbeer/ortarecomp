@@ -3290,17 +3290,17 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         fitv.y = SDL_floorf((sh - fitv.h) / 2);
         fitv.max_depth = 1.0f;
         SDL_zero(vp);
-        if (shown_movie) {
+        if (shown_movie && st->movie_fit != PDO_MOVIE_ORIGINAL) {
             memcpy(mr, shown_movie_rect, sizeof mr);
             /* A movie: its picture (square pixels in the 4:3 frame, in
-             * either aspect mode) placed by the Fit setting, the frame
+             * either aspect mode) placed by the Movies setting, the frame
              * around it -- its black bars -- off the window or black. */
             float rw = mr[2] - mr[0], rh = mr[3] - mr[1];
             float kx = SDL_min((float)sw / rw, (float)sh / rh), ky;
-            if (st->fit == PDO_FIT_ZOOM)
+            if (st->movie_fit == PDO_MOVIE_ZOOM)
                 kx = SDL_max((float)sw / rw, (float)sh / rh);
             ky = kx;
-            if (st->fit == PDO_FIT_STRETCH) {
+            if (st->movie_fit == PDO_MOVIE_STRETCH) {
                 kx = (float)sw / rw;
                 ky = (float)sh / rh;
             }
