@@ -19,12 +19,12 @@
  * and our ids; the game treats them as opaque interface pointers.
  *
  * Not implemented yet, accepted and recorded: envelopes (SetEG), LFOs,
- * filters, I3DL2 source HF levels, obstruction and occlusion, the APU's
- * HRTF filters (3D voices are panned instead), and the DSP image's own
- * effects (its I3DL2 reverb is ours, in src/audio/reverb.c).
+ * filters, I3DL2 source HF levels, obstruction and occlusion, and the DSP
+ * image's own effects (its I3DL2 reverb is ours, in
+ * src/audio/reverb.c).
  *
- * PDO_DSOUND_TRACE=1 logs every call. Listening tests, off unless set:
- * PDO_TEST_NEWEST=1 (src/audio/mixer.c); PDO_MOVIE51=0 keeps movies stereo.
+ * PDO_DSOUND_TRACE=1 logs every call; PDO_HRTF=n sets the HRTF filters'
+ * scale (below); PDO_MOVIE51=0 keeps movies stereo.
  */
 
 #include "recomp_types.h"
@@ -38,6 +38,7 @@
 #include <SDL3/SDL.h>
 
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -249,12 +250,11 @@ void sub_002C4833(void)
     RETURN(16, DS_OK);
 }
 
-/* DirectSound HRTF setup (called once during sound init). The Xbox's
- * tables are not used: with the 3D audio setting on Headphones, our mixer
- * runs its own model head (src/audio/mixer.c). Takes no arguments. */
+/* DirectSoundUseFullHRTF() (called once during sound init): selects the
+ * full HRTF tables, which apply_3d reads itself (hrtf_filters). Nothing to
+ * set up; takes no arguments. */
 void sub_002C12DA(void)
 {
-    note_once("HRTF");
     g_esp += 4;
 }
 
@@ -334,16 +334,14 @@ void sub_002C2494(void)
 /* ── 3D sound ─────────────────────────────────────────────────────────
  * DSBCAPS_CTRL3D buffers are placed relative to the listener: DirectSound's
  * distance model (full volume up to the minimum distance, then
- * min / (min + rolloff * (d - min)), held from the maximum distance on) and
- * an equal-power left/right pan from the listener's orientation, or on
- * headphones (the output setting) a model head, or on 5.1 a pan around the
- * four corner speakers. No cones or Doppler (Orta sets cones of 360 degrees
- * and no velocity). Deferred settings apply at once. Positions are in the
- * world, the listener moving with the player; enemy gunfire is played at
- * the shooter, within the minimum distance of the player, so at full
- * volume. On the Xbox the left/right placement is the APU's per-voice HRTF
- * filter instead of a pan (docs/orta-facts.md, "DirectSound's 3D voice
- * volumes"). */
+ * min / (min + rolloff * (d - min)), held from the maximum distance on),
+ * then on Stereo and Headphones the APU's per-voice HRTF filter from the
+ * game's own tables (below; stereo 3D buffers are panned), on 5.1 a pan
+ * around the four corner speakers. No cones or Doppler (Orta sets cones of
+ * 360 degrees and no velocity). Deferred settings apply at once. Positions
+ * are in the world, the listener moving with the player; enemy gunfire is
+ * played at the shooter, within the minimum distance of the player, so at
+ * full volume. */
 
 static float fget(uint32_t va)
 {
@@ -358,6 +356,64 @@ static float fval(uint32_t v)
     float f;
     memcpy(&f, &v, 4);
     return f;
+}
+
+/* Stereo and Headphones outputs, Sound > 3D sound On (the default):
+ * mono 3D voices go through the Xbox's own HRTF filters, as the APU placed
+ * them; Off pans them (equal power, or on Headphones the model head). The
+ * APU's scale for the taps is not known: / 512 sounded closest to the
+ * console by ear (256 is 6 dB louder); PDO_HRTF=n divides by n instead,
+ * PDO_HRTF=0 is the same as Off. DirectSound's lookup
+ * (0x002C5497): elevation rounded to 6 degrees, azimuth folded to 0-180 and
+ * rounded to 3 degrees (6 above 30 degrees of elevation, 12 above 60, 0 at
+ * the poles), a uint16 index of 61 x 31 at 0x002DE590 to a pair of 32-byte
+ * entries at 0x002CCFD0 + index * 32. An entry is 31 sign-magnitude taps
+ * (the newest sample first) and, in the pair's first entry, the delay in
+ * 48 kHz samples. The first entry is the ear away from the sound (the
+ * delay, the head's shadow), the second the ear facing it (0x002C7551
+ * sends the pair to the APU by the azimuth's sign). */
+static float hrtf_scale(void)
+{
+    static float scale = -1.0f;
+    if (scale < 0.0f) {
+        const char *e = getenv("PDO_HRTF");
+        scale = e ? (float)(atoi(e) > 0 ? atoi(e) : 0) : 512.0f;
+        if (e)
+            SDL_Log("dsound: PDO_HRTF: %s %g", scale > 0.0f ? "HRTF taps /" : "off,", scale);
+    }
+    return scale;
+}
+
+static int round_to(float v, int step)
+{
+    return (int)floorf(v / (float)step + 0.5f) * step;
+}
+
+/* az: degrees, positive to the right; el: degrees, positive up. */
+static void hrtf_filters(float az, float el, float scale, float h[2][PDO_HRTF_TAPS], float delay[2])
+{
+    int e = round_to(el, 6), a = 0, row, col;
+    uint32_t pair;
+    float aa = fabsf(az);
+
+    if (e > 90) e = 90;
+    if (e < -90) e = -90;
+    if (e != 90 && e != -90)
+        a = round_to(aa, e > 60 || e < -60 ? 12 : e > 30 || e < -30 ? 6 : 3);
+    if (a > 180) a = 180;
+    row = a / 3;
+    col = (e + 90) / 6;
+    pair = 0x002CCFD0u + (uint32_t)MEM16(0x002DE590u + 2u * (uint32_t)(row * 31 + col)) * 32u;
+    for (int k = 0; k < 2; k++) {
+        /* k 0: the far ear (the first entry), 1: the near ear */
+        int ear = (az >= 0.0f) == (k == 0) ? 0 : 1;
+        uint32_t ent = pair + 32u * (uint32_t)k;
+        for (int i = 0; i < PDO_HRTF_TAPS; i++) {
+            uint8_t b = MEM8(ent + (uint32_t)i);
+            h[ear][i] = (float)(b & 0x80 ? -(int)(b & 0x7F) : (int)b) / scale;
+        }
+        delay[ear] = k == 0 ? (float)(MEM8(pair + 31u) & 0x7F) : 0.0f;
+    }
 }
 
 static void apply_3d(int id)
@@ -395,6 +451,23 @@ static void apply_3d(int id)
         float n = sqrtf(right[0] * right[0] + right[1] * right[1] + right[2] * right[2]);
         if (n > 1e-6f)
             x = (rel[0] * right[0] + rel[1] * right[1] + rel[2] * right[2]) / (d * n);
+    }
+    if (pdo_settings_get()->hrtf && hrtf_scale() > 0.0f && pdo_settings_get()->audio_out != PDO_AUDIO_SURROUND) {
+        const float fr[3] = { 0.0f, 0.0f, 1.0f }, up[3] = { 0.0f, 1.0f, 0.0f };
+        const bool hr = src3d[id].mode == DS3DMODE_HEADRELATIVE;
+        const float *ff = hr ? fr : f, *tt = hr ? up : t;
+        float fz = 0.0f, y = 0.0f, h[2][PDO_HRTF_TAPS], delay[2];
+        float nf = sqrtf(ff[0] * ff[0] + ff[1] * ff[1] + ff[2] * ff[2]);
+        float nt = sqrtf(tt[0] * tt[0] + tt[1] * tt[1] + tt[2] * tt[2]);
+        if (d > 1e-6f && nf > 1e-6f)
+            fz = (rel[0] * ff[0] + rel[1] * ff[1] + rel[2] * ff[2]) / (d * nf);
+        if (d > 1e-6f && nt > 1e-6f)
+            y = (rel[0] * tt[0] + rel[1] * tt[1] + rel[2] * tt[2]) / (d * nt);
+        if (y > 1.0f) y = 1.0f;
+        if (y < -1.0f) y = -1.0f;
+        hrtf_filters(atan2f(x, fz) * 57.2957795f, asinf(y) * 57.2957795f, hrtf_scale(), h, delay);
+        pdo_voice_set_3d_hrtf(id, g, h, delay);
+        return;
     }
     /* Headphones (a model head) and 5.1 (around four speakers), the output
      * setting: both need ahead or behind too. */
@@ -924,10 +997,15 @@ void sub_002C242A(void)
 {
     uint32_t cfg = test_ac3() ? 0x00010004u : 0x00000002u;    /* or DSSPEAKER_STEREO */
 
-    /* From the movie setup (call at 0x000687E4): ebx holds the .aix name,
-     * or 0 for a movie with only the .sfd's stereo. */
-    if (test_ac3() && MEM32(g_esp) == 0x000687E9u)
-        movie51_start(g_ebx);
+    /* From the movie setup (call at 0x000687E4): its argument, the .sfd
+     * name, is above our two arguments and its saved edi, ebp, ebx and
+     * return; ebx holds the .aix name, or 0 for a movie with only the
+     * .sfd's stereo. */
+    if (MEM32(g_esp) == 0x000687E9u) {
+        pdo_movie_opened(MEM32(g_esp + 0x1C));
+        if (test_ac3())
+            movie51_start(g_ebx);
+    }
     TRACE("GetSpeakerConfig -> 0x%08x", cfg);
     if (ARG(1))
         MEM32(ARG(1)) = cfg;

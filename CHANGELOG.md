@@ -1,5 +1,34 @@
 # Changelog
 
+## v0.1.6 (beta)
+
+### Added
+
+- Movies: Options > Display > Movies. Original (the default) shows them
+  as the game frames them, with its black bars, and in the game's 16:9
+  mode widened with the rest of the picture, as on a widescreen TV. Bars
+  shows the picture alone at its own shape (filling a 16:9 window edge to
+  edge), Stretch and Zoom fill the window (issue 18). Subtitles stay
+  whole, laid over the bottom of the picture.
+
+### Changed
+
+- Sound: 3D sounds (enemies, gunfire, explosions) are placed by the Xbox's
+  own HRTF filters, read from the game: each ear hears its own filtered
+  sound and delay, as on the console, on speakers or headphones (Stereo and
+  Headphones outputs; 5.1 is unchanged). Gunfire is softer and less harsh.
+  Options > Sound > 3D sound: On (the default) or Off (the earlier
+  left/right pan).
+
+### Fixed
+
+- Windows: movies played at about 20 frames a second and Pandora's Box's
+  opening could stop partway back to the box: the movie decoder was built
+  without optimisation (the compiler skips very large functions unless
+  told otherwise). They play at full speed now.
+- Menu: long pages (Display in the launcher) ran past the bottom of the
+  screen, hiding the help line; their rows now sit closer.
+
 ## v0.1.5 (beta)
 
 ### Added

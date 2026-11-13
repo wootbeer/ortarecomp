@@ -17,6 +17,7 @@
 #include "config.h"
 #include "gfx/renderer.h"
 #include "gfx/xtex.h"
+#include "guest/guest.h"
 #include "guest/vsh.h"
 #include "xbox_memory_layout.h"
 
@@ -1140,6 +1141,125 @@ static void unpack_d3dcolor(uint32_t c, float out[4])
     out[3] = (float)(c >> 24) / 255.0f;
 }
 
+/* Movies: the game draws each picture as one screen-space quad from its
+ * movie player (the draw returning to 0x000688E3) with the decoded frames
+ * as its texture, the picture at the texture's top left (the opening:
+ * 640 x 480 placed 56 lines down, the picture its top 360 lines, so the
+ * frame has black bars). The picture's size is the .sfd's own: its MPEG
+ * sequence header, read when the movie setup opens it (pdo_movie_opened);
+ * a height padded to 16 lines for the encoder (640 x 368 for 640 x 360)
+ * taken back to its 16:9 or 4:3 height. The picture's rectangle on screen
+ * goes through the quad's texture coordinates. */
+static int movie_w, movie_h;    /* the movie's picture, pixels; 0: not known */
+
+/* The picture size in an .sfd's MPEG sequence header (in its first 64 KB);
+ * false if the file is not there or has none. */
+static bool sfd_picture(const char *path, int *pw, int *ph)
+{
+    static uint8_t buf[65536];
+    SDL_IOStream *io = SDL_IOFromFile(path, "rb");
+    size_t got;
+
+    if (!io)
+        return false;
+    got = SDL_ReadIO(io, buf, sizeof buf);
+    SDL_CloseIO(io);
+    for (size_t p = 0; p + 7 < got; p++)
+        if (buf[p] == 0 && buf[p + 1] == 0 && buf[p + 2] == 1 && buf[p + 3] == 0xB3) {
+            int w = buf[p + 4] << 4 | buf[p + 5] >> 4, h = (buf[p + 5] & 15) << 8 | buf[p + 6];
+            int h169 = w * 9 / 16, h43 = w * 3 / 4;
+            if (h % 16 == 0 && h169 < h && h - h169 < 16)
+                h = h169;
+            else if (h % 16 == 0 && h43 < h && h - h43 < 16)
+                h = h43;
+            *pw = w;
+            *ph = h;
+            return w > 0 && h > 0;
+        }
+    return false;
+}
+
+void pdo_movie_opened(uint32_t name_va)
+{
+    char name[128], path[PDO_PATH_MAX];
+    const char *base = name, *rel = name, *dir = pdo_guest_game_dir();
+    static const char *movie_dirs[] = { "Movie", "movie", "MOVIE" };
+    size_t n = 0;
+    bool ok;
+
+    movie_w = movie_h = 0;
+    while (n + 1 < sizeof name && MEM8(name_va + n))
+        name[n] = (char)MEM8(name_va + n), n++;
+    name[n] = 0;
+    for (const char *c = name; *c; c++)
+        if (*c == '\\' || *c == '/' || *c == ':')
+            base = c + 1;
+    /* The name as the game gives it, if it has a folder; */
+    if (SDL_strncasecmp(rel, "\\Device\\CdRom0\\", 15) == 0)
+        rel += 15;
+    else if (rel[0] && rel[1] == ':')
+        rel += rel[2] == '\\' || rel[2] == '/' ? 3 : 2;
+    snprintf(path, sizeof path, "%s/%s", dir, rel);
+    for (char *c = path + strlen(dir); *c; c++)
+        if (*c == '\\')
+            *c = '/';
+    ok = sfd_picture(path, &movie_w, &movie_h);
+    /* else Movie/ (the game's own films); */
+    for (size_t k = 0; !ok && k < SDL_arraysize(movie_dirs); k++) {
+        snprintf(path, sizeof path, "%s/%s/%s", dir, movie_dirs[k], base);
+        ok = sfd_picture(path, &movie_w, &movie_h);
+    }
+    /* else any folder one down (P1Media: the original game's films). */
+    if (!ok) {
+        char pattern[160];
+        int count = 0;
+        char **hits;
+        snprintf(pattern, sizeof pattern, "*/%s", base);
+        hits = SDL_GlobDirectory(dir, pattern, SDL_GLOB_CASEINSENSITIVE, &count);
+        if (hits && count > 0) {
+            snprintf(path, sizeof path, "%s/%s", dir, hits[0]);
+            ok = sfd_picture(path, &movie_w, &movie_h);
+        }
+        SDL_free(hits);
+    }
+    if (!ok)
+        movie_w = movie_h = 0;
+    SDL_Log("d3d: movie %s: picture %dx%d", name, movie_w, movie_h);
+}
+
+static void mark_movie(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    /* XYZRHW, then diffuse and specular if present, then texture 0's u, v */
+    uint32_t uv = 16 + (fvf & 0x040 ? 4u : 0u) + (fvf & 0x080 ? 4u : 0u);
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, u0 = 1e9f, v0 = 1e9f, u1 = -1e9f, v1 = -1e9f;
+
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t at = base + (first + i) * stride, w[4];
+        float f[4];
+        w[0] = MEM32(at);
+        w[1] = MEM32(at + 4);
+        w[2] = MEM32(at + uv);
+        w[3] = MEM32(at + uv + 4);
+        memcpy(f, w, sizeof f);
+        x0 = SDL_min(x0, f[0]); x1 = SDL_max(x1, f[0]);
+        y0 = SDL_min(y0, f[1]); y1 = SDL_max(y1, f[1]);
+        u0 = SDL_min(u0, f[2]); u1 = SDL_max(u1, f[2]);
+        v0 = SDL_min(v0, f[3]); v1 = SDL_max(v1, f[3]);
+    }
+    x0 += 0.5f;     /* the quad's half-pixel offset */
+    x1 += 0.5f;
+    y0 += 0.5f;
+    y1 += 0.5f;
+    if (movie_w > 0 && (fvf >> 8 & 15) >= 1 && u1 - u0 > 1.0f && v1 - v0 > 1.0f) {
+        /* texel coordinates (a linear texture): the picture is texels
+         * 0..w, 0..h */
+        float sx = (x1 - x0) / (u1 - u0), sy = (y1 - y0) / (v1 - v0);
+        float px0 = x0 + (0.0f - u0) * sx, py0 = y0 + (0.0f - v0) * sy;
+        pdo_gfx_mark_movie(px0, py0, px0 + (float)movie_w * sx, py0 + (float)movie_h * sy);
+    } else    /* not known: the opening's shape, 16:9 from the quad's top */
+        pdo_gfx_mark_movie(x0, y0, x1, y0 + (x1 - x0) * 9.0f / 16.0f);
+}
+
 static void fill_draw_state(pdo_draw *d, bool pretransformed)
 {
     int rtw, rth;
@@ -2139,6 +2259,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         return;
     }
     fill_draw_state(&d, pre);
+    if (d.caller[0] == 0x000688E3u && pre && count >= 2 && stride >= 8)
+        mark_movie(st.vshader, base, stride, first, count);
     {   /* PDO_CAPTURE=frame: the render-state table around fog, once. */
         static long long cap = -2;
         if (cap == -2)

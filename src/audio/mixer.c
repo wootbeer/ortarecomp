@@ -6,6 +6,7 @@
  *
  * Debugging switches (environment):
  *   PDO_AUDIO_DUMP=file.wav   record exactly what is mixed (float, the output's channels)
+ *   PDO_AUDIO_SOLO=bytes      mix only the buffers of that size (one sound, for measuring)
  *   PDO_AUDIO_STATS=1         log peak level and clipped samples per second
  */
 
@@ -37,7 +38,6 @@ typedef struct voice {
     bool           used;
     pdo_voice_desc desc;
     bool           playing, looping, paused;
-    bool           test_muted;          /* PDO_TEST_NEWEST only */
     double         pos;                 /* in frames */
     uint32_t       loop_start, loop_len;/* frames; len 0 = whole buffer */
     float          volume, headroom;    /* linear */
@@ -55,6 +55,11 @@ typedef struct voice {
     float          ear_rear;                         /* 0..0.5: behind */
     float          ear_line[64];                     /* the voice's last samples */
     uint32_t       ear_pos;
+    /* The Xbox's HRTF (pdo_voice_set_3d_hrtf): each ear's FIR in place of
+     * the model head's filter, fed from that ear's delayed samples. */
+    bool           hrtf;
+    float          hrtf_h[2][PDO_HRTF_TAPS];
+    float          hrtf_x[2][PDO_HRTF_TAPS];         /* each ear's input, newest first */
     float          direct, room;        /* I3DL2 source levels, linear */
     float          dist;                /* 3D distance gain, linear */
     double         step;                /* frames per output frame */
@@ -183,6 +188,15 @@ static void ears_process(voice *v, float s, float e[2])
         f = d - (float)i;
         x = v->ear_line[(v->ear_pos - i) & 63];
         x += (v->ear_line[(v->ear_pos - i - 1) & 63] - x) * f;
+        if (v->hrtf) {
+            float *h = v->hrtf_h[ear], *in = v->hrtf_x[ear], acc = 0.0f;
+            memmove(in + 1, in, sizeof(float) * (PDO_HRTF_TAPS - 1));
+            in[0] = x;
+            for (int k = 0; k < PDO_HRTF_TAPS; k++)
+                acc += h[k] * in[k];
+            e[ear] = acc;
+            continue;
+        }
         y = v->ear_b0[ear] * x + v->ear_b1[ear] * v->ear_x1[ear] - v->ear_a1[ear] * v->ear_y1[ear];
         v->ear_x1[ear] = x;
         v->ear_y1[ear] = y;
@@ -491,7 +505,7 @@ static void mix_block(float *out, int frames, int chs)
         solo = getenv("PDO_AUDIO_SOLO") ? atol(getenv("PDO_AUDIO_SOLO")) : 0;
     SDL_LockMutex(lock);
     for (int i = 0; i < MAX_VOICES; i++)
-        if (voices[i].used && voices[i].playing && !voices[i].test_muted &&
+        if (voices[i].used && voices[i].playing &&
             (!solo || voices[i].desc.bytes == (uint32_t)solo)) {
             if (voices[i].queued)
                 mix_queue(&voices[i], bins, frames);
@@ -769,26 +783,9 @@ void pdo_voice_set_data(int id, uint32_t addr, uint32_t bytes)
     WITH_VOICE(id, v->desc.data = addr; v->desc.bytes = bytes; v->pos = 0; v->cached_block = -1);
 }
 
-/* PDO_TEST_NEWEST=1, a listening test, not a setting: a 3D voice that
- * starts mutes the other 3D voices playing the same sample, so only the
- * newest copy of each sound is heard. */
-static void test_newest(voice *v)
-{
-    static int on = -1;
-    if (on < 0)
-        on = getenv("PDO_TEST_NEWEST") && *getenv("PDO_TEST_NEWEST") == '1';
-    v->test_muted = false;
-    if (!on || !v->desc.positional)
-        return;
-    for (int i = 0; i < MAX_VOICES; i++)
-        if (&voices[i] != v && voices[i].used && voices[i].playing && voices[i].desc.positional &&
-            voices[i].desc.data == v->desc.data && voices[i].desc.bytes == v->desc.bytes)
-            voices[i].test_muted = true;
-}
-
 void pdo_voice_play(int id, bool looping)
 {
-    WITH_VOICE(id, v->playing = true; v->looping = looping; v->paused = false; test_newest(v));
+    WITH_VOICE(id, v->playing = true; v->looping = looping; v->paused = false);
 }
 
 void pdo_voice_stop(int id)
@@ -834,7 +831,7 @@ void pdo_voice_set_3d_distance(int id, float gain)
 
 void pdo_voice_set_3d(int id, float left, float right)
 {
-    WITH_VOICE(id, v->ears = false; v->pan6 = false; v->g3d[0] = left; v->g3d[1] = right; update_gains(v));
+    WITH_VOICE(id, v->ears = false; v->hrtf = false; v->pan6 = false; v->g3d[0] = left; v->g3d[1] = right; update_gains(v));
 }
 
 static void set_ears(voice *v, float gain, float lateral, float front)
@@ -856,6 +853,7 @@ static void set_ears(voice *v, float gain, float lateral, float front)
         v->ear_delay_now[1] = lat < 0 ? itd : 0.0f;
     }
     v->ears = true;
+    v->hrtf = false;
     v->ear_delay[0] = lat > 0 ? itd : 0.0f;     /* the far ear hears it later */
     v->ear_delay[1] = lat < 0 ? itd : 0.0f;
     ear_filter(v, 0, -lat);
@@ -869,6 +867,32 @@ static void set_ears(voice *v, float gain, float lateral, float front)
 void pdo_voice_set_3d_ears(int id, float gain, float lateral, float front)
 {
     WITH_VOICE(id, set_ears(v, gain, lateral, front));
+}
+
+static void set_hrtf(voice *v, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2])
+{
+    v->pan6 = false;
+    if (v->desc.channels != 1) {    /* stereo 3D buffers: no HRTF (the APU's is for mono voices) */
+        v->ears = v->hrtf = false;
+        v->g3d[0] = v->g3d[1] = gain * 0.70710678f;
+        update_gains(v);
+        return;
+    }
+    if (!v->ears || !v->hrtf) {     /* start at the delays, not gliding from 0 */
+        v->ear_delay_now[0] = delay[0];
+        v->ear_delay_now[1] = delay[1];
+    }
+    v->ears = v->hrtf = true;
+    v->ear_delay[0] = delay[0];
+    v->ear_delay[1] = delay[1];
+    memcpy(v->hrtf_h, h, sizeof v->hrtf_h);
+    v->g3d[0] = v->g3d[1] = gain;   /* the filters carry the level */
+    update_gains(v);
+}
+
+void pdo_voice_set_3d_hrtf(int id, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2])
+{
+    WITH_VOICE(id, set_hrtf(v, gain, h, delay));
 }
 
 /* Pairwise constant-power panning around the four corner speakers, by the
@@ -891,7 +915,7 @@ static void set_surround(voice *v, float gain, float lateral, float front)
             v->g6[ring[i + 1].bin] += gain * sinf(p);
             break;
         }
-    v->ears = false;
+    v->ears = v->hrtf = false;
     v->pan6 = true;
     update_gains(v);
 }

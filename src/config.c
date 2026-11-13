@@ -16,7 +16,7 @@ char pdo_log_file[PDO_PATH_MAX];
 static pdo_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
                                   .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
-                                  .skip_logos = true, .rumble = 100, .depth_reversed = true, .pic_contrast = 100,
+                                  .skip_logos = true, .rumble = 100, .hrtf = true, .depth_reversed = true, .pic_contrast = 100,
                                   .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
 
 pdo_settings *pdo_settings_get(void)
@@ -127,7 +127,12 @@ bool pdo_config_load(pdo_config *cfg)
             settings.aspect = strcmp(eq + 1, "16:9") == 0 ? PDO_ASPECT_16_9 : PDO_ASPECT_4_3;
             if (strcmp(eq + 1, "stretch") == 0)     /* a file from before the fit setting */
                 settings.fit = PDO_FIT_STRETCH;
-        } else if (strcmp(line, "fit") == 0)
+        } else if (strcmp(line, "movie_fit") == 0)
+            settings.movie_fit = strcmp(eq + 1, "stretch") == 0    ? PDO_MOVIE_STRETCH
+                               : strcmp(eq + 1, "zoom") == 0       ? PDO_MOVIE_ZOOM
+                               : strcmp(eq + 1, "bars") == 0       ? PDO_MOVIE_BARS
+                                                                   : PDO_MOVIE_ORIGINAL;
+        else if (strcmp(line, "fit") == 0)
             settings.fit = strcmp(eq + 1, "stretch") == 0 ? PDO_FIT_STRETCH
                          : strcmp(eq + 1, "zoom") == 0    ? PDO_FIT_ZOOM
                                                           : PDO_FIT_BARS;
@@ -194,6 +199,8 @@ bool pdo_config_load(pdo_config *cfg)
         else if (strcmp(line, "audio_3d") == 0)    /* the key kept from when it was 3D only */
             settings.audio_out = strcmp(eq + 1, "headphones") == 0 ? PDO_AUDIO_HEADPHONES
                                : strcmp(eq + 1, "surround") == 0 ? PDO_AUDIO_SURROUND : PDO_AUDIO_STEREO;
+        else if (strcmp(line, "audio_hrtf") == 0)
+            settings.hrtf = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "save_slot") == 0)
             settings.save_slot = clamp_int(SDL_atoi(eq + 1), 1, 3);
         else
@@ -216,6 +223,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "msaa=%d\n"
                  "aspect=%s\n"
                  "fit=%s\n"
+                 "movie_fit=%s\n"
                  "soft_filter=%d\n"
                  "master_volume=%d\n"
                  "show_fps=%d\n"
@@ -246,10 +254,13 @@ bool pdo_config_save(const pdo_config *cfg)
                  "picture_gamma=%d\n"
                  "picture_saturation=%d\n"
                  "audio_3d=%s\n"
+                 "audio_hrtf=%d\n"
                  "save_slot=%d\n",
                  cfg->game_dir, settings.render_scale2 / 2.0, settings.msaa,
                  settings.aspect == PDO_ASPECT_16_9 ? "16:9" : "4:3",
                  settings.fit == PDO_FIT_STRETCH ? "stretch" : settings.fit == PDO_FIT_ZOOM ? "zoom" : "bars",
+                 settings.movie_fit == PDO_MOVIE_STRETCH ? "stretch" : settings.movie_fit == PDO_MOVIE_ZOOM ? "zoom"
+                 : settings.movie_fit == PDO_MOVIE_BARS ? "bars" : "original",
                  settings.soft_filter,
                  settings.master_volume, settings.show_fps, settings.gpu_vertex,
                  settings.gpu_fixed, settings.frame_interp, settings.anisotropy, settings.bloom == 2 ? "high" : settings.bloom == 1 ? "low" : "off",
@@ -262,7 +273,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
                  settings.pic_saturation, settings.audio_out == PDO_AUDIO_HEADPHONES ? "headphones"
                  : settings.audio_out == PDO_AUDIO_SURROUND ? "surround" : "speakers",
-                 settings.save_slot);
+                 settings.hrtf, settings.save_slot);
     if (n < 0 || (size_t)n >= sizeof text)
         return false;
     n += (int)pdo_input_save(text + n, sizeof text - (size_t)n);

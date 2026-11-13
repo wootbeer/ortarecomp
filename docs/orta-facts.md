@@ -192,27 +192,68 @@ virtual addresses in the USA `default.xbe`.
   ours) with, per bin: 6/7 the front share, 8/9 the back share (0x002C520B
   splits a 3D voice between front and back by where it is), 10 the I3DL2
   room level, 2 a centre term when enabled. Left and right get the same
-  volume: the APU's per-voice HRTF filter places a 3D voice left or right
-  (0x002C7551 uploads 31 taps per ear and an ITD). Tables: 1,111 left/right
-  pairs of 32 bytes at 0x002CCFD0, picked through a 61 x 31 index of
-  uint16 at 0x002DE590 (rows: azimuth 0-180 in 3 degree steps, mirrored by
-  swapping ears; columns: elevation in 6 degree steps; 0x002C5497). The tap
-  format and the APU's HRTF scaling are not known: read as two's
-  complement / 128 (as xemu does) a frontal filter has about +9 dB of gain,
-  as sign-magnitude about +3 dB. Our 3D path pans instead (equal power, -3
-  dB each ear straight ahead).
+  volume: the APU's per-voice HRTF filter places a 3D voice left or right.
+  Lookup (0x002C5497): elevation rounded to 6 degrees (columns 0-30 from
+  -90), azimuth folded to 0-180 and rounded to 3 degrees (6 above 30
+  degrees of elevation, 12 above 60, 0 at the poles; rows 0-60); a uint16
+  index of 61 x 31 at 0x002DE590 gives a pair of 32-byte entries at
+  0x002CCFD0 + index * 32 (2,222 entries). An entry is 31 taps, sign and
+  magnitude (bit 7 the sign: 20 % of the bytes are 0x80-0x9F, small
+  negatives), the newest sample first, then a byte that in the pair's
+  first entry is the interaural delay in 48 kHz samples (0-32, 30 at 90
+  degrees). The first entry is the ear away from the sound (the delay, and
+  10 kHz all but gone at 90 degrees), the second the ear facing it;
+  0x002C7551 sends the two interleaved to APU methods 0x400 on, swapped by
+  the azimuth's sign, and the delay negated for the other side. The taps'
+  scale in the APU is not known: straight ahead the filter sums to 295
+  (DC) with 10 kHz 7 dB below 1 kHz. We run them with taps / 512 (closest
+  to the console by ear; PDO_HRTF=n another scale, 0 the old pan). Against
+  that pan (equal power, -3 dB each ear straight ahead), episode 1's machine gun alone through the
+  HRTF is +3.7, +3.1, -0.9, -1.2 dB (100-500, 500-2k, 2k-6k, 6k-16k Hz)
+  at n = 256, 6 dB less at 512.
 - Enemy machine guns (24,012 and 13,212-byte ADPCM samples, mono 44.1 kHz,
   0.97 s and 0.53 s): each sound has a template buffer; every burst moves
   the template and every copy still playing to the shooter, then starts a
   new copy (Play, looping) there, stopped after about one pass (55 and 30
   frames). Up to 12 copies of one sample play at once from one spot; cones
   are 360/360 and velocities 0, so neither cones nor Doppler separate them.
+  Each copy is a new buffer (CreateSoundBuffer, then SetBufferData on the
+  template's sample memory), played looping; the game polls its
+  GetCurrentPosition every frame and stops it when the position wraps, so
+  every copy plays exactly one pass (51-58 frames for the 0.97 s sample)
+  and is then released. This is the game's own logic, so the Xbox starts
+  as many copies. Every 3D SetPosition is DS3D_DEFERRED (apply 1);
+  CommitDeferredSettings is called from three places (returning to
+  0x0021E5B6, 0x002290F4 and 0x0022A922).
+- Effects image: `dsstdfx.bin` on the disc (30,720 bytes, the XDK's
+  standard image, loaded each stage). On the Xbox the 3D mixbins pass
+  through its effects on the way to the speakers; we route them straight
+  to the speakers and run our own reverb for bin 10. The file is raw DSP
+  memory (no header at its start).
 - Voices: DSOUND allocates hardware voices at Play for DSBCAPS_LOCDEFER
   (0x40000) buffers (0x002C8CBB, allocator 0x002C5DBB) from two pools, 64
   3D voices (slots 0-63) and 192 2D voices (slots 64-255), set at
   0x002C5D3E; when a pool is empty Play fails with 0x88780032. A deferred
   buffer gives its voice back on Stop. We do not cap voices; episode 1's
   busiest second has 24 playing.
+
+## Movies
+
+- The .sfd movies are MPEG; the opening's is 640 x 368 (640 x 360 shown,
+  16:9). The game draws each picture as one screen-space quad (the draw
+  returns to 0x000688E3), the decoded frames its texture with the picture
+  at the top left: for the opening a 640 x 480 texture placed 56 lines
+  down, so the 640 x 480 frame has 56-line black bars. It draws them the
+  same way in its 16:9 mode, where the anamorphic frame stretched them.
+  Pandora's Box has more movies (ALEL_ENDING, AZEL_opening, flash_azel,
+  PDzewi_shortopening_snd, PDzwei_ending_snd, ins1_bs, ins2_bs), some
+  smaller pictures; the original Panzer Dragoon's films are in P1Media
+  (endingmv.sfd), and the setup gets bare names. The movie setup (0x000687B0) takes the .sfd name as
+  its argument (at +0x1C at its GetSpeakerConfig call, returning to
+  0x000687E9). A movie fades in and out under an untextured full-frame
+  quad (0x0006A0A8). We show the picture's rectangle alone, its size from
+  the .sfd's sequence header and placed through the quad's texture
+  coordinates, when nothing but a fade is drawn over it.
 
 ## Widescreen
 

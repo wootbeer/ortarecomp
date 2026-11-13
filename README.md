@@ -20,7 +20,8 @@ Android build is planned.
 - **Higher resolutions:** render at 1x to 8x the original resolution (8x is
   5120x3840).
 - **Widescreen:** the game's own 16:9 mode, or the original 4:3; bars,
-  stretch or zoom to fit any window or screen.
+  stretch or zoom to fit any window or screen. Movies can be shown at
+  their own shape without the game's black bars, subtitles kept.
 - **Anti-aliasing:** MSAA up to 8x, or FXAA; anisotropic texture filtering
   up to 16x.
 - **Smooth motion:** frame interpolation above 60 fps for high refresh rate
@@ -29,10 +30,9 @@ Android build is planned.
 - **Color correction:** brightness, contrast, gamma and saturation, a CRT
   look, optional TV softening, and bloom (Low or High) that leaves the HUD
   alone.
-- **Sound:** stereo 3D positional audio, a headphones mode (a modelled
-  head: each ear hears a sound at its own time and loudness), or 5.1
-  surround (3D sounds placed around four speakers, and the movies' own 5.1
-  soundtracks), with the game's room
+- **Sound:** 3D positional audio through the Xbox's own HRTF filters (on
+  speakers or headphones; or a simple pan), or 5.1 surround (3D sounds placed around four
+  speakers, and the movies' own 5.1 soundtracks), with the game's room
   reverb and a master volume.
 - **Controls:** controllers, keyboard and mouse (with mouse aim), every
   button rebindable.

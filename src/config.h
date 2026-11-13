@@ -21,6 +21,7 @@ typedef struct pdo_settings {
     int  msaa;              /* 1, 2, 4 or 8 samples */
     int  aspect;            /* PDO_ASPECT_*; 16:9 is the game's own widescreen mode */
     int  fit;               /* PDO_FIT_*: how the picture fills the window */
+    int  movie_fit;         /* PDO_MOVIE_*: how a movie's picture fills it (renderer.c) */
     bool soft_filter;       /* TV-like vertical softening at presentation */
     int  master_volume;     /* 0-100 % */
     bool show_fps;
@@ -52,8 +53,10 @@ typedef struct pdo_settings {
     int  pic_contrast;      /* 50..150 % */
     int  pic_gamma;         /* 50..200: 100 as is, more brightens the midtones */
     int  pic_saturation;    /* 0..200 % */
-    int  audio_out;         /* PDO_AUDIO_*: stereo; 3D sounds through a model head for
-                               headphones; or 5.1, 3D sounds around four speakers (mixer.c) */
+    int  audio_out;         /* PDO_AUDIO_*: stereo; headphones (with hrtf off, a model head);
+                               or 5.1, 3D sounds around four speakers (mixer.c) */
+    bool hrtf;              /* Stereo/Headphones: 3D sounds through the Xbox's HRTF filters, else a
+                               pan or the model head (src/guest/dsound_hle.c) */
     int  save_slot;         /* 1-3: which save file the game sees (pdo_save_dir), chosen before it starts */
 } pdo_settings;
 
@@ -62,6 +65,10 @@ enum { PDO_AUDIO_STEREO, PDO_AUDIO_HEADPHONES, PDO_AUDIO_SURROUND, PDO_AUDIO_COU
 /* The whole picture with bars; stretched to the window; zoomed to fill it,
  * the overflow cut off. */
 enum { PDO_FIT_BARS, PDO_FIT_STRETCH, PDO_FIT_ZOOM, PDO_FIT_COUNT };
+/* Movies: as the game frames them (Fit to window, the default); or the
+ * picture alone, whole (bars where the window's shape differs), stretched
+ * or zoomed. */
+enum { PDO_MOVIE_ORIGINAL, PDO_MOVIE_BARS, PDO_MOVIE_STRETCH, PDO_MOVIE_ZOOM, PDO_MOVIE_COUNT };
 
 /* Whether the game set itself up in its widescreen mode (anamorphic 16:9:
  * a wider view squeezed into 640x480), which it reads once at start:
