@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.5 (beta)
 
 ### Added
 
@@ -19,7 +19,8 @@
 
 ### Fixed
 
-- Controls: a button rebound in the menu was lost when the menu closed.
+- Controls: rebound buttons went back to the defaults when the launcher or
+  the menu closed, or the window moved (issue 22).
 
 ## v0.1.4 (beta)
 
