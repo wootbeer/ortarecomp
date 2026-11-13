@@ -130,8 +130,8 @@ bool pdo_config_load(pdo_config *cfg)
         } else if (strcmp(line, "movie_fit") == 0)
             settings.movie_fit = strcmp(eq + 1, "stretch") == 0    ? PDO_MOVIE_STRETCH
                                : strcmp(eq + 1, "zoom") == 0       ? PDO_MOVIE_ZOOM
-                               : strcmp(eq + 1, "original") == 0   ? PDO_MOVIE_ORIGINAL
-                                                                   : PDO_MOVIE_BARS;
+                               : strcmp(eq + 1, "bars") == 0       ? PDO_MOVIE_BARS
+                                                                   : PDO_MOVIE_ORIGINAL;
         else if (strcmp(line, "fit") == 0)
             settings.fit = strcmp(eq + 1, "stretch") == 0 ? PDO_FIT_STRETCH
                          : strcmp(eq + 1, "zoom") == 0    ? PDO_FIT_ZOOM
@@ -260,7 +260,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.aspect == PDO_ASPECT_16_9 ? "16:9" : "4:3",
                  settings.fit == PDO_FIT_STRETCH ? "stretch" : settings.fit == PDO_FIT_ZOOM ? "zoom" : "bars",
                  settings.movie_fit == PDO_MOVIE_STRETCH ? "stretch" : settings.movie_fit == PDO_MOVIE_ZOOM ? "zoom"
-                 : settings.movie_fit == PDO_MOVIE_ORIGINAL ? "original" : "bars",
+                 : settings.movie_fit == PDO_MOVIE_BARS ? "bars" : "original",
                  settings.soft_filter,
                  settings.master_volume, settings.show_fps, settings.gpu_vertex,
                  settings.gpu_fixed, settings.frame_interp, settings.anisotropy, settings.bloom == 2 ? "high" : settings.bloom == 1 ? "low" : "off",

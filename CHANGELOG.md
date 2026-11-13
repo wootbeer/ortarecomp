@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Movies: Options > Display > Movies. Original (the default) shows them
+  as the game frames them, with its black bars, and in the game's 16:9
+  mode widened with the rest of the picture, as on a widescreen TV. Bars
+  shows the picture alone at its own shape (filling a 16:9 window edge to
+  edge), Stretch and Zoom fill the window (issue 18).
+
 ### Changed
 
 - Sound: 3D sounds (enemies, gunfire, explosions) are placed by the Xbox's
@@ -13,11 +21,6 @@
 
 ### Fixed
 
-- Movies: shown at their own shape without the game's black bars, filling
-  a 16:9 window edge to edge. In the game's 16:9 mode they were stretched
-  a third too wide (issue 18). Options > Display > Movies: Bars (the whole
-  picture, the default), Stretch, Zoom, or Original (as the game frames
-  it).
 - Menu: long pages (Display in the launcher) ran past the bottom of the
   screen, hiding the help line; their rows now sit closer.
 

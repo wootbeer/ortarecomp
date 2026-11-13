@@ -65,9 +65,10 @@ enum { PDO_AUDIO_STEREO, PDO_AUDIO_HEADPHONES, PDO_AUDIO_SURROUND, PDO_AUDIO_COU
 /* The whole picture with bars; stretched to the window; zoomed to fill it,
  * the overflow cut off. */
 enum { PDO_FIT_BARS, PDO_FIT_STRETCH, PDO_FIT_ZOOM, PDO_FIT_COUNT };
-/* Movies: the picture alone, whole (bars where the window's shape
- * differs), stretched or zoomed; or as the game frames it (Fit to window). */
-enum { PDO_MOVIE_BARS, PDO_MOVIE_STRETCH, PDO_MOVIE_ZOOM, PDO_MOVIE_ORIGINAL, PDO_MOVIE_COUNT };
+/* Movies: as the game frames them (Fit to window, the default); or the
+ * picture alone, whole (bars where the window's shape differs), stretched
+ * or zoomed. */
+enum { PDO_MOVIE_ORIGINAL, PDO_MOVIE_BARS, PDO_MOVIE_STRETCH, PDO_MOVIE_ZOOM, PDO_MOVIE_COUNT };
 
 /* Whether the game set itself up in its widescreen mode (anamorphic 16:9:
  * a wider view squeezed into 640x480), which it reads once at start:

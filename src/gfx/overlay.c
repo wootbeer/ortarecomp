@@ -643,7 +643,7 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_ASPECT: snprintf(v, n, "%s", aspects[s->aspect]); break;
     case ITEM_FIT:    snprintf(v, n, "%s", fits[s->fit]); break;
     case ITEM_MOVIES: {
-        static const char *mfits[PDO_MOVIE_COUNT] = { "Bars", "Stretch", "Zoom", "Original" };
+        static const char *mfits[PDO_MOVIE_COUNT] = { "Original", "Bars", "Stretch", "Zoom" };
         snprintf(v, n, "%s", mfits[s->movie_fit]);
         break;
     }
@@ -780,8 +780,8 @@ static const char *help_of(int item)
     case ITEM_ASPECT: return "16:9 shows more to the sides.";
     case ITEM_FIT:    return "Bars, stretched or zoomed.";
     case ITEM_MOVIES: {
-        static const char *helps[PDO_MOVIE_COUNT] = { "The whole film, its own shape.", "Film stretched to the window.",
-                                                      "Film fills; edges cut off.", "As the game frames it." };
+        static const char *helps[PDO_MOVIE_COUNT] = { "As the game frames it.", "The whole film, its own shape.",
+                                                      "Film stretched to the window.", "Film fills; edges cut off." };
         return helps[pdo_settings_get()->movie_fit];
     }
     case ITEM_SOFT:   return "A slight TV-like blur.";
