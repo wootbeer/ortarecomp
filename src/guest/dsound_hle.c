@@ -19,13 +19,12 @@
  * and our ids; the game treats them as opaque interface pointers.
  *
  * Not implemented yet, accepted and recorded: envelopes (SetEG), LFOs,
- * filters, I3DL2 source HF levels, obstruction and occlusion, the APU's
- * HRTF filters (3D voices are panned instead; PDO_TEST_HRTF tries them),
- * and the DSP image's own effects (its I3DL2 reverb is ours, in
+ * filters, I3DL2 source HF levels, obstruction and occlusion, and the DSP
+ * image's own effects (its I3DL2 reverb is ours, in
  * src/audio/reverb.c).
  *
  * PDO_DSOUND_TRACE=1 logs every call. Listening tests, off unless set:
- * PDO_TEST_NEWEST=1 (src/audio/mixer.c), PDO_TEST_HRTF=n (below);
+ * PDO_TEST_NEWEST=1 (src/audio/mixer.c); PDO_HRTF=n (below);
  * PDO_MOVIE51=0 keeps movies stereo.
  */
 
@@ -336,16 +335,14 @@ void sub_002C2494(void)
 /* ── 3D sound ─────────────────────────────────────────────────────────
  * DSBCAPS_CTRL3D buffers are placed relative to the listener: DirectSound's
  * distance model (full volume up to the minimum distance, then
- * min / (min + rolloff * (d - min)), held from the maximum distance on) and
- * an equal-power left/right pan from the listener's orientation, or on
- * headphones (the output setting) a model head, or on 5.1 a pan around the
- * four corner speakers. No cones or Doppler (Orta sets cones of 360 degrees
- * and no velocity). Deferred settings apply at once. Positions are in the
- * world, the listener moving with the player; enemy gunfire is played at
- * the shooter, within the minimum distance of the player, so at full
- * volume. On the Xbox the left/right placement is the APU's per-voice HRTF
- * filter instead of a pan (docs/orta-facts.md, "DirectSound's 3D voice
- * volumes"). */
+ * min / (min + rolloff * (d - min)), held from the maximum distance on),
+ * then on Stereo and Headphones the APU's per-voice HRTF filter from the
+ * game's own tables (below; stereo 3D buffers are panned), on 5.1 a pan
+ * around the four corner speakers. No cones or Doppler (Orta sets cones of
+ * 360 degrees and no velocity). Deferred settings apply at once. Positions
+ * are in the world, the listener moving with the player; enemy gunfire is
+ * played at the shooter, within the minimum distance of the player, so at
+ * full volume. */
 
 static float fget(uint32_t va)
 {
@@ -362,9 +359,11 @@ static float fval(uint32_t v)
     return f;
 }
 
-/* PDO_TEST_HRTF=n (a listening test, Stereo and Headphones outputs): mono
- * 3D voices through the Xbox's own HRTF filters, taps divided by n (128,
- * 256 or 512: the APU's scale is not known). DirectSound's lookup
+/* Stereo and Headphones outputs: mono 3D voices go through the Xbox's own
+ * HRTF filters, as the APU placed them. The APU's scale for the taps is not
+ * known: / 512 sounded closest to the console by ear (256 is 6 dB louder).
+ * PDO_HRTF=n divides by n instead; PDO_HRTF=0 pans as before (equal power,
+ * or on Headphones the model head). DirectSound's lookup
  * (0x002C5497): elevation rounded to 6 degrees, azimuth folded to 0-180 and
  * rounded to 3 degrees (6 above 30 degrees of elevation, 12 above 60, 0 at
  * the poles), a uint16 index of 61 x 31 at 0x002DE590 to a pair of 32-byte
@@ -373,14 +372,14 @@ static float fval(uint32_t v)
  * 48 kHz samples. The first entry is the ear away from the sound (the
  * delay, the head's shadow), the second the ear facing it (0x002C7551
  * sends the pair to the APU by the azimuth's sign). */
-static float test_hrtf(void)
+static float hrtf_scale(void)
 {
     static float scale = -1.0f;
     if (scale < 0.0f) {
-        const char *e = getenv("PDO_TEST_HRTF");
-        scale = e && atoi(e) > 0 ? (float)atoi(e) : 0.0f;
-        if (scale > 0.0f)
-            SDL_Log("dsound: PDO_TEST_HRTF: the Xbox's HRTF filters, taps / %g", scale);
+        const char *e = getenv("PDO_HRTF");
+        scale = e ? (float)(atoi(e) > 0 ? atoi(e) : 0) : 512.0f;
+        if (e)
+            SDL_Log("dsound: PDO_HRTF: %s", scale > 0.0f ? "HRTF taps scaled by the value" : "panned, no HRTF");
     }
     return scale;
 }
@@ -453,7 +452,7 @@ static void apply_3d(int id)
         if (n > 1e-6f)
             x = (rel[0] * right[0] + rel[1] * right[1] + rel[2] * right[2]) / (d * n);
     }
-    if (test_hrtf() > 0.0f && pdo_settings_get()->audio_out != PDO_AUDIO_SURROUND) {
+    if (hrtf_scale() > 0.0f && pdo_settings_get()->audio_out != PDO_AUDIO_SURROUND) {
         const float fr[3] = { 0.0f, 0.0f, 1.0f }, up[3] = { 0.0f, 1.0f, 0.0f };
         const bool hr = src3d[id].mode == DS3DMODE_HEADRELATIVE;
         const float *ff = hr ? fr : f, *tt = hr ? up : t;
@@ -466,7 +465,7 @@ static void apply_3d(int id)
             y = (rel[0] * tt[0] + rel[1] * tt[1] + rel[2] * tt[2]) / (d * nt);
         if (y > 1.0f) y = 1.0f;
         if (y < -1.0f) y = -1.0f;
-        hrtf_filters(atan2f(x, fz) * 57.2957795f, asinf(y) * 57.2957795f, test_hrtf(), h, delay);
+        hrtf_filters(atan2f(x, fz) * 57.2957795f, asinf(y) * 57.2957795f, hrtf_scale(), h, delay);
         pdo_voice_set_3d_hrtf(id, g, h, delay);
         return;
     }

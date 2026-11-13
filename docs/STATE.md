@@ -69,9 +69,8 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    0x225417 (`PDO_TEST_NEWEST=1` keeps only the newest and sounds closer to
    the Xbox). The copies are the game's own (it stops each after one
    pass, see `docs/orta-facts.md`); left to explain the Xbox's lighter
-   sound: the per-voice HRTF filters (decoded; `PDO_TEST_HRTF=256` or
-   `512` to compare by ear, their scale unknown) and the dsstdfx.bin
-   effects on the 3D mixbins (not reproduced).
+   sound: the dsstdfx.bin effects on the 3D mixbins (not reproduced). The
+   per-voice HRTF filters are in (Stereo/Headphones, taps / 512 by ear).
 7. Wishlist: the European (PAL) disc. Only the USA default.xbe is
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by

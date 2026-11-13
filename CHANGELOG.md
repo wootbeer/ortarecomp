@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Sound: 3D sounds (enemies, gunfire, explosions) are placed by the Xbox's
+  own HRTF filters, read from the game: each ear hears its own filtered
+  sound and delay, as on the console, on speakers or headphones (Stereo and
+  Headphones outputs; 5.1 is unchanged). Gunfire is softer and less harsh.
+
 ## v0.1.5 (beta)
 
 ### Added

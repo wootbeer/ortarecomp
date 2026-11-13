@@ -206,9 +206,9 @@ virtual addresses in the USA `default.xbe`.
   0x002C7551 sends the two interleaved to APU methods 0x400 on, swapped by
   the azimuth's sign, and the delay negated for the other side. The taps'
   scale in the APU is not known: straight ahead the filter sums to 295
-  (DC) with 10 kHz 7 dB below 1 kHz. PDO_TEST_HRTF=n runs them with taps
-  / n. Our default 3D path pans instead (equal power, -3 dB each ear
-  straight ahead); against it, episode 1's machine gun alone through the
+  (DC) with 10 kHz 7 dB below 1 kHz. We run them with taps / 512 (closest
+  to the console by ear; PDO_HRTF=n another scale, 0 the old pan). Against
+  that pan (equal power, -3 dB each ear straight ahead), episode 1's machine gun alone through the
   HRTF is +3.7, +3.1, -0.9, -1.2 dB (100-500, 500-2k, 2k-6k, 6k-16k Hz)
   at n = 256, 6 dB less at 512.
 - Enemy machine guns (24,012 and 13,212-byte ADPCM samples, mono 44.1 kHz,
