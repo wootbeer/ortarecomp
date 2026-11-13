@@ -172,7 +172,12 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         set_source_files_properties(src/guest/vsh.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
     endif()
     if(MSVC)
-        target_compile_options(pdo_recomp PRIVATE /bigobj /w)
+        # /d2OptimizeHugeFunctions: MSVC leaves a function above its size
+        # limit unoptimised (warning C4883, hidden by /w), and the generated
+        # code has such functions -- the movie decoder among them ran so
+        # slowly that movies fell to 20 fps and stopped (GCC and Clang have
+        # no such limit). The build takes longer for it.
+        target_compile_options(pdo_recomp PRIVATE /bigobj /w /d2OptimizeHugeFunctions)
     else()
         # The generated code reads guest memory through casted pointers and
         # relies on 32-bit wraparound, so neither assumption may be optimised on.
