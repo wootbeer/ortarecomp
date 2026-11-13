@@ -238,6 +238,7 @@ typedef struct frame_data {
     Uint64 stamp;           /* when it was handed over */
     bool movie;             /* pdo_gfx_mark_movie: the movie's picture, x0 y0 x1 y1 */
     float movie_rect[4];
+    uint32_t movie_id;
     /* Main thread: the frame's own GPU copies, uploaded once (on_gpu) and
      * used for every frame shown from it. */
     SDL_GPUBuffer *gvb, *gib, *gblob, *gconst;
@@ -413,9 +414,10 @@ void pdo_gfx_set_draw_source(const void *src)
     draw_src = (uintptr_t)src;
 }
 
-void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1)
+void pdo_gfx_mark_movie(uint32_t id, float x0, float y0, float x1, float y1)
 {
     F->movie = x1 > x0 && y1 > y0;
+    F->movie_id = id;
     F->movie_rect[0] = x0;
     F->movie_rect[1] = y0;
     F->movie_rect[2] = x1;
@@ -423,42 +425,92 @@ void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1)
 }
 
 static bool draw_corners(const frame_data *f, const command *c, float out[8]);
+static bool is_3d(const frame_data *f, const command *c);
 
-/* The movie picture of frame f, if it is a movie frame with nothing else
- * drawn but fades (an untextured quad over the whole frame, 0x0006A0A8 at
- * a movie's start and end): in frame pixels. Anything else over it -- a
- * menu, subtitles -- shows the whole frame instead. */
+/* A screen-space draw's rectangle in frame pixels, from its first and last
+ * vertices: pretransformed fixed-function vertices are pixels already,
+ * the CPU's are clip space. False for 3D and vertex-program draws. */
+static bool screen_rect(const frame_data *f, const command *c, float r[4])
+{
+    float b[8];
+    if (c->vsh || is_3d(f, c) || !draw_corners(f, c, b))
+        return false;
+    if (c->fvf < 0) {           /* CPU-made: clip space to pixels */
+        for (int k = 0; k < 8; k += 4) {
+            if (b[k + 3] == 0.0f)
+                return false;
+            b[k + 0] = (b[k + 0] / b[k + 3] + 1.0f) * 0.5f * (float)frame_w;
+            b[k + 1] = (1.0f - b[k + 1] / b[k + 3]) * 0.5f * (float)frame_h;
+        }
+    }
+    r[0] = SDL_min(b[0], b[4]);
+    r[1] = SDL_min(b[1], b[5]);
+    r[2] = SDL_max(b[0], b[4]);
+    r[3] = SDL_max(b[1], b[5]);
+    return true;
+}
+
+/* The movie picture of frame f, in frame pixels, if it is a movie frame
+ * with nothing over it but fades (an untextured quad over the whole frame,
+ * 0x0006A0A8 at a movie's start and end) and screen-space draws such as
+ * subtitles, whose rectangles are added so they are not cut off. Anything
+ * else (3D, a vertex program): the whole frame instead. */
 static bool movie_only(const frame_data *f, float r[4])
 {
     bool movie = false;
     if (!f || !f->movie)
         return false;
+    r[0] = SDL_max(f->movie_rect[0], 0.0f);
+    r[1] = SDL_max(f->movie_rect[1], 0.0f);
+    r[2] = SDL_min(f->movie_rect[2], (float)frame_w);
+    r[3] = SDL_min(f->movie_rect[3], (float)frame_h);
     for (uint32_t i = 0; i < f->ncmds; i++) {
         const command *c = &f->cmds[i];
-        float b4[8];
+        float d[4];
         if (c->kind != CMD_DRAW)
             continue;
         if (!movie) {           /* the first draw: the movie */
             movie = true;
             continue;
         }
-        if (c->draw.tex[0].data || !draw_corners(f, c, b4) ||
-            SDL_min(b4[0], b4[4]) > 0.5f || SDL_min(b4[1], b4[5]) > 0.5f ||
-            SDL_max(b4[0], b4[4]) < (float)frame_w - 0.5f || SDL_max(b4[1], b4[5]) < (float)frame_h - 0.5f)
+        if (!screen_rect(f, c, d))
             return false;
+        if (!c->draw.tex[0].data && d[0] <= 0.5f && d[1] <= 0.5f && d[2] >= (float)frame_w - 0.5f &&
+            d[3] >= (float)frame_h - 0.5f)
+            continue;           /* a fade */
+        r[0] = SDL_min(r[0], SDL_max(d[0], 0.0f));
+        r[1] = SDL_min(r[1], SDL_max(d[1], 0.0f));
+        r[2] = SDL_max(r[2], SDL_min(d[2], (float)frame_w));
+        r[3] = SDL_max(r[3], SDL_min(d[3], (float)frame_h));
     }
-    r[0] = SDL_max(f->movie_rect[0], 0.0f);
-    r[1] = SDL_max(f->movie_rect[1], 0.0f);
-    r[2] = SDL_min(f->movie_rect[2], (float)frame_w);
-    r[3] = SDL_min(f->movie_rect[3], (float)frame_h);
     return r[2] - r[0] >= 16.0f && r[3] - r[1] >= 16.0f;
 }
 
 /* The frame on the screen's movie picture, worked out when it was drawn:
  * the window pass also runs under the options menu, after the game has
- * moved on to recording the next frame. */
+ * moved on to recording the next frame. Within one movie it only grows
+ * (pdo_gfx_mark_movie's movie number): the first subtitle widens it once
+ * for the rest of the movie, rather than the picture jumping each line. */
 static bool shown_movie;
 static float shown_movie_rect[4];
+static uint32_t shown_movie_id;
+
+static void update_shown_movie(const frame_data *f)
+{
+    float r[4];
+    shown_movie = movie_only(f, r);
+    if (!shown_movie)
+        return;
+    if (f->movie_id != shown_movie_id) {
+        shown_movie_id = f->movie_id;
+        memcpy(shown_movie_rect, r, sizeof r);
+        return;
+    }
+    shown_movie_rect[0] = SDL_min(shown_movie_rect[0], r[0]);
+    shown_movie_rect[1] = SDL_min(shown_movie_rect[1], r[1]);
+    shown_movie_rect[2] = SDL_max(shown_movie_rect[2], r[2]);
+    shown_movie_rect[3] = SDL_max(shown_movie_rect[3], r[3]);
+}
 
 int32_t pdo_gfx_vsh_program(const uint32_t *code, uint32_t count)
 {
@@ -5023,7 +5075,7 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
     F = f;
     P = prev;
     blend = t;
-    shown_movie = movie_only(f, shown_movie_rect);
+    update_shown_movie(f);
     if (f->gamma_new) {
         memcpy(gamma_rgba, f->gamma, sizeof gamma_rgba);
         gamma_dirty = true;

@@ -1151,6 +1151,7 @@ static void unpack_d3dcolor(uint32_t c, float out[4])
  * taken back to its 16:9 or 4:3 height. The picture's rectangle on screen
  * goes through the quad's texture coordinates. */
 static int movie_w, movie_h;    /* the movie's picture, pixels; 0: not known */
+static uint32_t movie_id;       /* counts the movies opened */
 
 void pdo_movie_opened(uint32_t name_va)
 {
@@ -1159,6 +1160,7 @@ void pdo_movie_opened(uint32_t name_va)
     size_t n = 0;
 
     movie_w = movie_h = 0;
+    movie_id++;
     while (n + 1 < sizeof name && MEM8(name_va + n))
         name[n] = (char)MEM8(name_va + n), n++;
     name[n] = 0;
@@ -1220,9 +1222,9 @@ static void mark_movie(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fi
          * 0..w, 0..h */
         float sx = (x1 - x0) / (u1 - u0), sy = (y1 - y0) / (v1 - v0);
         float px0 = x0 + (0.0f - u0) * sx, py0 = y0 + (0.0f - v0) * sy;
-        pdo_gfx_mark_movie(px0, py0, px0 + (float)movie_w * sx, py0 + (float)movie_h * sy);
+        pdo_gfx_mark_movie(movie_id, px0, py0, px0 + (float)movie_w * sx, py0 + (float)movie_h * sy);
     } else    /* not known: the opening's shape, 16:9 from the quad's top */
-        pdo_gfx_mark_movie(x0, y0, x1, y0 + (x1 - x0) * 9.0f / 16.0f);
+        pdo_gfx_mark_movie(movie_id, x0, y0, x1, y0 + (x1 - x0) * 9.0f / 16.0f);
 }
 
 static void fill_draw_state(pdo_draw *d, bool pretransformed)
