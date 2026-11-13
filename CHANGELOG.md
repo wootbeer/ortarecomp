@@ -13,6 +13,9 @@
   dropping to half; Off may tear.
 - Shadows: Options > Display, High (scaled with the resolution, the
   default) or Low (the game's own size, lighter on the GPU).
+- 5.1 movie soundtracks: with Sound > Output on 5.1, the opening and the
+  two story movies in Pandora's Box play their own 5.1 soundtracks, as on
+  a console with Dolby Digital. Other movies are stereo on the disc.
 
 ### Fixed
 

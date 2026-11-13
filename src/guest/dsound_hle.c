@@ -508,7 +508,7 @@ void sub_002C12AE(void)
     RETURN(4, voice_of(b) ? (MEM32(b + OBJ_REFS) += 1) : 0);
 }
 
-/* ── 5.1 movie soundtracks (PDO_TEST_AC3) ────────────────────────────────
+/* ── 5.1 movie soundtracks (Output: 5.1; PDO_MOVIE51=0 turns them off) ───
  * With a surround console reported, a movie that has an .aix (opening_bs,
  * ins1_bs, ins2_bs) plays its 5.1 soundtrack: CRI makes a stereo buffer per
  * speaker pair at 48 kHz and routes them front (mixbins 0/1), back (4/5) and
@@ -523,8 +523,8 @@ static struct { uint32_t buf; int stream; uint32_t last_off, last_pos, last_fram
 
 static bool test_ac3(void)
 {
-    const char *t = getenv("PDO_TEST_AC3");
-    return t && *t == '1' && pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND;
+    const char *t = getenv("PDO_MOVIE51");
+    return pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND && !(t && *t == '0');
 }
 
 static void movie51_start(uint32_t name_va)
@@ -909,22 +909,18 @@ void sub_002C39A9(void)
 
 /* ── Calls Orta makes that JSRF did not ───────────────────────────────── */
 
-/* IDirectSound_GetSpeakerConfig(pDS, pdwSpeakerConfig): stereo output.
- * PDO_TEST_AC3=1 (a test, not a setting): with Output on 5.1, report a
- * surround console with Dolby Digital (DSSPEAKER_SURROUND |
- * DSSPEAKER_ENABLE_AC3), which makes the movie setup (0x000687B0) keep the
- * AC3 bit and choose a movie's 5.1 .aix soundtrack (opening_bs.aix) over
- * the .sfd's stereo; to see in the log and a 6-channel PDO_AUDIO_DUMP what
- * CRI then hands DirectSound. */
+/* IDirectSound_GetSpeakerConfig(pDS, pdwSpeakerConfig). Stereo, or with
+ * Output on 5.1 a surround console with Dolby Digital (DSSPEAKER_SURROUND |
+ * DSSPEAKER_ENABLE_AC3): the movie setup (0x000687B0, its only caller)
+ * then keeps the AC3 bit and plays a movie's 5.1 .aix soundtrack
+ * (opening_bs, ins1_bs, ins2_bs) over the .sfd's stereo; see "5.1 movie
+ * soundtracks". PDO_MOVIE51=0 keeps them stereo. */
 void sub_002C242A(void)
 {
-    const char *t = getenv("PDO_TEST_AC3");
-    uint32_t cfg = 0x00000002u;         /* DSSPEAKER_STEREO */
+    uint32_t cfg = test_ac3() ? 0x00010004u : 0x00000002u;    /* or DSSPEAKER_STEREO */
 
-    if (t && *t == '1' && pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND)
-        cfg = 0x00010004u;
-    /* From the movie setup (0x000687B0, call at 0x000687E4): ebx holds the
-     * .aix name, or 0 for a movie with only the .sfd's stereo. */
+    /* From the movie setup (call at 0x000687E4): ebx holds the .aix name,
+     * or 0 for a movie with only the .sfd's stereo. */
     if (test_ac3() && MEM32(g_esp) == 0x000687E9u)
         movie51_start(g_ebx);
     TRACE("GetSpeakerConfig -> 0x%08x", cfg);
