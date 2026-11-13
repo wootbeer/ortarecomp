@@ -207,6 +207,19 @@ virtual addresses in the USA `default.xbe`.
   new copy (Play, looping) there, stopped after about one pass (55 and 30
   frames). Up to 12 copies of one sample play at once from one spot; cones
   are 360/360 and velocities 0, so neither cones nor Doppler separate them.
+  Each copy is a new buffer (CreateSoundBuffer, then SetBufferData on the
+  template's sample memory), played looping; the game polls its
+  GetCurrentPosition every frame and stops it when the position wraps, so
+  every copy plays exactly one pass (51-58 frames for the 0.97 s sample)
+  and is then released. This is the game's own logic, so the Xbox starts
+  as many copies. Every 3D SetPosition is DS3D_DEFERRED (apply 1);
+  CommitDeferredSettings is called from three places (returning to
+  0x0021E5B6, 0x002290F4 and 0x0022A922).
+- Effects image: `dsstdfx.bin` on the disc (30,720 bytes, the XDK's
+  standard image, loaded each stage). On the Xbox the 3D mixbins pass
+  through its effects on the way to the speakers; we route them straight
+  to the speakers and run our own reverb for bin 10. The file is raw DSP
+  memory (no header at its start).
 - Voices: DSOUND allocates hardware voices at Play for DSBCAPS_LOCDEFER
   (0x40000) buffers (0x002C8CBB, allocator 0x002C5DBB) from two pools, 64
   3D voices (slots 0-63) and 192 2D voices (slots 64-255), set at
