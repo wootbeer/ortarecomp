@@ -1000,6 +1000,9 @@ void sub_002C242A(void)
 
     /* From the movie setup (call at 0x000687E4): ebx holds the .aix name,
      * or 0 for a movie with only the .sfd's stereo. */
+    if (MEM32(g_esp) == 0x000687E9u)   /* the setup's argument, the .sfd name, above our two
+                                        * arguments, its saved edi, ebp, ebx and return */
+        pdo_movie_opened(MEM32(g_esp + 0x1C));
     if (test_ac3() && MEM32(g_esp) == 0x000687E9u)
         movie51_start(g_ebx);
     TRACE("GetSpeakerConfig -> 0x%08x", cfg);

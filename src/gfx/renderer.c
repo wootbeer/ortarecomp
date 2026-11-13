@@ -422,23 +422,43 @@ void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1)
     F->movie_rect[3] = y1;
 }
 
-/* The movie picture of the frame shown, if it is a movie frame with
- * nothing else drawn (a menu, subtitles or a fade over it: the whole
- * frame instead), in frame pixels. */
-static bool movie_only(float r[4])
+static bool draw_corners(const frame_data *f, const command *c, float out[8]);
+
+/* The movie picture of frame f, if it is a movie frame with nothing else
+ * drawn but fades (an untextured quad over the whole frame, 0x0006A0A8 at
+ * a movie's start and end): in frame pixels. Anything else over it -- a
+ * menu, subtitles -- shows the whole frame instead. */
+static bool movie_only(const frame_data *f, float r[4])
 {
-    uint32_t draws = 0;
-    if (!F || !F->movie)
+    bool movie = false;
+    if (!f || !f->movie)
         return false;
-    for (uint32_t i = 0; i < F->ncmds; i++)
-        if (F->cmds[i].kind == CMD_DRAW && ++draws > 1)
+    for (uint32_t i = 0; i < f->ncmds; i++) {
+        const command *c = &f->cmds[i];
+        float b4[8];
+        if (c->kind != CMD_DRAW)
+            continue;
+        if (!movie) {           /* the first draw: the movie */
+            movie = true;
+            continue;
+        }
+        if (c->draw.tex[0].data || !draw_corners(f, c, b4) ||
+            SDL_min(b4[0], b4[4]) > 0.5f || SDL_min(b4[1], b4[5]) > 0.5f ||
+            SDL_max(b4[0], b4[4]) < (float)frame_w - 0.5f || SDL_max(b4[1], b4[5]) < (float)frame_h - 0.5f)
             return false;
-    r[0] = SDL_max(F->movie_rect[0], 0.0f);
-    r[1] = SDL_max(F->movie_rect[1], 0.0f);
-    r[2] = SDL_min(F->movie_rect[2], (float)frame_w);
-    r[3] = SDL_min(F->movie_rect[3], (float)frame_h);
+    }
+    r[0] = SDL_max(f->movie_rect[0], 0.0f);
+    r[1] = SDL_max(f->movie_rect[1], 0.0f);
+    r[2] = SDL_min(f->movie_rect[2], (float)frame_w);
+    r[3] = SDL_min(f->movie_rect[3], (float)frame_h);
     return r[2] - r[0] >= 16.0f && r[3] - r[1] >= 16.0f;
 }
+
+/* The frame on the screen's movie picture, worked out when it was drawn:
+ * the window pass also runs under the options menu, after the game has
+ * moved on to recording the next frame. */
+static bool shown_movie;
+static float shown_movie_rect[4];
 
 int32_t pdo_gfx_vsh_program(const uint32_t *code, uint32_t count)
 {
@@ -3270,7 +3290,8 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         fitv.y = SDL_floorf((sh - fitv.h) / 2);
         fitv.max_depth = 1.0f;
         SDL_zero(vp);
-        if (movie_only(mr)) {
+        if (shown_movie) {
+            memcpy(mr, shown_movie_rect, sizeof mr);
             /* A movie: its picture (square pixels in the 4:3 frame, in
              * either aspect mode) placed by the Fit setting, the frame
              * around it -- its black bars -- off the window or black. */
@@ -3289,11 +3310,13 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
             vp.y = SDL_floorf(((float)sh - rh * ky) / 2 - mr[1] * ky);
             {
                 static Uint32 told_w, told_h;
-                if (told_w != sw || told_h != sh) {
+                static float told_r[4];
+                if (told_w != sw || told_h != sh || memcmp(told_r, mr, sizeof mr) != 0) {
                     told_w = sw;
                     told_h = sh;
-                    SDL_Log("gfx: a movie: its %gx%g picture alone, %gx%g in the %ux%u window", rw, rh,
-                            SDL_floorf(rw * kx), SDL_floorf(rh * ky), sw, sh);
+                    memcpy(told_r, mr, sizeof mr);
+                    SDL_Log("gfx: a movie: its %gx%g picture at %g,%g alone, %gx%g in the %ux%u window", rw, rh,
+                            mr[0], mr[1], SDL_floorf(rw * kx), SDL_floorf(rh * ky), sw, sh);
                 }
             }
         } else if (st->fit == PDO_FIT_STRETCH) {
@@ -5000,6 +5023,7 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
     F = f;
     P = prev;
     blend = t;
+    shown_movie = movie_only(f, shown_movie_rect);
     if (f->gamma_new) {
         memcpy(gamma_rgba, f->gamma, sizeof gamma_rgba);
         gamma_dirty = true;

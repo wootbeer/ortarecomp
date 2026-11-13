@@ -139,7 +139,7 @@ void pdo_gfx_draw(const pdo_draw *d, const pdo_vertex *v, uint32_t nv,
  * draw in the next frame. */
 void pdo_gfx_set_draw_source(const void *src);
 /* This frame shows a movie, its picture in that rectangle of the back
- * buffer (pixels). If the movie is the frame's only draw, the window shows
+ * buffer (pixels). If nothing else is drawn but a fade, the window shows
  * the picture alone, at its own shape, as the Fit setting says -- not the
  * letterboxed frame, which in the game's 16:9 mode came out stretched. */
 void pdo_gfx_mark_movie(float x0, float y0, float x1, float y1);
