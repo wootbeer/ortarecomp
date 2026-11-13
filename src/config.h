@@ -55,8 +55,8 @@ typedef struct pdo_settings {
     int  pic_saturation;    /* 0..200 % */
     int  audio_out;         /* PDO_AUDIO_*: stereo; headphones (with hrtf off, a model head);
                                or 5.1, 3D sounds around four speakers (mixer.c) */
-    bool hrtf;              /* Stereo/Headphones: 3D sounds through the Xbox's HRTF filters, else a
-                               pan or the model head (src/guest/dsound_hle.c) */
+    bool hrtf;              /* 3D sounds through the Xbox's HRTF filters (on 5.1 shared front and
+                               back), else a pan, the model head or the corners (dsound_hle.c) */
     int  save_slot;         /* 1-3: which save file the game sees (pdo_save_dir), chosen before it starts */
 } pdo_settings;
 

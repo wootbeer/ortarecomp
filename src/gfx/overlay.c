@@ -807,9 +807,9 @@ static const char *help_of(int item)
         return helps[pdo_settings_get()->audio_out];
     }
     case ITEM_HRTF:
-        if (pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND)
-            return "Stereo/Headphones only.";
-        return pdo_settings_get()->hrtf ? "3D Filter" : "A plain left/right pan.";
+        if (pdo_settings_get()->hrtf)
+            return "3D Filter";
+        return pdo_settings_get()->audio_out == PDO_AUDIO_SURROUND ? "Panned around the speakers." : "A plain left/right pan.";
     case ITEM_VSH:    return "GPU is faster.";
     case ITEM_FVF:    return "GPU is faster.";
     case ITEM_INTERP: {

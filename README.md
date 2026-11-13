@@ -30,10 +30,10 @@ Android build is planned.
 - **Color correction:** brightness, contrast, gamma and saturation, a CRT
   look, optional TV softening, and bloom (Low or High) that leaves the HUD
   alone.
-- **Sound:** 3D positional audio through the Xbox's own HRTF filters (on
-  speakers or headphones; or a simple pan), or 5.1 surround (3D sounds placed around four
-  speakers, and the movies' own 5.1 soundtracks), with the game's room
-  reverb and a master volume.
+- **Sound:** 3D positional audio through the Xbox's own HRTF filters, on
+  stereo speakers, headphones or 5.1 surround (shared front and back as on
+  the console; or a simple pan), the movies' own 5.1 soundtracks, the
+  game's room reverb and a master volume.
 - **Controls:** controllers, keyboard and mouse (with mouse aim), every
   button rebindable.
 - **Three save files** (the original keeps one), picked in the launcher.

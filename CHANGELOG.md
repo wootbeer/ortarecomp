@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- 5.1: 3D sound now works on 5.1 too, as on the console: each sound goes
+  through the Xbox's HRTF filters for left and right and is shared between
+  the front and back speakers by the game's own rule (all front within 45
+  degrees of ahead, all back within 45 degrees of behind, even overhead).
+  Options > Sound > 3D sound Off keeps the earlier panning around the four
+  speakers.
+
 ## v0.1.6 (beta)
 
 ### Added
