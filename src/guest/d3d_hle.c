@@ -2238,6 +2238,54 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
     }
 }
 
+/* Real-time cutscenes (an episode's opening, say): the game letterboxes
+ * them with two black bars, 66 lines each at the top and bottom of its 480
+ * (a captured frame of episode 1's opening), drawn as one draw of two quads
+ * by the HUD's sprite routine (returning to 0x0006A24B), untextured, over
+ * the whole width. The scene is drawn under them over the whole frame (to
+ * its own texture, then stretched over 640x480), and the band between them
+ * is about 2.45:1, so on a 21:9 screen the bars only shrink a picture of
+ * the screen's own shape: there they are not drawn. The thin strips at the
+ * very top and bottom (16 lines, 0x0006A0A8) are in every frame and stay. */
+static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    float q[2][4];      /* each quad's x0, y0, x1, y1 */
+    int rtw, rth;
+
+    if (count != 8 || !pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
+        return false;
+    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || st.tex[0])
+        return false;
+    target_size(&rtw, &rth);
+    for (int k = 0; k < 2; k++) {
+        q[k][0] = q[k][1] = 1e9f;
+        q[k][2] = q[k][3] = -1e9f;
+        for (uint32_t i = 0; i < 4; i++) {
+            uint32_t v = base + (first + 4 * k + i) * stride;
+            float x, y;
+            uint32_t w[2] = { MEM32(v), MEM32(v + 4) };
+            memcpy(&x, &w[0], 4);
+            memcpy(&y, &w[1], 4);
+            if ((st.vshader & 0x040) && (MEM32(v + 16) & 0x00FFFFFFu))
+                return false;           /* not black */
+            q[k][0] = SDL_min(q[k][0], x);
+            q[k][1] = SDL_min(q[k][1], y);
+            q[k][2] = SDL_max(q[k][2], x);
+            q[k][3] = SDL_max(q[k][3], y);
+        }
+        if (q[k][0] > 0.5f || q[k][2] < (float)rtw - 1.5f)
+            return false;               /* not the whole width */
+    }
+    if (q[0][1] > q[1][1]) {            /* the top one first */
+        float t[4];
+        memcpy(t, q[0], sizeof t);
+        memcpy(q[0], q[1], sizeof t);
+        memcpy(q[1], t, sizeof t);
+    }
+    return q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
+           q[1][1] > 2.0f * (float)rth / 3.0f && SDL_fabsf(q[0][3] - ((float)rth - q[1][1])) <= 2.0f;
+}
+
 /* The shared part of every draw: vertices [first, first+count) of stream
  * data at 'base', primitive order given by 'order' (n entries, relative to
  * first). */
@@ -2256,6 +2304,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     float hud_k, hud_at;                    /* a HUD sprite's squeeze, on a wider screen, and about where */
 
     state_init();
+    if (cutscene_bars(base, stride, first, count))
+        return;
     hud_squeeze(base, stride, first, count, &hud_k, &hud_at);
     if (count > vcap) {
         vcap = count * 2;

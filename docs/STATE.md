@@ -79,8 +79,10 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    a player; the owner has the ISO.
 8. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
    letterboxed by the game. Movies: Display > Movies (Zoom) fills a wide
-   window, subtitles kept. Cutscenes: the game draws the
-   bars itself, so its cutscene state has to be found first. Gameplay:
+   window, subtitles kept. Cutscenes: at 21:9 the game's two bars (one
+   draw of the HUD routine, `cutscene_bars` in `d3d_hle.c`) are dropped;
+   not yet tried in play. HUD Edges also moves menu cursors in a corner
+   (results, pause): needs a gameplay capture to tell the HUD apart. Gameplay:
    Aspect ratio 21:9 (`widescreen.c`, HUD sprites squeezed back in
    `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
    pieces to the sides); menus come out pillarboxed to 16:9. 16:9 <-> 21:9
