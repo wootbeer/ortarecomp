@@ -85,8 +85,9 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
    pieces to the sides); menus come out pillarboxed to 16:9. 16:9 <-> 21:9
    applies mid-game (from Swap, re-handing the view value); 4:3 <-> wide
-   needs a restart, the picture held to what the game set up. Untested
-   in play since that change. Rumble
+   needs a restart, the picture held to what the game set up (tried in
+   play, Windows). Fit Zoom crops the HUD with the rest: on a wide
+   screen, 4:3 is for Bars. Rumble
    is passed through (XInputSetState); the log says when the game first
    sends it.
 
