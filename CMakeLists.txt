@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OrtaRecomp VERSION 0.1.6 LANGUAGES C CXX)
+project(OrtaRecomp VERSION 0.1.7 LANGUAGES C CXX)
 
 # Orta Recomp: a static recompilation of Panzer Dragoon Orta (Xbox).
 #
