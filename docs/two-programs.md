@@ -98,10 +98,16 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
 
 1. **Play pd1 through** (needs a person: input, sound by ear, the stages):
    expect pd1's own game code issues, not the XDK's.
-2. **Movies the Orta way**: the movie-only presentation and the picture
-   size come from two Orta caller checks (`d3d_hle.c` `mark_movie` at
-   0x000688E3, `dsound_hle.c` movie open at 0x000687E9), 0 for pd1: find
-   pd1's movie draw and open sites.
+2. **Display > Movies other than Original** (Bars, Stretch, Zoom) do not
+   apply to pd1's movies yet; Original, the default, is the game's own
+   frame and fine. They need the movie picture marked: Orta's checks
+   (`d3d_hle.c` `mark_movie`, draw returning to 0x000688E3; `dsound_hle.c`
+   movie open at 0x000687E9) are 0 for pd1. pd1 starts every movie through
+   0x00124D99 (cdecl, the .sfd name: an `_enter` hook calling
+   `pdo_movie_opened` gives the picture size), but draws every 2D quad, the
+   movie's among them, from one list renderer (0x001B6AE0, through the
+   draw routine 0x001A8500), so the movie quad needs another tell than the
+   caller (its texture, CRI's frame).
 3. **Switch in-process.** Orta's launch path (0x000120D0, then
    XLaunchNewImageA 0x0022CE3C with `d:\pd1.xbe`) ends the program: leave
    the title thread back to `pdo_guest_run`, stop the other guest threads

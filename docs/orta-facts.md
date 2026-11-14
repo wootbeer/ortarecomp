@@ -381,6 +381,15 @@ guest; saves on TDATA/UDATA. It returns with d:\default.xbe. 3830 of its
 functions are identical to Orta's (tools/xbe_match.py), among them most of
 D3D, DSOUND, XPP and WMADEC.
 
+pd1 at run time: it counts vblanks with its vertical-blank callback
+(0x001A39E0 adds 1 to 0x0098D6C0) and paces frames with 0x00124437 (cdecl,
+n: spins until n vblanks since the last call, kept at 0x0092D4A4); its
+opening runs at 60 fps. Movies start through 0x00124D99 (cdecl, the .sfd
+name, e.g. ALL_OP.SFD); every 2D quad, movie picture included, is drawn by
+one list renderer (0x001B6AE0, from the main loop 0x00121B10) through
+0x001A8500. It loads TNRoman.bin, pad_alert.bmp, wave_00.cmp and
+NARATION.CGZ first, then OPENING.CGZ before the opening movie.
+
 ## Boost and brake ends
 
 At the end of a boost or a brake the game renders the scene at another
