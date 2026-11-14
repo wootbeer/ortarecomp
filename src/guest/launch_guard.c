@@ -12,8 +12,11 @@
  *
  * So the Box leaves for the main menu instead: scene 9, where its EXIT goes
  * (0x000B8080 then starts it in mode 0x20003). Scene 10, the title as at
- * boot, came up black: nothing faded it in. A stretch goal is to recompile
- * pd1.xbe too and launch it.
+ * boot, came up black: nothing faded it in.
+ *
+ * pd1.xbe can now be recompiled as a second program (gen-pd1/, run alone
+ * with --program pd1), but switching to it in-process is not written yet:
+ * docs/two-programs.md.
  */
 
 #include <SDL3/SDL.h>
@@ -31,7 +34,7 @@ void sub_000B8080_enter(void)
     uint32_t box = MEM32(BOX_OBJECT);
 
     if (box && MEM32(box + BOX_NEXT_SCENE) == SCENE_PD1) {
-        SDL_Log("launch: PANZER DRAGOON (d:\\pd1.xbe) is not recompiled yet; back to the main menu");
+        SDL_Log("launch: PANZER DRAGOON (d:\\pd1.xbe) cannot be switched to yet; back to the main menu");
         MEM32(box + BOX_NEXT_SCENE) = SCENE_MENU;
     }
 }

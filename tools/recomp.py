@@ -5,10 +5,19 @@ Generate the recompiled C for Orta Recomp from your own copy of the game.
     python tools/recomp.py path/to/default.xbe
     python tools/recomp.py path/to/Orta.iso
     python tools/recomp.py path/to/default.xbe --names build/match/names.json
+    python tools/recomp.py --program pd1 path/to/Orta.iso   (or pd1.xbe)
 
 Runs the xboxrecomp pipeline (parse -> disassemble -> identify -> ABI ->
 lift) with every intermediate file in build/recomp-work/ and the C in gen/.
 Both are git-ignored: nothing derived from the game belongs in the repository.
+
+The disc holds two programs, each recompiled on its own (PROGRAMS below):
+orta (default.xbe -> gen/, overrides in src/ outside src/pd1/) and pd1, the
+original Panzer Dragoon from Pandora's Box (pd1.xbe -> gen-pd1/, overrides in
+src/pd1/, work in build/recomp-work-pd1/). Regenerating one leaves the other
+alone. pd1's names get a pd1_ prefix at compile time (gen-pd1/pd1_names.h,
+force-included by CMake) so both link into one executable; its sources still
+say sub_XXXXXXXX with pd1's own addresses.
 """
 
 import argparse
@@ -26,18 +35,53 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import xbe_info  # noqa: E402
 
 # Keep in step with src/xbe.c. Panzer Dragoon Orta (USA): SE-007, XDK 4928.
+# pd1.xbe has the same title ID; the section layout tells them apart.
 PDO_TITLE_ID = 0x53450007
-KNOWN_FILE_SHA256 = {
-    "c1af4eafccc02e11105d606b177263216cb7aa71bf1fbe8486ddfc3b1b848d2c",
+
+PROGRAMS = {
+    "orta": {
+        "title": "Panzer Dragoon Orta",
+        "xbe": "default.xbe",
+        "known_sha256": {
+            "c1af4eafccc02e11105d606b177263216cb7aa71bf1fbe8486ddfc3b1b848d2c",
+        },
+        "layout": {
+            ".text": 0x00011000, "D3D": 0x002AD9A0, "DSOUND": 0x002C1140,
+            "XGRPH": 0x002FD740, "XPP": 0x003067A0, ".rdata": 0x0030C8A0,
+            "APPDATA": 0x00340900,
+        },
+        # Marked executable in the XBE but data (Orta has no .data section).
+        # Swept as code it yields junk functions, and some do not compile.
+        "data_sections": "APPDATA",
+        "seeds": os.path.join("tools", "pdo_seeds.json"),
+        "gen": "gen",
+        "work": os.path.join("build", "recomp-work"),
+        "prefix": "",
+        "build_info": "pdo_build_info.h",
+        "macro": "PDO",
+    },
+    "pd1": {
+        "title": "Panzer Dragoon (Pandora's Box, pd1.xbe)",
+        "xbe": "pd1.xbe",
+        "known_sha256": {
+            "bf395d499a133e3f4b7c39f34a29d40b210827113d6ee9021b891a15552d86cb",
+        },
+        "layout": {
+            ".text": 0x00011000, "D3D": 0x00219280, "DSOUND": 0x0022C3A0,
+            "XGRPH": 0x0024F4E0, "XPP": 0x00271620, ".rdata": 0x00277740,
+            ".data": 0x007C0C00,
+        },
+        "data_sections": ".data",
+        "seeds": os.path.join("tools", "pd1_seeds.json"),
+        "gen": "gen-pd1",
+        "work": os.path.join("build", "recomp-work-pd1"),
+        "prefix": "pd1_",
+        "build_info": "pd1_build_info.h",
+        "macro": "PD1",
+    },
 }
-PDO_LAYOUT = {
-    ".text": 0x00011000, "D3D": 0x002AD9A0, "DSOUND": 0x002C1140,
-    "XGRPH": 0x002FD740, "XPP": 0x003067A0, ".rdata": 0x0030C8A0,
-    "APPDATA": 0x00340900,
-}
-# Marked executable in the XBE but data (Orta has no .data section). Swept
-# as code it yields junk functions, and some do not compile.
-DATA_SECTIONS = "APPDATA"
+PROGRAM = PROGRAMS["orta"]     # set by main() from --program
+DATA_SECTIONS = PROGRAM["data_sections"]
 
 
 def fail(msg):
@@ -88,7 +132,8 @@ def run_tool(module, *args):
 # ── XBE identification ──────────────────────────────────────────────────
 
 def identify(data):
-    """Return (description, image_sha256). Exits for anything not Orta."""
+    """Return (description, image_sha256). Exits for anything but the
+    program asked for."""
     try:
         x = xbe_info.parse(data)
     except xbe_info.XbeError as e:
@@ -96,11 +141,14 @@ def identify(data):
     if x["title_id"] != PDO_TITLE_ID:
         fail(f"title ID {x['title_id']:08X} is not Panzer Dragoon Orta (USA, 53450007)")
     found = {s["name"]: s["va"] for s in x["sections"]}
-    for name, va in PDO_LAYOUT.items():
+    for name, va in PROGRAM["layout"].items():
         if found.get(name) != va:
-            fail(f"section {name} is not where Orta (USA) has it; wrong version?")
+            other = [k for k, p in PROGRAMS.items() if p is not PROGRAM
+                     and all(found.get(n) == v for n, v in p["layout"].items())]
+            hint = f" (it is {other[0]}: use --program {other[0]})" if other else "; wrong version?"
+            fail(f"section {name} is not where {PROGRAM['title']} (USA) has it{hint}")
 
-    if x["file_sha256"] in KNOWN_FILE_SHA256:
+    if x["file_sha256"] in PROGRAM["known_sha256"]:
         desc = "known dump"
     else:
         desc = f"layout matches, unseen dump (sha256 {x['file_sha256']})"
@@ -339,10 +387,16 @@ def collect_overrides(path):
     in the generated code so ours links instead), `sub_XXXXXXXX_gen` wrappers
     and `sub_XXXXXXXX_enter` hooks. Scanning every source under src/ keeps the
     code itself the single source of truth for what is overridden.
+
+    The program's own sources only: Orta's are src/ outside src/pd1/, pd1's
+    are src/pd1/. An override in one never touches the other's code.
     """
     parts = []
-    for base, dirs, files in os.walk(os.path.join(ROOT, "src")):
+    top = os.path.join(ROOT, "src", "pd1") if PROGRAM["prefix"] else os.path.join(ROOT, "src")
+    for base, dirs, files in os.walk(top):
         dirs.sort()
+        if not PROGRAM["prefix"] and base == os.path.join(ROOT, "src"):
+            dirs[:] = [d for d in dirs if d != "pd1"]
         for name in sorted(files):
             if name.endswith(".c"):
                 with open(os.path.join(base, name), encoding="utf-8") as f:
@@ -351,22 +405,109 @@ def collect_overrides(path):
         f.write("\n".join(parts))
 
 
+def sync_generated(src, dst):
+    """Make dst hold exactly src's files, writing only those whose content
+    differs. Regenerating after a change to one override or seed then
+    leaves the other files' timestamps alone, and the build recompiles a
+    few chunks instead of the whole program. Returns (written, removed)."""
+    os.makedirs(dst, exist_ok=True)
+    want = set(os.listdir(src))
+    written = removed = 0
+    for name in sorted(want):
+        a, b = os.path.join(src, name), os.path.join(dst, name)
+        with open(a, "rb") as f:
+            data = f.read()
+        if os.path.isfile(b):
+            with open(b, "rb") as f:
+                if f.read() == data:
+                    continue
+        with open(b, "wb") as f:
+            f.write(data)
+        written += 1
+    for name in sorted(os.listdir(dst)):
+        if name not in want:
+            path = os.path.join(dst, name)
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            else:
+                os.remove(path)
+            removed += 1
+    return written, removed
+
+
 def extract_xbe_from_iso(iso, work):
-    run_tool("xiso", "get", os.path.abspath(iso), "default.xbe", "-o", work)
-    return os.path.join(work, "default.xbe")
+    run_tool("xiso", "get", os.path.abspath(iso), PROGRAM["xbe"], "-o", work)
+    return os.path.join(work, PROGRAM["xbe"])
+
+
+# Keep in step with src/guest/orta_names.h.
+DISPATCH_NAMES = ("recomp_lookup", "recomp_dispatch_init",
+                  "recomp_dispatch_flat_bytes", "recomp_get_count",
+                  "recomp_call_all", "recomp_lookup_manual")
+
+
+def write_names_header(gen, program, prefix):
+    """<program>_names.h in its gen folder, for a program with a prefix
+    (pd1). CMake force-includes it into the program's generated C and its
+    own sources (src/<program>/).
+
+    Two recompiled programs in one executable both define sub_XXXXXXXX,
+    recomp_lookup and the rest. Every global the generated code defines gets
+    the prefix, so the sources keep the usual spelling and link as
+    pd1_sub_XXXXXXXX; the dispatch entry points (the manual lookup in its
+    sources included) become pd1_recomp_lookup..., as Orta's become
+    orta_recomp_lookup... (src/guest/orta_names.h), and the host routes the
+    unprefixed ones the kernel layer calls to the program running
+    (src/guest/program.c). The names come from the generated code itself:
+    every void NAME(void) it declares or defines at file scope, and the _gen
+    and _enter forms of each. Sorted, so the file is the same for the same
+    input.
+    """
+    renames = {n: f"{program}_{n}" for n in DISPATCH_NAMES}
+    decl = re.compile(r"^(?:extern\s+)?void\s+([A-Za-z_]\w*)\s*\(void\)", re.M)
+    names = set()
+    for name in sorted(os.listdir(gen)):
+        if name.endswith((".c", ".h")) and name != "recomp_types.h" \
+                and not name.endswith("_names.h"):
+            with open(os.path.join(gen, name), encoding="utf-8", errors="replace") as f:
+                names.update(decl.findall(f.read()))
+    names = {n for n in names if not n.startswith(("recomp_", "xbox_", "RECOMP_"))}
+    for n in list(names):
+        if re.fullmatch(r"sub_[0-9A-F]{8}", n):
+            names.update((n + "_gen", n + "_enter"))
+    for n in names:
+        renames[n] = prefix + n
+    path = os.path.join(gen, f"{program}_names.h")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("/* Generated by tools/recomp.py. Do not edit. */\n#pragma once\n")
+        for n in sorted(renames):
+            f.write(f"#define {n} {renames[n]}\n")
+    return len(renames)
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
-    ap.add_argument("input", help="default.xbe or a disc image (.iso/.xiso)")
+    ap.add_argument("input", help="the program's XBE (default.xbe, pd1.xbe) "
+                    "or the disc image (.iso/.xiso)")
+    ap.add_argument("--program", choices=sorted(PROGRAMS), default="orta",
+                    help="which program on the disc: orta (default.xbe, the "
+                         "default) or pd1 (Pandora's Box's Panzer Dragoon)")
     ap.add_argument("--names", help="names.json from tools/xbe_match.py (JSRF names)")
-    ap.add_argument("--work", default=os.path.join(ROOT, "build", "recomp-work"))
-    ap.add_argument("--gen", default=os.path.join(ROOT, "gen"))
+    ap.add_argument("--work", help="default: build/recomp-work[-pd1]")
+    ap.add_argument("--gen", help="default: gen/ (orta), gen-pd1/ (pd1)")
     ap.add_argument("--split", default="250", help="functions per generated .c file")
     ap.add_argument("--trace-functions", metavar="JSON|all",
                     help="bring-up: emit an entry trace hook in these functions "
                          "(a JSON address list, or 'all'); see recomp_trace.c")
     args = ap.parse_args()
+
+    global PROGRAM, DATA_SECTIONS
+    PROGRAM = PROGRAMS[args.program]
+    DATA_SECTIONS = PROGRAM["data_sections"]
+    if not args.work:
+        args.work = os.path.join(ROOT, PROGRAM["work"])
+    if not args.gen:
+        args.gen = os.path.join(ROOT, PROGRAM["gen"])
 
     if not os.path.isfile(os.path.join(XBOXRECOMP, "tools", "recomp", "__main__.py")):
         fail("external/xboxrecomp is empty; run: git submodule update --init")
@@ -385,13 +526,13 @@ def main():
     src = os.path.abspath(args.input)
     if src.lower().endswith((".iso", ".xiso")):
         src = extract_xbe_from_iso(src, work)
-    xbe = os.path.join(work, "default.xbe")
+    xbe = os.path.join(work, PROGRAM["xbe"])
     if src != xbe:
         shutil.copyfile(src, xbe)
 
     with open(xbe, "rb") as f:
         desc, image_sha = identify(f.read())
-    print(f"Panzer Dragoon Orta: {desc}")
+    print(f"{PROGRAM['title']}: {desc}")
 
     d = lambda name: os.path.join(work, name)  # noqa: E731
     run_tool("xbe_parser", xbe, "--json", d("default_analysis.json"), "--quiet")
@@ -399,7 +540,7 @@ def main():
     disasm_args = [xbe, "-o", d("disasm"), "--analysis-json", d("default_analysis.json"),
                    "--exclude-sections", DATA_SECTIONS,
                    # Function entries seen at runtime that the static sweep misses.
-                   "--seed-functions", os.path.join(ROOT, "tools", "pdo_seeds.json")]
+                   "--seed-functions", os.path.join(ROOT, PROGRAM["seeds"])]
     run_tool("disasm", *disasm_args)
 
     # Direct calls (and tail jumps) to code the sweep did not turn into a
@@ -432,21 +573,29 @@ def main():
              "--func-id-dir", d("func_id"), "--output-dir", d("abi"))
 
     collect_overrides(d("pdo_overrides.c"))
-    shutil.rmtree(gen, ignore_errors=True)
+    # Generated into the work folder, then only what changed is copied over
+    # (sync_generated), so the build recompiles just those files.
+    fresh = d("gen")
+    shutil.rmtree(fresh, ignore_errors=True)
     trace = []
     if args.trace_functions:
         trace = ["--trace-functions", d("disasm/functions.json")
                  if args.trace_functions == "all" else args.trace_functions]
     run_tool("recomp", xbe, "--all", "--split", args.split,
              "--disasm-dir", d("disasm"), "--func-id-dir", d("func_id"),
-             "--abi-dir", d("abi"), "-o", d("recomp"), "--gen-dir", gen,
+             "--abi-dir", d("abi"), "-o", d("recomp"), "--gen-dir", fresh,
              "--exclude-manual", d("pdo_overrides.c"), *trace)
 
-    with open(os.path.join(gen, "pdo_build_info.h"), "w") as f:
+    with open(os.path.join(fresh, PROGRAM["build_info"]), "w") as f:
         f.write("/* Generated by tools/recomp.py. Do not edit. */\n"
                 "#pragma once\n"
-                f'#define PDO_BUILD_IMAGE_SHA256 "{image_sha}"\n')
+                f'#define {PROGRAM["macro"]}_BUILD_IMAGE_SHA256 "{image_sha}"\n')
+    if PROGRAM["prefix"]:
+        n = write_names_header(fresh, args.program, PROGRAM["prefix"])
+        print(f"{n} names prefixed {PROGRAM['prefix']} ({args.program}_names.h)")
 
+    changed, removed = sync_generated(fresh, gen)
+    print(f"\n{gen}: {changed} files written, {removed} removed, the rest unchanged")
     count = len([n for n in os.listdir(gen) if n.endswith(".c")])
     print(f"\nDone: {count} C files in {gen}. Now build with CMake (see BUILDING.md).")
 

@@ -8,6 +8,9 @@
  *   OrtaRecomp --check          check the game files, print, exit
  *   OrtaRecomp --boot           play at once, without the launcher
  *   OrtaRecomp --no-boot        set the title up without running it
+ *   OrtaRecomp --program pd1    run another program on the disc (with
+ *                               --boot): pd1 is Pandora's Box's Panzer
+ *                               Dragoon (pd1.xbe), if this build has it
  *   OrtaRecomp --log FILE       write the log into FILE
  *
  * Release builds always log: to ortarecomp.log in the data folder, the
@@ -22,6 +25,7 @@
 
 #ifdef PDO_HAVE_RECOMP
 #include "guest/guest.h"
+#include "guest/program.h"
 #include "gfx/renderer.h"
 #endif
 
@@ -47,6 +51,7 @@ typedef struct options {
     const char *game_dir;
     const char *import_iso;
     const char *log;
+    const char *program;
 } options;
 
 static bool parse_args(int argc, char **argv, options *o)
@@ -69,6 +74,8 @@ static bool parse_args(int argc, char **argv, options *o)
             o->import_iso = argv[++i];
         else if (strcmp(argv[i], "--log") == 0 && i + 1 < argc)
             o->log = argv[++i];
+        else if (strcmp(argv[i], "--program") == 0 && i + 1 < argc)
+            o->program = argv[++i];
         else {
             fprintf(stderr, "unknown argument: %s\n", argv[i]);
             return false;
@@ -185,22 +192,33 @@ static int SDLCALL game_thread(void *arg)
     return 0;
 }
 
-static int start_guest(const char *game_dir, const pdo_game_check *check, bool boot)
+static int start_guest(const char *game_dir, const pdo_game_check *check, bool boot,
+                       pdo_program program)
 {
     char path[PDO_PATH_MAX], save_dir[PDO_PATH_MAX], image_hex[65];
+    const char *built_from = pdo_program_built_from(program);
+    const char *xbe_name = pdo_program_xbe(program);
+    pdo_xbe_info info;
+    uint32_t entry;
     void *xbe;
     size_t size;
     int rc = 1;
 
-    pdo_sha256_hex(check->xbe.image_sha256, image_hex);
-    if (strcmp(image_hex, pdo_guest_built_from()) != 0) {
-        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, APP_NAME,
-            "This build was recompiled from a different default.xbe than the "
-            "one in your game files. Rebuild from your own copy.", NULL);
+    if (!built_from) {
+        SDL_Log("this build has no recompiled %s (%s); run tools/recomp.py --program %s",
+                pdo_program_name(program), xbe_name, pdo_program_name(program));
         return 1;
     }
 
-    snprintf(path, sizeof path, "%s/default.xbe", game_dir);
+    snprintf(path, sizeof path, "%s/%s", game_dir, xbe_name);
+    {
+        /* As named on the disc: PD1.XBE, say (case matters off Windows). */
+        int n = 0;
+        char **found = SDL_GlobDirectory(game_dir, xbe_name, SDL_GLOB_CASEINSENSITIVE, &n);
+        if (found && n > 0)
+            snprintf(path, sizeof path, "%s/%s", game_dir, found[0]);
+        SDL_free(found);
+    }
     snprintf(save_dir, sizeof save_dir, "%ssaves", pdo_data_dir());
     SDL_CreateDirectory(save_dir);
 
@@ -209,6 +227,32 @@ static int start_guest(const char *game_dir, const pdo_game_check *check, bool b
         SDL_Log("cannot read %s: %s", path, SDL_GetError());
         return 1;
     }
+    /* default.xbe was checked with the game files; another program is
+     * checked here, against what it was recompiled from. */
+    if (program == PDO_PROGRAM_ORTA) {
+        pdo_sha256_hex(check->xbe.image_sha256, image_hex);
+        entry = check->xbe.entry;
+    } else {
+        char err[128];
+        if (!pdo_xbe_parse(xbe, size, &info, err, sizeof err)) {
+            SDL_Log("%s: %s", path, err);
+            SDL_free(xbe);
+            return 1;
+        }
+        pdo_sha256_hex(info.image_sha256, image_hex);
+        entry = info.entry;
+    }
+    if (strcmp(image_hex, built_from) != 0) {
+        char msg[256];
+        snprintf(msg, sizeof msg, "This build was recompiled from a different %s than the "
+                 "one in your game files. Rebuild from your own copy.", xbe_name);
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, APP_NAME, msg, NULL);
+        SDL_free(xbe);
+        return 1;
+    }
+    SDL_Log("program: %s (%s)", pdo_program_name(program), xbe_name);
+    pdo_program_select(program);
+
     if (boot && pdo_guest_init(xbe, size, game_dir, save_dir)) {
         game_run g;
         SDL_PropertiesID props;
@@ -219,7 +263,7 @@ static int start_guest(const char *game_dir, const pdo_game_check *check, bool b
         pdo_guest_log_opened_files(list);
         SDL_Log("the game files the title opens are listed in %s", list);
         pdo_guest_cpu_save(&g.cpu);
-        g.entry = check->xbe.entry;
+        g.entry = entry;
         pdo_gfx_prepare_threads();
         props = SDL_CreateProperties();
         SDL_SetPointerProperty(props, SDL_PROP_THREAD_CREATE_ENTRY_FUNCTION_POINTER, (void *)game_thread);
@@ -437,7 +481,13 @@ int main(int argc, char **argv)
 #ifdef PDO_HAVE_RECOMP
     {
         int rc;
-        rc = start_guest(cfg.game_dir, &check, !opt.no_boot);
+        pdo_program program = PDO_PROGRAM_ORTA;
+        if (opt.program && !pdo_program_from_name(opt.program, &program)) {
+            fprintf(stderr, "unknown program: %s (orta, pd1)\n", opt.program);
+            SDL_Quit();
+            return 1;
+        }
+        rc = start_guest(cfg.game_dir, &check, !opt.no_boot, program);
         SDL_Quit();
         return rc;
     }

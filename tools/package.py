@@ -40,7 +40,9 @@ def main():
     # RelWithDebInfo: the configuration every test so far ran; the symbols
     # stay in build-release/ (the .pdb), for crash reports.
     run("cmake", "-S", ".", "-B", BUILD, "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DPDO_RELEASE=ON")
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DPDO_RELEASE=ON",
+        # pd1 (gen-pd1/) stays out of releases until it plays.
+        "-DPDO_WITH_PD1=OFF")
     run("cmake", "--build", BUILD)
 
     windows = platform.system() == "Windows"

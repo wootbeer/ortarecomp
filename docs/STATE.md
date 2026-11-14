@@ -9,10 +9,12 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
 ## How it fits together
 
 - `tools/recomp.py`: the USA `default.xbe` -> `gen/` through xboxrecomp
-  v0.13.1 and patches 0001-0033 (`patches/xboxrecomp/`), with seeds for
+  v0.13.1 and patches 0001-0034 (`patches/xboxrecomp/`), with seeds for
   functions the sweep misses (`tools/pdo_seeds.json`; every failed indirect
   call seen in play is seeded). 42 lifter jumps still go to stubs, all from
   data decoded as code.
+- Two programs in one executable: Orta and pd1 (Open 7), each with its own
+  generated folder, sources and CMake target (`docs/two-programs.md`).
 - `src/guest/`: Direct3D, DirectSound, CRI (movies) and input in place of
   the Xbox's (`d3d_hle.c`, `dsound_hle.c`, `cri_hle.c`, `input_hle.c`),
   vertex programs compiled for the CPU (`vsh.c`), option hooks
@@ -82,7 +84,13 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    distance and the HRTF filters (taps / 512, chosen by ear against the
    console) are in; up to 12 machine-gun copies at once are the game's own.
    Not reproduced: the dsstdfx.bin effects on the 3D mixbins.
-7. Wishlist: the European (PAL) disc. Only the USA default.xbe is
+7. The original Panzer Dragoon (Pandora's Box, `pd1.xbe`): a second
+   program, generated on its own into `gen-pd1/` (`recomp.py --program
+   pd1`), linked in beside Orta, run alone with `--boot --program pd1`.
+   Boots to its first data file on the guest's own D3D. Next: share Orta's
+   library hooks with it, then switch to it in-process. All in
+   `docs/two-programs.md`.
+8. Wishlist: the European (PAL) disc. Only the USA default.xbe is
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.

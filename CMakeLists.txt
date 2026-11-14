@@ -14,6 +14,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PDO_RELEASE "A release build: no console window on Windows (tools/package.py)" OFF)
+option(PDO_WITH_PD1 "Link in pd1.xbe's recompiled code when gen-pd1/ exists" ON)
 
 # The C runtime linked in, so the exe needs no Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -24,6 +25,8 @@ endif()
 
 set(PDO_GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gen" CACHE PATH
     "Directory holding the generated C from tools/recomp.py")
+set(PD1_GEN_DIR "${CMAKE_CURRENT_SOURCE_DIR}/gen-pd1" CACHE PATH
+    "Directory holding the generated C from tools/recomp.py --program pd1 (optional)")
 
 # ── SDL3 (window, dialogs, file I/O, later rendering/audio/input) ────────
 
@@ -136,53 +139,92 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
     add_subdirectory(${XBOXRECOMP_DIR}/src/platform ${CMAKE_BINARY_DIR}/xboxrecomp/platform)
     add_subdirectory(${XBOXRECOMP_DIR}/src/kernel ${CMAKE_BINARY_DIR}/xboxrecomp/kernel)
 
+    # Each program on the disc is compiled with its names header forced in
+    # first (src/guest/orta_names.h; tools/recomp.py writes pd1's): its
+    # dispatch becomes
+    # <program>_recomp_lookup..., and pd1's functions pd1_sub_XXXXXXXX, so
+    # both link into one executable. src/guest/program.c routes the
+    # unprefixed names the kernel layer calls to the program running.
+    function(pdo_force_include target header)
+        if(MSVC)
+            target_compile_options(${target} PRIVATE "/FI${header}")
+        else()
+            target_compile_options(${target} PRIVATE -include "${header}")
+        endif()
+    endfunction()
     file(GLOB PDO_GEN_SOURCES CONFIGURE_DEPENDS "${PDO_GEN_DIR}/*.c")
     # An object library rather than a static one: the kernel layer calls back
     # into the generated dispatch table and our hooks, a circular dependency
     # that single-pass linkers cannot resolve between static archives.
+    # Orta's: its generated code and its overrides (src/guest/).
     add_library(pdo_recomp OBJECT ${PDO_GEN_SOURCES}
         src/guest/guest_manual.c
         src/guest/video_hooks.c
-        src/guest/crash_report.c
         src/guest/d3d_hle.c
         src/guest/dsound_hle.c
         src/guest/cri_hle.c
         src/guest/input_hle.c
-        src/guest/vsh.c
         src/guest/d3d_calltrace.c
         src/guest/wait_trace.c
         src/guest/widescreen.c
         src/guest/unlocks.c
         src/guest/intro_skip.c
-        src/guest/launch_guard.c
+        src/guest/launch_guard.c)
+    pdo_force_include(pdo_recomp "${CMAKE_CURRENT_SOURCE_DIR}/src/guest/orta_names.h")
+    # The host's own code, the same whichever program runs.
+    add_library(pdo_host OBJECT
+        src/guest/crash_report.c
+        src/guest/vsh.c
         src/audio/mixer.c
         src/audio/aix.c
         src/audio/reverb.c
         src/gfx/renderer.c
         src/gfx/overlay.c
         src/gfx/xtex.c)
-    target_include_directories(pdo_recomp PUBLIC "${PDO_GEN_DIR}" src)
-    target_link_libraries(pdo_recomp PUBLIC xbox_kernel SDL3::SDL3-static)
+    target_include_directories(pdo_host PUBLIC "${PDO_GEN_DIR}" src)
+    target_link_libraries(pdo_host PUBLIC xbox_kernel SDL3::SDL3-static)
+    target_link_libraries(pdo_recomp PUBLIC pdo_host)
     if(WIN32)
-        target_link_libraries(pdo_recomp PUBLIC dbghelp)
+        target_link_libraries(pdo_host PUBLIC dbghelp)
     endif()
     # The vertex program interpreter rounds every operation, as the NV2A
     # does: no fused multiply-add (fp:precise is MSVC's default already).
     if(NOT MSVC)
         set_source_files_properties(src/guest/vsh.c PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
     endif()
+    # The same options for both programs' generated code.
+    function(pdo_generated_options target)
     if(MSVC)
         # /d2OptimizeHugeFunctions: MSVC leaves a function above its size
         # limit unoptimised (warning C4883, hidden by /w), and the generated
         # code has such functions -- the movie decoder among them ran so
         # slowly that movies fell to 20 fps and stopped (GCC and Clang have
         # no such limit). The build takes longer for it.
-        target_compile_options(pdo_recomp PRIVATE /bigobj /w /d2OptimizeHugeFunctions)
+        target_compile_options(${target} PRIVATE /bigobj /w /d2OptimizeHugeFunctions)
     else()
         # The generated code reads guest memory through casted pointers and
         # relies on 32-bit wraparound, so neither assumption may be optimised on.
-        target_compile_options(pdo_recomp PRIVATE
+        target_compile_options(${target} PRIVATE
             -fno-strict-aliasing -fwrapv -w)
+    endif()
+    endfunction()
+    pdo_generated_options(pdo_recomp)
+    pdo_generated_options(pdo_host)
+
+    # The original Panzer Dragoon (Pandora's Box, pd1.xbe), when generated:
+    # tools/recomp.py --program pd1. Its own sources are src/pd1/; without
+    # it, the Box sends its PANZER DRAGOON back to the main menu.
+    if(PDO_WITH_PD1 AND EXISTS "${PD1_GEN_DIR}/recomp_dispatch.c")
+        message(STATUS "Orta Recomp: Panzer Dragoon (pd1.xbe) found in ${PD1_GEN_DIR}")
+        file(GLOB PD1_GEN_SOURCES CONFIGURE_DEPENDS "${PD1_GEN_DIR}/*.c")
+        file(GLOB PD1_SOURCES CONFIGURE_DEPENDS src/pd1/*.c)
+        add_library(pd1_recomp OBJECT ${PD1_GEN_SOURCES} ${PD1_SOURCES})
+        target_include_directories(pd1_recomp PRIVATE "${PD1_GEN_DIR}" src)
+        target_link_libraries(pd1_recomp PUBLIC xbox_kernel SDL3::SDL3-static)
+        pdo_force_include(pd1_recomp "${PD1_GEN_DIR}/pd1_names.h")
+        pdo_generated_options(pd1_recomp)
+        target_link_libraries(OrtaRecomp PRIVATE pd1_recomp)
+        target_compile_definitions(OrtaRecomp PRIVATE PDO_HAVE_PD1=1)
     endif()
 
     # Lossless Scaling frame generation (lib/lsfg, from BattleTanx: Global
@@ -208,17 +250,18 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         set(LSFG_VULKAN_TARGET pdo_vk)
         set(LSFG_SPIRV_INCLUDE_DIR "${PDO_SPIRV_FOUND}")
         add_subdirectory(lib/lsfg ${CMAKE_BINARY_DIR}/lsfg)
-        target_sources(pdo_recomp PRIVATE src/gfx/lsfg_present.cpp)
-        target_compile_definitions(pdo_recomp PUBLIC PDO_HAVE_LSFG=1)
-        target_link_libraries(pdo_recomp PUBLIC lsfg)
+        target_sources(pdo_host PRIVATE src/gfx/lsfg_present.cpp)
+        target_compile_definitions(pdo_host PUBLIC PDO_HAVE_LSFG=1)
+        target_link_libraries(pdo_host PUBLIC lsfg)
     else()
         message(STATUS "Orta Recomp: no SPIR-V headers (run git submodule update --init, or set PDO_SPIRV_HEADERS); "
                        "building without Lossless Scaling frame generation")
     endif()
 
-    target_sources(OrtaRecomp PRIVATE src/guest/guest.c)
+    target_sources(OrtaRecomp PRIVATE src/guest/guest.c src/guest/program.c)
     target_compile_definitions(OrtaRecomp PRIVATE PDO_HAVE_RECOMP=1)
-    target_link_libraries(OrtaRecomp PRIVATE pdo_recomp)
+    # Object libraries give their objects only to what links them directly.
+    target_link_libraries(OrtaRecomp PRIVATE pdo_recomp pdo_host)
 else()
     message(STATUS "Orta Recomp: no generated code in ${PDO_GEN_DIR}; "
                    "building the launcher only (run tools/recomp.py first)")

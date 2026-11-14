@@ -22,7 +22,7 @@ one function by address or name instead.
 - **xboxrecomp patches must not overlap.** `recomp.py` and CMake decide a
   patch is applied with `git apply --reverse --check`, one patch at a time.
   To change lines an earlier patch added, edit that patch instead.
-  There are 33 now (0001-0033).
+  There are 34 now (0001-0034).
 - **Third-party projects** (Cxbx-Reloaded, xemu, the JSRF Decompilation,
   other ports): facts only, no code. Symbol databases and listings are read
   from a local clone at run time, never committed. Our own GPL code from
@@ -37,8 +37,10 @@ one function by address or name instead.
 
 ## Overriding game functions
 
-`tools/recomp.py` passes every `.c` under `src/` to the recompiler, which
-reads these forms (literally, at the start of a line):
+`tools/recomp.py` passes the program's own `.c` files to the recompiler:
+Orta's are everything under `src/` except `src/pd1/`; pd1's (`--program
+pd1`) are `src/pd1/`, with pd1's addresses. It reads these forms
+(literally, at the start of a line):
 
 - `void sub_XXXXXXXX(void)` replaces the function for every caller, direct
   calls included. Declare `extern void sub_XXXXXXXX_gen(void);` to keep the
@@ -46,11 +48,21 @@ reads these forms (literally, at the start of a line):
 - `void sub_XXXXXXXX_enter(void)` runs at the top of the generated function
   (no trailing comment on that line).
 
-After adding or removing one, rerun `tools/recomp.py`. Guest registers are
+After adding or removing one, rerun `tools/recomp.py` for that program only.
+Guest registers are
 `g_eax`... and memory is `MEM32(va)` from `gen/recomp_types.h`. Guest ABI:
 stdcall, arguments at `g_esp+4+4n`. Name hooks by address; XDK API names in
 comments are fine (public API, factual mapping). Put the API name in the
 comment just above the function: `tools/xbe_match.py` reads it from there.
+
+## Two programs: Orta and pd1
+
+The disc's second program, the original Panzer Dragoon (`pd1.xbe`, from
+Pandora's Box), is recompiled separately into `gen-pd1/` and linked into the
+same executable; its names get a `pd1_` prefix through a force-included
+header, so its sources still say `sub_XXXXXXXX`. Read
+`docs/two-programs.md` before working on it: layout, how to rebuild and run
+one program alone, and how Orta's hooks are to be shared with pd1.
 
 ## Porting from Concept of Love
 
@@ -66,10 +78,14 @@ own code.
 ## Layout
 
 - `tools/xbe_info.py`: identify an XBE (title ID, XDK build, sections)
-- `tools/xbe_match.py`: functions shared with JSRF (names, overrides, tables)
-- `tools/recomp.py`: XBE/ISO -> `gen/` (xboxrecomp pipeline)
+- `tools/xbe_match.py`: functions shared with JSRF (names, overrides, tables);
+  also Orta vs pd1 (`docs/two-programs.md`)
+- `tools/recomp.py`: XBE/ISO -> `gen/` (xboxrecomp pipeline); `--program pd1`
+  -> `gen-pd1/`
 - `src/`: launcher, game-file picker, XISO reader, XBE identification
-- `src/guest/`: bring-up of the recompiled title and overrides
+- `src/guest/`: bring-up of the recompiled title and Orta's overrides;
+  `program.c` picks the program that runs
+- `src/pd1/`: pd1's overrides (pd1 addresses)
 - `src/gfx/`, `src/audio/`: renderer, launcher/menu overlay, mixer
 - `tools/package.py`: release zip; `tools/make_icon.py`: the app icon
 - `tools/check_menu_text.py`: run after changing menu labels, values or help
