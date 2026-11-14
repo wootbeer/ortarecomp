@@ -80,9 +80,10 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
 8. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
    letterboxed by the game. Movies: Display > Movies (Zoom) fills a wide
    window, subtitles kept. Cutscenes: the game draws the
-   bars itself, so its cutscene state has to be found first. Gameplay
-   ultrawide is not planned. Rumble is passed through (XInputSetState); the
-   log says when the game first sends it.
+   bars itself, so its cutscene state has to be found first. Gameplay 21:9
+   tried and parked: `docs/archive/ultrawide-experiment.patch` (view
+   right, HUD stretched; what is left is written there). Rumble is passed
+   through (XInputSetState); the log says when the game first sends it.
 
 ## Testing
 
