@@ -15,7 +15,7 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
   data decoded as code.
 - Two programs in one executable: Orta and pd1 (Open 7), each with its own
   generated folder, sources and CMake target (`docs/two-programs.md`).
-- `src/guest/`: Direct3D, DirectSound, CRI (movies) and input in place of
+- `src/hle/` (shared with pd1) and `src/guest/`: Direct3D, DirectSound, CRI (movies) and input in place of
   the Xbox's (`d3d_hle.c`, `dsound_hle.c`, `cri_hle.c`, `input_hle.c`),
   vertex programs compiled for the CPU (`vsh.c`), option hooks
   (`widescreen.c`, `unlocks.c`, `intro_skip.c`), crash and hang reports
@@ -87,8 +87,9 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
 7. The original Panzer Dragoon (Pandora's Box, `pd1.xbe`): a second
    program, generated on its own into `gen-pd1/` (`recomp.py --program
    pd1`), linked in beside Orta, run alone with `--boot --program pd1`.
-   Boots to its first data file on the guest's own D3D. Next: share Orta's
-   library hooks with it, then switch to it in-process. All in
+   Shares Orta's D3D/DSound/CRI/input hooks (`src/hle/`, mapped by
+   `tools/program_map.py`); plays its opening and opening movie. Next: a
+   play-through, its movie sites, then switching to it in-process. All in
    `docs/two-programs.md`.
 8. Wishlist: the European (PAL) disc. Only the USA default.xbe is
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a

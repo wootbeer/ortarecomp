@@ -21,6 +21,7 @@
  */
 
 #include "recomp_types.h"
+#include "hle/program_va.h"
 
 #include <SDL3/SDL.h>
 
@@ -70,8 +71,8 @@ static void report_passes(void)
 
     if (now < next)
         return;
-    server = MEM32(0x00485B2C);
-    worker = MEM32(0x00485B30);
+    server = MEM32(PROG_VA(0x00485B2Cu, 0x009F1140u));
+    worker = MEM32(PROG_VA(0x00485B30u, 0x009F1144u));
     if (next)
         SDL_Log("cri: last 10 s: %u server passes, %u decoder passes",
                 server - last_server, worker - last_worker);
@@ -128,4 +129,29 @@ void sub_00236080(void)
     enter_cri();
     sub_00236080_gen();
     SDL_UnlockMutex(cri_lock());
+}
+
+/*
+ * CRI's spin thread (LOCK above resumes it, UNLOCK suspends it): it counts
+ * at 0x00485B28 in a loop until 0x00485B40 is set, then ends its thread.
+ * The loop makes no kernel call: on the console the scheduler preempts it;
+ * under the guest CPU lock (guest.c turns it on) it would hold the lock
+ * forever and no other guest thread would run again. Same loop, giving the
+ * lock up each time round. Nothing reads the count.
+ */
+#define SPIN_COUNT  PROG_VA(0x00485B28u, 0x009F113Cu)
+#define SPIN_STOP   PROG_VA(0x00485B40u, 0x009F1154u)
+
+extern void sub_00233CB0_gen(void);
+
+void sub_00233CB0(void)
+{
+    while (!MEM32(SPIN_STOP)) {
+        int held;
+        MEM32(SPIN_COUNT) += 1;
+        held = guest_cpu_yield_begin();
+        SDL_Delay(1);
+        guest_cpu_yield_end(held);
+    }
+    sub_00233CB0_gen();         /* sees the flag: ends the thread */
 }

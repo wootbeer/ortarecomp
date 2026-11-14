@@ -1,6 +1,6 @@
 #version 450
 // Direct3D fixed-function vertices on the GPU: what fetch_fvf and
-// light_vertex in src/guest/d3d_hle.c do per vertex (they stay the
+// light_vertex in src/hle/d3d_hle.c do per vertex (they stay the
 // reference), from the game's raw FVF stream bytes. Per draw, the CPU
 // gathers the state into the uniforms: layout, matrices, texture stages,
 // material and lights.

@@ -157,33 +157,6 @@ void recomp_unimpl(const char *text, uint32_t va)
 
 /* ── The idle thread ─────────────────────────────────────────────────── */
 
-/*
- * CRI's spin thread (see cri_hle.c: LOCK resumes it, UNLOCK suspends it):
- * it counts at 0x00485B28 in a loop until 0x00485B40 is set, then ends its
- * thread. The loop makes no kernel call: on the console the scheduler
- * preempts it; under the
- * guest CPU lock (guest.c turns it on) it would hold the lock forever and
- * no other guest thread would run again. Same loop, giving the lock up each
- * time round. Nothing reads the count.
- */
-#include <SDL3/SDL.h>
-
-extern void sub_00233CB0_gen(void);
-int guest_cpu_yield_begin(void);
-void guest_cpu_yield_end(int held);
-
-void sub_00233CB0(void)
-{
-    while (!MEM32(0x485B40)) {
-        int held;
-        MEM32(0x485B28) += 1;
-        held = guest_cpu_yield_begin();
-        SDL_Delay(1);
-        guest_cpu_yield_end(held);
-    }
-    sub_00233CB0_gen();         /* sees the flag: ends the thread */
-}
-
 /* ── The render callback pool ────────────────────────────────────────── */
 
 /*

@@ -28,6 +28,7 @@
  */
 
 #include "recomp_types.h"
+#include "hle/program_va.h"
 
 #include "audio/aix.h"
 #include "audio/mixer.h"
@@ -408,7 +409,8 @@ static void hrtf_filters(float az, float el, float scale, bool surround, float h
         a = 180 - a;
     row = a / 3;
     col = (e + 90) / 6;
-    pair = 0x002CCFD0u + (uint32_t)MEM16(0x002DE590u + 2u * (uint32_t)(row * 31 + col)) * 32u;
+    pair = PROG_VA(0x002CCFD0u, 0x00237C70u)
+         + (uint32_t)MEM16(PROG_VA(0x002DE590u, 0x00249230u) + 2u * (uint32_t)(row * 31 + col)) * 32u;
     for (int k = 0; k < 2; k++) {
         /* k 0: the far ear (the first entry), 1: the near ear */
         int ear = (az >= 0.0f) == (k == 0) ? 0 : 1;
@@ -1029,7 +1031,7 @@ void sub_002C242A(void)
      * name, is above our two arguments and its saved edi, ebp, ebx and
      * return; ebx holds the .aix name, or 0 for a movie with only the
      * .sfd's stereo. */
-    if (MEM32(g_esp) == 0x000687E9u) {
+    if (MEM32(g_esp) == PROG_VA(0x000687E9u, 0)) {
         pdo_movie_opened(MEM32(g_esp + 0x1C));
         if (test_ac3())
             movie51_start(g_ebx);
@@ -1095,7 +1097,7 @@ void sub_002C25BE(void)
  * queued, and written from the mixer thread when it has played. */
 
 #define TAG_STREAM          0x53524450u     /* "PDRS" */
-#define STREAM_VTABLE       0x0032DD9Cu
+#define STREAM_VTABLE       PROG_VA(0x0032DD9Cu, 0x007B704Cu)
 
 #define STR_VTBL    0
 #define STR_TAG     4

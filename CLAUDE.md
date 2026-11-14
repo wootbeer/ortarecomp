@@ -39,7 +39,11 @@ one function by address or name instead.
 
 `tools/recomp.py` passes the program's own `.c` files to the recompiler:
 Orta's are everything under `src/` except `src/pd1/`; pd1's (`--program
-pd1`) are `src/pd1/`, with pd1's addresses. It reads these forms
+pd1`) are `src/pd1/` (pd1's addresses) and `src/hle/` mapped to pd1 by
+`src/pd1/orta_hooks.h`. XDK and middleware hooks go in `src/hle/`, with
+Orta's addresses and data as `PROG_VA(orta, pd1)`: both programs get them
+(after a new hook, address or global there, run `tools/program_map.py`).
+Orta's own game code goes in `src/guest/`. It reads these forms
 (literally, at the start of a line):
 
 - `void sub_XXXXXXXX(void)` replaces the function for every caller, direct
@@ -66,7 +70,7 @@ one program alone, and how Orta's hooks are to be shared with pd1.
 
 ## Porting from Concept of Love
 
-Its `src/guest/d3d_hle.c`, `dsound_hle.c`, `input_hle.c`, `cri_hle.c` are
+Its `src/guest/d3d_hle.c` (ours: `src/hle/`), `dsound_hle.c`, `input_hle.c`, `cri_hle.c` are
 tied to JSRF addresses (XDK 4134). Orta is XDK 4928: re-find every function
 and table, and re-derive render-state indices from Orta's own setters or
 tables, never from a 4134 table. Sources of names, all read locally:
@@ -82,9 +86,12 @@ own code.
   also Orta vs pd1 (`docs/two-programs.md`)
 - `tools/recomp.py`: XBE/ISO -> `gen/` (xboxrecomp pipeline); `--program pd1`
   -> `gen-pd1/`
+- `tools/program_map.py`: Orta's `src/hle/` hooks onto pd1, checked
 - `src/`: launcher, game-file picker, XISO reader, XBE identification
-- `src/guest/`: bring-up of the recompiled title and Orta's overrides;
-  `program.c` picks the program that runs
+- `src/hle/`: Direct3D, DirectSound, CRI and input in place of the Xbox's,
+  shared by both programs
+- `src/guest/`: bring-up of the recompiled title and Orta's own game
+  hooks; `program.c` picks the program that runs
 - `src/pd1/`: pd1's overrides (pd1 addresses)
 - `src/gfx/`, `src/audio/`: renderer, launcher/menu overlay, mixer
 - `tools/package.py`: release zip; `tools/make_icon.py`: the app icon

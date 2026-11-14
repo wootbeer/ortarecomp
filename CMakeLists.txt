@@ -149,23 +149,24 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         if(MSVC)
             target_compile_options(${target} PRIVATE "/FI${header}")
         else()
-            target_compile_options(${target} PRIVATE -include "${header}")
+            # SHELL: keeps "-include file" together: CMake drops a repeated
+            # -include otherwise, and the second header's file name is then
+            # taken for a source.
+            target_compile_options(${target} PRIVATE "SHELL:-include \"${header}\"")
         endif()
     endfunction()
     file(GLOB PDO_GEN_SOURCES CONFIGURE_DEPENDS "${PDO_GEN_DIR}/*.c")
     # An object library rather than a static one: the kernel layer calls back
     # into the generated dispatch table and our hooks, a circular dependency
     # that single-pass linkers cannot resolve between static archives.
-    # Orta's: its generated code and its overrides (src/guest/).
-    add_library(pdo_recomp OBJECT ${PDO_GEN_SOURCES}
+    # The XDK and middleware in place of the Xbox's (Direct3D, DirectSound,
+    # CRI, input): both programs contain the same code, so src/hle/ serves
+    # both, compiled once for each (pd1's below).
+    file(GLOB PDO_HLE_SOURCES CONFIGURE_DEPENDS src/hle/*.c)
+    # Orta's: its generated code, src/hle/ and its own game code (src/guest/).
+    add_library(pdo_recomp OBJECT ${PDO_GEN_SOURCES} ${PDO_HLE_SOURCES}
         src/guest/guest_manual.c
         src/guest/video_hooks.c
-        src/guest/d3d_hle.c
-        src/guest/dsound_hle.c
-        src/guest/cri_hle.c
-        src/guest/input_hle.c
-        src/guest/d3d_calltrace.c
-        src/guest/wait_trace.c
         src/guest/widescreen.c
         src/guest/unlocks.c
         src/guest/intro_skip.c
@@ -222,8 +223,17 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         target_include_directories(pd1_recomp PRIVATE "${PD1_GEN_DIR}" src)
         target_link_libraries(pd1_recomp PUBLIC xbox_kernel SDL3::SDL3-static)
         pdo_force_include(pd1_recomp "${PD1_GEN_DIR}/pd1_names.h")
+        # src/hle/'s functions under pd1's names, for src/pd1/ (program_map.py).
+        pdo_force_include(pd1_recomp "${CMAKE_CURRENT_SOURCE_DIR}/src/pd1/hle_names.h")
         pdo_generated_options(pd1_recomp)
-        target_link_libraries(OrtaRecomp PRIVATE pd1_recomp)
+        # src/hle/ again, as pd1's: Orta's hooks there under pd1's
+        # addresses and names (src/pd1/orta_hooks.h, tools/program_map.py).
+        add_library(pd1_hle OBJECT ${PDO_HLE_SOURCES})
+        target_include_directories(pd1_hle PRIVATE "${PD1_GEN_DIR}" src)
+        target_link_libraries(pd1_hle PUBLIC xbox_kernel SDL3::SDL3-static)
+        pdo_force_include(pd1_hle "${CMAKE_CURRENT_SOURCE_DIR}/src/pd1/orta_hooks.h")
+        pdo_generated_options(pd1_hle)
+        target_link_libraries(OrtaRecomp PRIVATE pd1_recomp pd1_hle)
         target_compile_definitions(OrtaRecomp PRIVATE PDO_HAVE_PD1=1)
     endif()
 

@@ -11,10 +11,11 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
 |---|---|---|
 | generate | `tools/recomp.py X` | `tools/recomp.py --program pd1 X` |
 | work / generated C | `build/recomp-work/`, `gen/` | `build/recomp-work-pd1/`, `gen-pd1/` |
-| its own sources (overrides, hooks) | `src/guest/` (all `src/` but `src/pd1/`) | `src/pd1/` |
+| shared XDK/middleware hooks | `src/hle/` (Orta's addresses) | `src/hle/` again, through `src/pd1/orta_hooks.h` |
+| its own game code | `src/guest/` | `src/pd1/` (pd1's addresses) |
 | seeds | `tools/pdo_seeds.json` | `tools/pd1_seeds.json` |
 | names header (force-included) | `src/guest/orta_names.h` | `gen-pd1/pd1_names.h` |
-| CMake target | `pdo_recomp` | `pd1_recomp` (only when `gen-pd1/` exists) |
+| CMake target | `pdo_recomp` | `pd1_recomp` + `pd1_hle` (only when `gen-pd1/` exists) |
 | run alone | `--boot` | `--boot --program pd1` |
 
 - **Names.** Both programs define `sub_XXXXXXXX`, `recomp_lookup` and the
@@ -27,6 +28,22 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
   layer calls, are `src/guest/program.c`'s: they go to the program running.
 - **Host code** (`pdo_host`: renderer, overlay, mixer, vertex programs,
   crash report) is compiled once and serves both.
+- **Shared hooks** (`src/hle/`: Direct3D, DirectSound, CRI, input, the wait
+  and call tracers) are written once, with Orta's addresses, and compiled
+  once per program. For pd1, `src/pd1/orta_hooks.h` maps every
+  `sub_XXXXXXXX` there to pd1's function and `src/pd1/hle_names.h` gives
+  the globals `src/hle/` defines pd1 names (force-included into all of
+  pd1's code, so `src/pd1/` calls pd1's copy). Data addresses are written
+  `PROG_VA(orta, pd1)` (`src/hle/program_va.h`); 0 for pd1 marks Orta's own
+  game code (a caller check), which then never matches.
+- **`tools/program_map.py ORTA.xbe PD1.xbe`** writes both headers from the
+  two XBEs, and refuses on anything doubtful: a hook is mapped only to an
+  identical function (xbe_match.py) or to the one place in pd1 whose code
+  matches with addresses masked and whose addresses all correspond (data
+  used alike, the same kernel import, mapped callees); look-alikes it cannot
+  tell apart, two hooks on one pd1 function, or a `PROG_VA` value identical
+  code does not confirm stop it. Hooks pd1 does not have are listed in its
+  `ORTA_ONLY` with the evidence. `--check` verifies without writing.
 - **Memory.** Both load at their own addresses into the same guest space,
   one at a time. pd1's image reaches 0x00E60B20, over xboxrecomp's fixed
   kernel data (0x00740000) and stacks (0x00780000): patch 0034 moves both,
@@ -41,9 +58,14 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
   Ninja recompiles only what changed.
 - **Compile one**: `cmake --build build --target pd1_recomp` (or
   `pdo_recomp`) to check a change without linking.
-- **Add a hook**: a pd1 hook goes in `src/pd1/` with pd1's address, then
-  `recomp.py --program pd1`. Orta's generated code is not affected and
-  needs no regeneration, and the other way round.
+- **Add a hook**: a pd1-only hook goes in `src/pd1/` with pd1's address,
+  then `recomp.py --program pd1`. An Orta-only one goes in `src/guest/`.
+  Orta's generated code is not affected by pd1's and the other way round.
+- **Fix or add an XDK/middleware hook** (D3D, DSound, CRI, input): in
+  `src/hle/`, with Orta's address; both programs get it. A new hook, a new
+  data address (`PROG_VA`) or a new global there: run
+  `tools/program_map.py`, then `recomp.py` for both programs. A fix inside
+  an existing hook needs only a build.
 - **Run one**: `--boot --program pd1` starts pd1 directly, without going
   through Orta and Pandora's Box. The log says `program: pd1 (pd1.xbe)`.
   The testing switches in `docs/STATE.md` (`PDO_NO_DRAW`, `--log`...) work
@@ -60,31 +82,26 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
 
 ## Status
 
-- pd1 generates (16060 functions, about 8 minutes), compiles and links.
-- `--boot --program pd1` with only the XBEs present: CRT start, threads,
-  XInput's USB stack, then Direct3D on the guest's own code (no HLE yet:
-  `out dx, al` and `wbinvd` reached as no-ops) and stops opening
-  `D:\P1MEDIA\TNRoman.bin`, its first data file. One indirect call failed:
-  0x002723C7 (in XPP; a seed candidate, or an input hook as in Orta).
+- pd1 generates (about 8 minutes), with 208 of Orta's 213 shared hooks
+  mapped (181 identical functions, 27 checked code matches; the other 5:
+  three trace-only, `DownloadEffectsImage` and `SetMixBinVolumes`, which
+  pd1 lacks).
+- `--boot --program pd1` with the disc's `p1media`: Direct3D, DirectSound,
+  CRI and input through `src/hle/`; boots at 60 fps through the opening
+  narration and the opening movie (ALL_OP.SFD) with its subtitles. No
+  failed indirect call.
+- pd1-only so far: its frame limiter (`src/pd1/frame.c`; it counts vblanks
+  with its vertical-blank callback, which `src/hle/d3d_hle.c` now runs once
+  per vblank from its waits, as the console's interrupt does) and two seeds.
 
 ## Next
 
-1. **Share Orta's library hooks with pd1** rather than copying them. Most of
-   `d3d_hle.c`, `dsound_hle.c`, `input_hle.c`, `cri_hle.c` and `vsh.c` hook
-   XDK and CRI code identical in both. Plan: compile those files a second
-   time into `pd1_recomp`, with a header mapping each Orta hook name to its
-   pd1 counterpart (`#define sub_002AF710 sub_0021B...`, generated from the
-   match report and committed: addresses only), and data addresses
-   (`D3D__pDevice`, `D3D__RenderState`...) taken from a per-program header
-   instead of literals. `recomp.py --program pd1` applies the same map when
-   it scans for overrides. A hook with no pd1 counterpart must stop the
-   generation with an error rather than silently hook whatever pd1 has at
-   Orta's address. Game-specific code (HUD squeeze, cutscene bars,
-   widescreen, intro skip, unlocks, launch guard, caller-address checks
-   such as `0x0006A24B`) moves to Orta-only files first. Then a fix in a
-   shared hook reaches both programs, and each file still builds per
-   program.
-2. **Boot pd1 alone to its title** with the disc's files, on (1).
+1. **Play pd1 through** (needs a person: input, sound by ear, the stages):
+   expect pd1's own game code issues, not the XDK's.
+2. **Movies the Orta way**: the movie-only presentation and the picture
+   size come from two Orta caller checks (`d3d_hle.c` `mark_movie` at
+   0x000688E3, `dsound_hle.c` movie open at 0x000687E9), 0 for pd1: find
+   pd1's movie draw and open sites.
 3. **Switch in-process.** Orta's launch path (0x000120D0, then
    XLaunchNewImageA 0x0022CE3C with `d:\pd1.xbe`) ends the program: leave
    the title thread back to `pdo_guest_run`, stop the other guest threads

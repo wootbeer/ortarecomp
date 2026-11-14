@@ -33,7 +33,7 @@ void pdo_guest_shutdown(void);
 /* Write every game file the title opens, once each, to list_path. */
 void pdo_guest_log_opened_files(const char *list_path);
 
-/* The game's movie setup opens a movie (src/guest/dsound_hle.c sees it):
+/* The game's movie setup opens a movie (src/hle/dsound_hle.c sees it):
  * its .sfd name, a guest address. d3d_hle.c reads the picture's size. */
 void pdo_movie_opened(uint32_t sfd_name_va);
 

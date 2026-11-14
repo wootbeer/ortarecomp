@@ -4,6 +4,10 @@
  * into Orta's generated code and its sources in src/guest/; the unprefixed
  * names, which the kernel layer calls, are src/guest/program.c's.
  * Keep in step with DISPATCH_NAMES in tools/recomp.py.
+ *
+ * Also what the host calls in src/hle/ (compiled for each program): pd1's
+ * copy is pd1_<name> (src/pd1/orta_hooks.h), and program.c routes the
+ * plain name.
  */
 #pragma once
 #define recomp_call_all orta_recomp_call_all
@@ -12,3 +16,4 @@
 #define recomp_get_count orta_recomp_get_count
 #define recomp_lookup orta_recomp_lookup
 #define recomp_lookup_manual orta_recomp_lookup_manual
+#define pdo_dump_guest_waits orta_pdo_dump_guest_waits

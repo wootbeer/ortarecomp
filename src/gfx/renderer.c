@@ -35,7 +35,7 @@
 
 extern ptrdiff_t g_xbox_mem_offset;
 extern void pdo_dump_threads(void);   /* src/guest/crash_report.c: F11 */
-extern void pdo_dump_guest_waits(void);  /* src/guest/wait_trace.c */
+extern void pdo_dump_guest_waits(void);  /* src/hle/wait_trace.c */
 
 static SDL_GPUDevice *dev;
 static SDL_Window *window;

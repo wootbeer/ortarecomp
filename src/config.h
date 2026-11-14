@@ -46,7 +46,7 @@ typedef struct pdo_settings {
     bool unlock_box;        /* every Pandora's Box item open, the save untouched (src/guest/unlocks.c) */
     bool skip_logos;        /* a press during the boot logos goes to the title (src/guest/intro_skip.c) */
     bool skip_launcher;     /* start the game without the launcher (src/main.c; Shift held shows it) */
-    int  rumble;            /* controller vibration strength, 0-100 % (src/guest/input_hle.c) */
+    int  rumble;            /* controller vibration strength, 0-100 % (src/hle/input_hle.c) */
     bool depth_reversed;    /* depth stored as 1 - z (renderer.c, read at start) */
     /* Picture (present.frag), on the finished frame: */
     bool picture_crt;       /* a CRT's darker midtones: x^(2.5/2.2) */

@@ -385,24 +385,62 @@ def collect_overrides(path):
 
     The recompiler scans it for `void sub_XXXXXXXX(void)` definitions (skipped
     in the generated code so ours links instead), `sub_XXXXXXXX_gen` wrappers
-    and `sub_XXXXXXXX_enter` hooks. Scanning every source under src/ keeps the
-    code itself the single source of truth for what is overridden.
+    and `sub_XXXXXXXX_enter` hooks. Scanning the sources themselves keeps the
+    code the single source of truth for what is overridden.
 
-    The program's own sources only: Orta's are src/ outside src/pd1/, pd1's
-    are src/pd1/. An override in one never touches the other's code.
+    The program's own sources only: Orta's are src/ outside src/pd1/ (its
+    game code in src/guest/, the XDK and middleware in src/hle/); pd1's are
+    src/pd1/ and src/hle/ with Orta's addresses in it turned into pd1's by
+    src/pd1/orta_hooks.h (tools/program_map.py), as pd1's build compiles it.
     """
     parts = []
-    top = os.path.join(ROOT, "src", "pd1") if PROGRAM["prefix"] else os.path.join(ROOT, "src")
-    for base, dirs, files in os.walk(top):
-        dirs.sort()
-        if not PROGRAM["prefix"] and base == os.path.join(ROOT, "src"):
-            dirs[:] = [d for d in dirs if d != "pd1"]
-        for name in sorted(files):
+    src = os.path.join(ROOT, "src")
+    if not PROGRAM["prefix"]:
+        for base, dirs, files in os.walk(src):
+            dirs.sort()
+            if base == src:
+                dirs[:] = [d for d in dirs if d != "pd1"]
+            for name in sorted(files):
+                if name.endswith(".c"):
+                    with open(os.path.join(base, name), encoding="utf-8") as f:
+                        parts.append(f.read())
+    else:
+        for name in sorted(os.listdir(os.path.join(src, "pd1"))):
             if name.endswith(".c"):
-                with open(os.path.join(base, name), encoding="utf-8") as f:
+                with open(os.path.join(src, "pd1", name), encoding="utf-8") as f:
                     parts.append(f.read())
+        hooks = hle_hook_map()
+        for name in sorted(os.listdir(os.path.join(src, "hle"))):
+            if name.endswith(".c"):
+                with open(os.path.join(src, "hle", name), encoding="utf-8") as f:
+                    parts.append(map_hle_source(f.read(), hooks, name))
     with open(path, "w", encoding="utf-8") as f:
         f.write("\n".join(parts))
+
+
+def hle_hook_map():
+    """{"sub_XXXXXXXX[_gen|_enter]": pd1's name for it} from
+    src/pd1/orta_hooks.h: "sub_YYYYYYYY..." (pd1's address), or None for an
+    Orta hook pd1 does not have."""
+    path = os.path.join(ROOT, "src", "pd1", "orta_hooks.h")
+    if not os.path.isfile(path):
+        fail("src/pd1/orta_hooks.h is missing; run tools/program_map.py")
+    out = {}
+    with open(path, encoding="utf-8") as f:
+        for m in re.finditer(r"^#define (sub_[0-9A-F]{8}(?:_gen|_enter)?) pd1_(\S+)$", f.read(), re.M):
+            out[m.group(1)] = m.group(2) if m.group(2).startswith("sub_") else None
+    return out
+
+
+def map_hle_source(text, hooks, name):
+    """Orta's hook names in a src/hle/ file as pd1's, for the scan."""
+    def sub(m):
+        if m.group(0) not in hooks:
+            fail(f"src/hle/{name} names {m.group(0)}, which src/pd1/orta_hooks.h does not "
+                 "map; run tools/program_map.py")
+        pd1 = hooks[m.group(0)]
+        return pd1 if pd1 else "unmapped_" + m.group(0)
+    return re.sub(r"\bsub_[0-9A-F]{8}(?:_gen|_enter)?\b", sub, text)
 
 
 def sync_generated(src, dst):

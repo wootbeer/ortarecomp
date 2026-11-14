@@ -22,7 +22,9 @@ extern recomp_func_t orta_recomp_lookup_manual(uint32_t xbox_va);
 extern int orta_recomp_dispatch_init(void);
 extern size_t orta_recomp_dispatch_flat_bytes(void);
 extern const char *orta_built_from(void);
+extern void orta_pdo_dump_guest_waits(void);
 #ifdef PDO_HAVE_PD1
+extern void pd1_pdo_dump_guest_waits(void);
 extern recomp_func_t pd1_recomp_lookup(uint32_t xbox_va);
 extern recomp_func_t pd1_recomp_lookup_manual(uint32_t xbox_va);
 extern int pd1_recomp_dispatch_init(void);
@@ -102,4 +104,16 @@ size_t recomp_dispatch_flat_bytes(void)
         return pd1_recomp_dispatch_flat_bytes();
 #endif
     return orta_recomp_dispatch_flat_bytes();
+}
+
+/* F11 and hangs: the guest threads' waits (src/hle/wait_trace.c). */
+void pdo_dump_guest_waits(void)
+{
+#ifdef PDO_HAVE_PD1
+    if (active == PDO_PROGRAM_PD1) {
+        pd1_pdo_dump_guest_waits();
+        return;
+    }
+#endif
+    orta_pdo_dump_guest_waits();
 }
