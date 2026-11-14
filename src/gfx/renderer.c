@@ -12,6 +12,7 @@
 #ifdef PDO_HAVE_LSFG
 #include "gfx/lsfg_present.h"
 #endif
+#include "guest/program.h"
 #include "guest/vsh.h"      /* pdo_parallel */
 
 #include <SDL3/SDL.h>
@@ -3349,7 +3350,10 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         float aw = pdo_widescreen_active() ? frame_h * pdo_widescreen_ratio() : (float)frame_w;
         float kf = SDL_min((float)sw / aw, (float)sh / frame_h);
         float kz = SDL_max((float)sw / aw, (float)sh / frame_h);
-        float k = st->fit == PDO_FIT_ZOOM ? kz : kf;
+        /* Zoom is for Orta, whose widescreen modes fill most of a wide
+         * window: pd1 is 4:3 only, and zoomed to a 21:9 window it lost
+         * 40% of its height (its menus with it). It keeps bars. */
+        float k = st->fit == PDO_FIT_ZOOM && pdo_program_active() == PDO_PROGRAM_ORTA ? kz : kf;
         float mr[4];
         SDL_zero(fitv);
         fitv.w = SDL_floorf(aw * kf);
