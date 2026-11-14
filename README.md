@@ -70,7 +70,8 @@ want to save settings, saves and game files locally.
 
 ## Frame Generation
 
-Options (F1) > Advanced > Frame gen.: **Interp.** blends the game's own
+Options (F1) > Advanced > Frame gen.:  
+**Interp.** blends the game's own
 frames (ours).  
 **LS 2x/3x/4x** uses Lossless Scaling's frame generation
 (LSFG 3.1) to show two to four pictures per game frame, 120 to 240 fps from
