@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Ultrawide: Options > Display > Aspect ratio 21:9. The game shows a wider
+  view, as its own 16:9 mode does; the HUD keeps its shape and its 16:9
+  layout in the middle of the screen, and menus are shown at 16:9 in the
+  middle. Movies follow Display > Movies (Zoom fills a 21:9 screen).
+  Changing it takes effect the next time the game starts (issue 13).
+
 ### Changed
 
 - 5.1: 3D sound now works on 5.1 too, as on the console: each sound goes

@@ -381,7 +381,7 @@ int main(int argc, char **argv)
         SDL_Log("settings: %gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, fixed function on %s, "
                 "aspect %s, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa, s->anisotropy, s->bloom, s->frame_interp,
                 s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
-                s->aspect == PDO_ASPECT_16_9 ? "16:9" : "4:3", s->save_slot);
+                s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3", s->save_slot);
     }
 
     if (opt.import_iso) {

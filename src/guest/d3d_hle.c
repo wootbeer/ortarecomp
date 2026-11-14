@@ -2187,6 +2187,39 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
     return ok;
 }
 
+/* The HUD in the game's 16:9 mode made wider (21:9, src/guest/widescreen.c).
+ * The game lays its HUD out for 16:9, squeezing each piece by 0.75 about
+ * the middle in a score of places, then draws them all as screen-space
+ * sprites from one routine (the draw returning to 0x0006A24B, from the
+ * batch 0x0006A340). On a wider screen those come out stretched, so each
+ * such sprite is squeezed again, by 16:9 over the screen's width, about
+ * the middle: the HUD keeps its shape and its 16:9 layout in the middle of
+ * the screen. A sprite as wide as the screen (a background) is left as it
+ * is. Things placed by the camera (the reticle, lock-on marks) are not
+ * sprites of that routine and need nothing. Returns the factor, or 1. */
+static float hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    float k, x0 = 1e9f, x1 = -1e9f;
+    int rtw, rth;
+
+    if (!pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
+        return 1.0f;
+    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || !count)
+        return 1.0f;
+    target_size(&rtw, &rth);
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t w = MEM32(base + (first + i) * stride);
+        float x;
+        memcpy(&x, &w, 4);
+        x0 = SDL_min(x0, x);
+        x1 = SDL_max(x1, x);
+    }
+    if (x0 <= 0.5f && x1 >= (float)rtw - 1.5f)
+        return 1.0f;            /* as wide as the screen */
+    k = (16.0f / 9.0f) / pdo_widescreen_ratio();
+    return k;
+}
+
 /* The shared part of every draw: vertices [first, first+count) of stream
  * data at 'base', primitive order given by 'order' (n entries, relative to
  * first). */
@@ -2202,8 +2235,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     static pdo_gpu_fvf gpu_f;
     bool fvf_on_gpu = false;                /* or the fixed-function vertices do */
     bool cpu_too = true;                    /* and the CPU makes the vertices as well */
+    float hud_k;                            /* a HUD sprite's squeeze, on a wider screen */
 
     state_init();
+    hud_k = hud_squeeze(base, stride, first, count);
     if (count > vcap) {
         vcap = count * 2;
         vbuf = SDL_realloc(vbuf, vcap * sizeof *vbuf);
@@ -2245,7 +2280,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                 last = pdo_gfx_frame_count();
             }
         }
-    } else if (type != 1 && pdo_settings_get()->gpu_fixed && fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
+    } else if (type != 1 && hud_k == 1.0f && pdo_settings_get()->gpu_fixed &&
+               fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
         fvf_on_gpu = true;
         pre = (gpu_f.u.layout0[2] & PDO_FVF_PRE) != 0;
         cpu_too = pdo_gfx_capturing();
@@ -2257,6 +2293,9 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             SDL_Log("d3d: FVF 0x%x not handled", st.vshader);
         draws_dropped++;
         return;
+    } else if (hud_k != 1.0f) {
+        for (uint32_t i = 0; i < count; i++)   /* clip space: the middle is 0 */
+            vbuf[i].pos[0] *= hud_k;
     }
     fill_draw_state(&d, pre);
     if (d.caller[0] == 0x000688E3u && pre && count >= 2 && stride >= 8)

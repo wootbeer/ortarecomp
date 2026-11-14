@@ -278,6 +278,18 @@ layout read (the HUD's radar is drawn narrow, to be stretched to 16:9).
 Our kernel's video flags never set bit 8; src/guest/widescreen.c does when
 the aspect setting is 16:9. The game reads it once, at start.
 
+21:9: after the setup the aspect value is scaled by (64/27)/(16/9) and
+handed to the display object again (method +0x208, stdcall this and the
+value): the camera renders the wider view, nothing missing at the edges in
+episode 1. The HUD is laid out for 16:9 by about 20 functions reading the
+flag (0x00011B90, 0x00032660 and 0x00069700 squeeze by 0.75 about x = 320,
+constants 0x0030CAA8 and 0x0030CAAC, the 0.75 shared by 32 places; others
+call helpers such as 0x0003E640), which queue sprites drawn later in one
+batch (0x0006A340 from 0x00011B00 and 0x000121F0, each sprite drawn by
+0x0006A120, the draw returning to 0x0006A24B). The reticle and lock-on
+marks are not sprites of that batch. In play the game also draws 16-line
+black bars at the top and bottom (0x0006A0A8, as for movie fades).
+
 ## Input and the reticle
 
 The pad state is copied per player each frame (0x0004F1D0) into blocks of

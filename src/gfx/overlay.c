@@ -626,7 +626,7 @@ static void draw_controls(void)
 static float value_of(int item, char *v, size_t n)
 {
     const pdo_settings *s = pdo_settings_get();
-    static const char *aspects[PDO_ASPECT_COUNT] = { "4:3", "16:9" };
+    static const char *aspects[PDO_ASPECT_COUNT] = { "4:3", "16:9", "21:9" };
     static const char *fits[PDO_FIT_COUNT] = { "Bars", "Stretch", "Zoom" };
 
     v[0] = 0;
@@ -777,7 +777,7 @@ static const char *help_of(int item)
     case ITEM_SCALE:  return "Multiples of 640x480.";
     case ITEM_MSAA:   return "Smoother edges. MSAA is best.";
     case ITEM_ANISO:  return "Anisotropic: sharper far away.";
-    case ITEM_ASPECT: return "16:9 shows more to the sides.";
+    case ITEM_ASPECT: return "Wider shows more to the sides.";
     case ITEM_FIT:    return "Bars, stretched or zoomed.";
     case ITEM_MOVIES: {
         static const char *helps[PDO_MOVIE_COUNT] = { "As the game frames it.", "The whole film, its own shape.",
@@ -943,13 +943,15 @@ SDL_Surface *pdo_overlay_image(bool *changed)
         dirty = true;
     }
     {   /* The layer is shown with the game's frame: in its widescreen mode
-         * that is stretched to 16:9, so draw a quarter narrower to come out
-         * right (the FPS box and the menu were widened over the picture). */
-        static int wide = -1;
-        if (wide != (int)pdo_widescreen_active()) {
-            wide = pdo_widescreen_active();
-            SDL_SetRenderScale(painter, SCALE * (wide ? 0.75f : 1.0f), SCALE);
-            cols = PDO_OVERLAY_W / (SCALE * (wide ? 0.75f : 1.0f) * CHAR);
+         * that is stretched to 16:9 or wider, so draw narrower by as much to
+         * come out right (the FPS box and the menu were widened over the
+         * picture). */
+        static float squeeze = -1.0f;
+        float sq = (4.0f / 3.0f) / pdo_widescreen_ratio();
+        if (sq != squeeze) {
+            squeeze = sq;
+            SDL_SetRenderScale(painter, SCALE * sq, SCALE);
+            cols = PDO_OVERLAY_W / (SCALE * sq * CHAR);
             dirty = true;
         }
     }

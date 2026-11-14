@@ -19,7 +19,7 @@ Android build is planned.
 
 - **Higher resolutions:** render at 1x to 8x the original resolution (8x is
   5120x3840).
-- **Widescreen:** the game's own 16:9 mode, or the original 4:3; bars,
+- **Widescreen:** the game's own 16:9 mode, 21:9 ultrawide, or the original 4:3; bars,
   stretch or zoom to fit any window or screen. Movies can be shown at
   their own shape without the game's black bars, subtitles kept.
 - **Anti-aliasing:** MSAA up to 8x, or FXAA; anisotropic texture filtering

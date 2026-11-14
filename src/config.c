@@ -124,7 +124,9 @@ bool pdo_config_load(pdo_config *cfg)
             int m = SDL_atoi(eq + 1);
             settings.msaa = m >= 8 ? 8 : m >= 4 ? 4 : m >= 2 ? 2 : 1;
         } else if (strcmp(line, "aspect") == 0) {
-            settings.aspect = strcmp(eq + 1, "16:9") == 0 ? PDO_ASPECT_16_9 : PDO_ASPECT_4_3;
+            settings.aspect = strcmp(eq + 1, "16:9") == 0   ? PDO_ASPECT_16_9
+                            : strcmp(eq + 1, "21:9") == 0 ? PDO_ASPECT_21_9
+                                                          : PDO_ASPECT_4_3;
             if (strcmp(eq + 1, "stretch") == 0)     /* a file from before the fit setting */
                 settings.fit = PDO_FIT_STRETCH;
         } else if (strcmp(line, "movie_fit") == 0)
@@ -257,7 +259,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "audio_hrtf=%d\n"
                  "save_slot=%d\n",
                  cfg->game_dir, settings.render_scale2 / 2.0, settings.msaa,
-                 settings.aspect == PDO_ASPECT_16_9 ? "16:9" : "4:3",
+                 settings.aspect == PDO_ASPECT_16_9 ? "16:9" : settings.aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
                  settings.fit == PDO_FIT_STRETCH ? "stretch" : settings.fit == PDO_FIT_ZOOM ? "zoom" : "bars",
                  settings.movie_fit == PDO_MOVIE_STRETCH ? "stretch" : settings.movie_fit == PDO_MOVIE_ZOOM ? "zoom"
                  : settings.movie_fit == PDO_MOVIE_BARS ? "bars" : "original",
