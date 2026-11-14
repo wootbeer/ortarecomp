@@ -302,7 +302,8 @@ static void peek_guest(void)
 /* 21:9, HUD Edges (hud_squeeze): this frame or the one before is a menu's
  * or a cutscene's, not gameplay's. A sprite of the HUD routine covered the
  * whole screen (the pause menu's dimming, the results screen's map), or
- * the cutscene bars were drawn (cutscene_bars). Edges then leaves the
+ * the cutscene bars were drawn (cutscene_bars); a light flash over the
+ * whole screen does not count (hud_squeeze). Edges then leaves the
  * sprites in the middle: a menu's cursor in a corner is not the radar, and
  * a line of subtitles is several draws that Edges would pull apart. The
  * frame before counts too: a menu's cursor is drawn before its backdrop at
@@ -2269,12 +2270,16 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
         return;
     target_size(&rtw, &rth);
     if (b[0] <= 0.5f && b[2] >= (float)rtw - 1.5f) {
-        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f && !hud_menu_frame) {
-            uint32_t v = base + first * stride;
+        uint32_t c = (st.vshader & 0x040) ? MEM32(base + first * stride + 16) : 0xFFFFFFFFu;
+        bool dark = (c & 0xFF) < 0x40 && ((c >> 8) & 0xFF) < 0x40 && ((c >> 16) & 0xFF) < 0x40;
+        /* A backdrop is textured (the results screen's map) or dark (the
+         * pause menu's dimming, a fade); an untextured light one is a
+         * gameplay flash (episode 1's lightning, white or pale blue, for
+         * about 14 frames every few seconds), with the HUD on screen. */
+        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f && !hud_menu_frame && (st.tex[0] || dark)) {
             hud_menu_frame = true;
-            snprintf(hud_menu_why, sizeof hud_menu_why, "a full-screen sprite, %u vertices, fvf 0x%x, texture %08x, color %08x",
-                     count, st.vshader, st.tex[0] ? MEM32(st.tex[0] + 4) : 0u,
-                     (st.vshader & 0x040) ? MEM32(v + 16) : 0u);
+            snprintf(hud_menu_why, sizeof hud_menu_why, "a full-screen sprite, %u vertices, texture %08x, color %08x",
+                     count, st.tex[0] ? MEM32(st.tex[0] + 4) : 0u, c);
         }
         return;                 /* as wide as the screen */
     }
