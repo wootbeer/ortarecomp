@@ -82,7 +82,8 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    window, subtitles kept. Cutscenes: the game draws the
    bars itself, so its cutscene state has to be found first. Gameplay:
    Aspect ratio 21:9 (`widescreen.c`, HUD sprites squeezed back in
-   `d3d_hle.c`, `hud_squeeze`); menus come out pillarboxed to 16:9. Rumble
+   `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
+   pieces to the sides); menus come out pillarboxed to 16:9. Rumble
    is passed through (XInputSetState); the log says when the game first
    sends it.
 

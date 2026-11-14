@@ -129,7 +129,9 @@ bool pdo_config_load(pdo_config *cfg)
                                                           : PDO_ASPECT_4_3;
             if (strcmp(eq + 1, "stretch") == 0)     /* a file from before the fit setting */
                 settings.fit = PDO_FIT_STRETCH;
-        } else if (strcmp(line, "movie_fit") == 0)
+        } else if (strcmp(line, "hud_edges") == 0)
+            settings.hud_edges = SDL_atoi(eq + 1) != 0;
+        else if (strcmp(line, "movie_fit") == 0)
             settings.movie_fit = strcmp(eq + 1, "stretch") == 0    ? PDO_MOVIE_STRETCH
                                : strcmp(eq + 1, "zoom") == 0       ? PDO_MOVIE_ZOOM
                                : strcmp(eq + 1, "bars") == 0       ? PDO_MOVIE_BARS
@@ -226,6 +228,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "aspect=%s\n"
                  "fit=%s\n"
                  "movie_fit=%s\n"
+                 "hud_edges=%d\n"
                  "soft_filter=%d\n"
                  "master_volume=%d\n"
                  "show_fps=%d\n"
@@ -263,6 +266,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.fit == PDO_FIT_STRETCH ? "stretch" : settings.fit == PDO_FIT_ZOOM ? "zoom" : "bars",
                  settings.movie_fit == PDO_MOVIE_STRETCH ? "stretch" : settings.movie_fit == PDO_MOVIE_ZOOM ? "zoom"
                  : settings.movie_fit == PDO_MOVIE_BARS ? "bars" : "original",
+                 settings.hud_edges,
                  settings.soft_filter,
                  settings.master_volume, settings.show_fps, settings.gpu_vertex,
                  settings.gpu_fixed, settings.frame_interp, settings.anisotropy, settings.bloom == 2 ? "high" : settings.bloom == 1 ? "low" : "off",

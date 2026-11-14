@@ -2192,32 +2192,49 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
  * the middle in a score of places, then draws them all as screen-space
  * sprites from one routine (the draw returning to 0x0006A24B, from the
  * batch 0x0006A340). On a wider screen those come out stretched, so each
- * such sprite is squeezed again, by 16:9 over the screen's width, about
- * the middle: the HUD keeps its shape and its 16:9 layout in the middle of
- * the screen. A sprite as wide as the screen (a background) is left as it
- * is. Things placed by the camera (the reticle, lock-on marks) are not
- * sprites of that routine and need nothing. Returns the factor, or 1. */
-static float hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+ * such sprite is squeezed again, by 16:9 over the screen's width: about
+ * the middle (Display > HUD Centered: the 16:9 layout in the middle of the
+ * screen), or (Edges) for a sprite in the top or bottom third of the
+ * screen, about the screen's left edge if it starts in the left third and
+ * does not reach the right third, about the right edge for the mirror
+ * case, else about the middle: the radar and the gauges go out to the
+ * sides, whole, while menus and story text (the middle third, or across
+ * it) stay in the middle. A sprite as wide as the
+ * screen (a background) is left as it is. Things placed by the camera (the
+ * reticle, lock-on marks) are not sprites of that routine and need
+ * nothing. The factor in *k (1: none) and the point it is about, in clip
+ * space (-1 left, 0 middle, 1 right), in *anchor. */
+static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count, float *k, float *anchor)
 {
-    float k, x0 = 1e9f, x1 = -1e9f;
+    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f, w3;
     int rtw, rth;
 
+    *k = 1.0f;
+    *anchor = 0.0f;
     if (!pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
-        return 1.0f;
+        return;
     if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || !count)
-        return 1.0f;
+        return;
     target_size(&rtw, &rth);
     for (uint32_t i = 0; i < count; i++) {
-        uint32_t w = MEM32(base + (first + i) * stride);
-        float x;
-        memcpy(&x, &w, 4);
-        x0 = SDL_min(x0, x);
-        x1 = SDL_max(x1, x);
+        uint32_t w[2] = { MEM32(base + (first + i) * stride), MEM32(base + (first + i) * stride + 4) };
+        float p[2];
+        memcpy(p, w, sizeof p);
+        x0 = SDL_min(x0, p[0]);
+        x1 = SDL_max(x1, p[0]);
+        y0 = SDL_min(y0, p[1]);
+        y1 = SDL_max(y1, p[1]);
     }
     if (x0 <= 0.5f && x1 >= (float)rtw - 1.5f)
-        return 1.0f;            /* as wide as the screen */
-    k = (16.0f / 9.0f) / pdo_widescreen_ratio();
-    return k;
+        return;                 /* as wide as the screen */
+    *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
+    if (pdo_settings_get()->hud_edges && (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f)) {
+        w3 = (float)rtw / 3.0f;
+        if (x0 < w3 && x1 <= 2.0f * w3)
+            *anchor = -1.0f;
+        else if (x1 > 2.0f * w3 && x0 >= w3)
+            *anchor = 1.0f;
+    }
 }
 
 /* The shared part of every draw: vertices [first, first+count) of stream
@@ -2235,10 +2252,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     static pdo_gpu_fvf gpu_f;
     bool fvf_on_gpu = false;                /* or the fixed-function vertices do */
     bool cpu_too = true;                    /* and the CPU makes the vertices as well */
-    float hud_k;                            /* a HUD sprite's squeeze, on a wider screen */
+    float hud_k, hud_at;                    /* a HUD sprite's squeeze, on a wider screen, and about where */
 
     state_init();
-    hud_k = hud_squeeze(base, stride, first, count);
+    hud_squeeze(base, stride, first, count, &hud_k, &hud_at);
     if (count > vcap) {
         vcap = count * 2;
         vbuf = SDL_realloc(vbuf, vcap * sizeof *vbuf);
@@ -2294,8 +2311,8 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         draws_dropped++;
         return;
     } else if (hud_k != 1.0f) {
-        for (uint32_t i = 0; i < count; i++)   /* clip space: the middle is 0 */
-            vbuf[i].pos[0] *= hud_k;
+        for (uint32_t i = 0; i < count; i++)   /* clip space: the middle is 0, the edges -1 and 1 */
+            vbuf[i].pos[0] = hud_at + (vbuf[i].pos[0] - hud_at) * hud_k;
     }
     fill_draw_state(&d, pre);
     if (d.caller[0] == 0x000688E3u && pre && count >= 2 && stride >= 8)

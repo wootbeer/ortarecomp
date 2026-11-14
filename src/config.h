@@ -20,6 +20,7 @@ typedef struct pdo_settings {
     int  render_scale2;     /* 2-16: render targets at half this multiple of the game's size (3: 1.5x) */
     int  msaa;              /* 1, 2, 4 or 8 samples */
     int  aspect;            /* PDO_ASPECT_*; 16:9 is the game's own widescreen mode */
+    bool hud_edges;         /* 21:9: the HUD out to the screen's sides, not its 16:9 layout (d3d_hle.c) */
     int  fit;               /* PDO_FIT_*: how the picture fills the window */
     int  movie_fit;         /* PDO_MOVIE_*: how a movie's picture fills it (renderer.c) */
     bool soft_filter;       /* TV-like vertical softening at presentation */
