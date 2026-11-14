@@ -1,0 +1,29 @@
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -1486,6 +1486,12 @@
+             return ["eax = SX16(eax); /* cwde */"]
+         if m == "cbw":
+             return ["SET_LO16(eax, SX8(eax)); /* cbw */"]
++        if m == "cwd":
++            # DX = the sign of AX; the top half of edx is untouched. Fell
++            # through to RECOMP_UNIMPL, leaving DX as it was: in the idiom
++            # `sar bx, cl; cwd; and bx, dx` (an offset kept or dropped by a
++            # flag bit) the result then followed whatever DX last held.
++            return ["SET_LO16(edx, ((int16_t)LO16(eax) < 0) ? 0xFFFFu : 0u); /* cwd */"]
+         if m == "bswap" and nops >= 1 and ops[0].type == "reg":
+             r = _fmt_reg(ops[0].reg)
+             return [f"{r} = BSWAP32({r}); /* bswap */"]
+--- /dev/null
++++ b/tools/recomp/test_lifter_cwd.py
+@@ -0,0 +1,11 @@
++"""Tests for CWD lifting."""
++
++from tools.recomp.lifter import Instruction, Lifter
++
++
++def test_cwd_sets_dx_to_the_sign_of_ax():
++    insn = Instruction(0x1000, 2, "cwd", "", "6699")
++
++    assert Lifter().lift_instruction(insn) == [
++        "SET_LO16(edx, ((int16_t)LO16(eax) < 0) ? 0xFFFFu : 0u); /* cwd */",
++    ]
