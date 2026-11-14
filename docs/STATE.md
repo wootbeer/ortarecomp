@@ -83,7 +83,10 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    bars itself, so its cutscene state has to be found first. Gameplay:
    Aspect ratio 21:9 (`widescreen.c`, HUD sprites squeezed back in
    `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
-   pieces to the sides); menus come out pillarboxed to 16:9. Rumble
+   pieces to the sides); menus come out pillarboxed to 16:9. 16:9 <-> 21:9
+   applies mid-game (from Swap, re-handing the view value); 4:3 <-> wide
+   needs a restart, the picture held to what the game set up. Untested
+   in play since that change. Rumble
    is passed through (XInputSetState); the log says when the game first
    sends it.
 

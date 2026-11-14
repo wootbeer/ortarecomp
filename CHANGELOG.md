@@ -9,8 +9,10 @@
   layout in the middle of the screen, and menus are shown at 16:9 in the
   middle. Display > HUD: Centered, or Edges to move the radar and gauges
   out to the screen's sides. Movies follow Display > Movies (Zoom fills a
-  21:9 screen). The aspect ratio takes effect the next time the game
-  starts (issue 13).
+  21:9 screen). Switching between 16:9 and 21:9 takes effect at once;
+  between 4:3 and widescreen, the next time the game starts (the menu says
+  so), and until then the picture keeps the shape the game started with
+  (issue 13).
 
 ### Changed
 

@@ -307,6 +307,7 @@ void sub_002BAFC0(void)
     static Uint64 last_vblank;
     uint64_t n;
 
+    pdo_widescreen_frame();     /* the aspect setting changed between 16:9 and 21:9 */
     if (swap_interval > 0) {
         while (current_vblank() < last_vblank + (Uint64)swap_interval)
             wait_vblank_for(true);
@@ -2311,8 +2312,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         draws_dropped++;
         return;
     } else if (hud_k != 1.0f) {
-        for (uint32_t i = 0; i < count; i++)   /* clip space: the middle is 0, the edges -1 and 1 */
-            vbuf[i].pos[0] = hud_at + (vbuf[i].pos[0] - hud_at) * hud_k;
+        for (uint32_t i = 0; i < count; i++) {  /* clip space: the middle is 0, the edges -w and w */
+            float at = hud_at * vbuf[i].pos[3];
+            vbuf[i].pos[0] = at + (vbuf[i].pos[0] - at) * hud_k;
+        }
     }
     fill_draw_state(&d, pre);
     if (d.caller[0] == 0x000688E3u && pre && count >= 2 && stride >= 8)

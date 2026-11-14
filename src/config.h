@@ -78,6 +78,11 @@ enum { PDO_MOVIE_ORIGINAL, PDO_MOVIE_BARS, PDO_MOVIE_STRETCH, PDO_MOVIE_ZOOM, PD
  * widescreen): src/guest/widescreen.c. */
 bool pdo_widescreen_active(void);
 float pdo_widescreen_ratio(void);
+/* The aspect setting asks for 4:3 in a widescreen game or the other way:
+ * that takes a restart (16:9 and 21:9 switch at the next frame). */
+bool pdo_widescreen_needs_restart(void);
+/* Game thread, once a frame: applies a change between 16:9 and 21:9. */
+void pdo_widescreen_frame(void);
 
 /* The current settings: defaults until pdo_config_load reads the file. */
 pdo_settings *pdo_settings_get(void);
