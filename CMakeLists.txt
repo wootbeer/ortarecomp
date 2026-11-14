@@ -15,6 +15,11 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PDO_RELEASE "A release build: no console window on Windows (tools/package.py)" OFF)
 option(PDO_WITH_PD1 "Link in pd1.xbe's recompiled code when gen-pd1/ exists" ON)
+# Diagnosis of code that behaves differently under MSVC: drop its huge-
+# function optimisation (see pdo_generated_options), or give pd1's generated
+# code extra flags of its own (e.g. /Od), leaving the rest as it is.
+option(PDO_MSVC_HUGE "MSVC: /d2OptimizeHugeFunctions on the generated code" ON)
+set(PDO_PD1_GEN_FLAGS "" CACHE STRING "Extra compiler flags for pd1's generated code only (diagnosis)")
 
 # The C runtime linked in, so the exe needs no Visual C++ redistributable.
 set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
@@ -201,7 +206,10 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         # code has such functions -- the movie decoder among them ran so
         # slowly that movies fell to 20 fps and stopped (GCC and Clang have
         # no such limit). The build takes longer for it.
-        target_compile_options(${target} PRIVATE /bigobj /w /d2OptimizeHugeFunctions)
+        target_compile_options(${target} PRIVATE /bigobj /w)
+        if(PDO_MSVC_HUGE)
+            target_compile_options(${target} PRIVATE /d2OptimizeHugeFunctions)
+        endif()
     else()
         # The generated code reads guest memory through casted pointers and
         # relies on 32-bit wraparound, so neither assumption may be optimised on.
@@ -226,6 +234,11 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         # src/hle/'s functions under pd1's names, for src/pd1/ (program_map.py).
         pdo_force_include(pd1_recomp "${CMAKE_CURRENT_SOURCE_DIR}/src/pd1/hle_names.h")
         pdo_generated_options(pd1_recomp)
+        if(PDO_PD1_GEN_FLAGS)
+            separate_arguments(pd1_extra NATIVE_COMMAND "${PDO_PD1_GEN_FLAGS}")
+            target_compile_options(pd1_recomp PRIVATE ${pd1_extra})
+            message(STATUS "Orta Recomp: pd1's generated code also built with ${PDO_PD1_GEN_FLAGS}")
+        endif()
         # src/hle/ again, as pd1's: Orta's hooks there under pd1's
         # addresses and names (src/pd1/orta_hooks.h, tools/program_map.py).
         add_library(pd1_hle OBJECT ${PDO_HLE_SOURCES})
