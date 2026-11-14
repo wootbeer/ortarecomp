@@ -16,6 +16,10 @@
 
 ### Changed
 
+- Fit to window Zoom keeps the HUD whole: when Zoom cuts off the top and
+  bottom (4:3 on a wide screen, say), the radar, gauges and menus are
+  pulled into the part shown, at their usual size, instead of being
+  enlarged and cut off.
 - 5.1: 3D sound now works on 5.1 too, as on the console: each sound goes
   through the Xbox's HRTF filters for left and right and is shared between
   the front and back speakers by the game's own rule (all front within 45
