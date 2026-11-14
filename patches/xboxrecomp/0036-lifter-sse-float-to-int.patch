@@ -1,0 +1,104 @@
+--- a/templates/runtime/recomp_types.h
++++ b/templates/runtime/recomp_types.h
+@@ -1191,6 +1191,20 @@
+     return r;
+ }
+ 
++/* CVTSS2SI / CVTSD2SI round as the guest's MXCSR says (RC, bits 13-14,
++ * coded as the x87's), CVTTSS2SI / CVTTSD2SI truncate; NaN and values out
++ * of range give the integer indefinite, 0x80000000. They were lifted as C
++ * casts: the rounding forms truncated (a value of 2.7 became 2, not 3), and
++ * a cast of a value out of range is undefined in C, so compilers differ. */
++static inline int32_t SSE_CVT_I32(double v, int truncate)
++{
++    double r = truncate ? trunc(v)
++                        : recomp_frndint(v, (uint16_t)(((g_mxcsr >> 13) & 3u) << 10));
++    if (!(r >= -2147483648.0 && r <= 2147483647.0))
++        return (int32_t)0x80000000u;
++    return (int32_t)r;
++}
++
+ /** cvtpi2ps: two signed dwords in, two singles out, into the LOW half of the
+  * destination -- lanes 2 and 3 keep whatever they held. That detail is the
+  * whole instruction: code that builds a float4 from two of these relies on
+--- a/tools/recomp/lifter.py
++++ b/tools/recomp/lifter.py
+@@ -3322,14 +3322,20 @@
+                 return [_sse_write(ops[0], f"(float)(int32_t){src}") + " /* cvtsi2ss */"]
+         if m in ("cvtss2si", "cvttss2si"):
+             if nops >= 2:
+-                return [_fmt_operand_write(ops[0], f"(int32_t){_sse_read(ops[1])}") + f" /* {m} */"]
++                t = 1 if m == "cvttss2si" else 0
++                return [_fmt_operand_write(ops[0], f"(uint32_t)SSE_CVT_I32((double){_sse_read(ops[1])}, {t})")
++                        + f" /* {m} */"]
+         if m == "cvtsi2sd":
+             if nops >= 2:
+                 src = _fmt_operand_read(ops[1])
+                 return [_sse_write(ops[0], f"(double)(int32_t){src}") + " /* cvtsi2sd */"]
+         if m in ("cvtsd2si", "cvttsd2si"):
+             if nops >= 2:
+-                return [_fmt_operand_write(ops[0], f"(int32_t){_sse_read(ops[1])}") + f" /* {m} */"]
++                t = 1 if m == "cvttsd2si" else 0
++                # a double: lane 0 of an xmm register is .d[0], not .f[0]
++                src = f"{ops[1].reg}.d[0]" if _is_xmm(ops[1]) else _sse_read(ops[1])
++                return [_fmt_operand_write(ops[0], f"(uint32_t)SSE_CVT_I32((double){src}, {t})")
++                        + f" /* {m} */"]
+         if m == "cvtss2sd":
+             if nops >= 2:
+                 return [_sse_write(ops[0], f"(double){_sse_read(ops[1])}") + " /* cvtss2sd */"]
+--- /dev/null
++++ b/tools/recomp/test_lifter_sse_cvt_int.py
+@@ -0,0 +1,53 @@
++"""Tests for the SSE float-to-integer conversions (cvt[t]ss2si, cvt[t]sd2si)."""
++
++import unittest
++
++from .disasm import Instruction, Operand
++from .lifter import Lifter
++
++
++def _insn(mnemonic, operands):
++    instruction = Instruction(0, 4, mnemonic, "", "")
++    instruction.operands = operands
++    return instruction
++
++
++def _reg(name):
++    return Operand(type="reg", reg=name)
++
++
++def _mem(base, size):
++    return Operand(type="mem", mem_base=base, mem_disp=0, mem_size=size)
++
++
++class SseConvertToIntTest(unittest.TestCase):
++    """The rounding forms follow MXCSR (round to nearest by default) and the
++    T forms truncate; both were lifted as C casts, which truncate, and whose
++    result for a value out of range is undefined in C."""
++
++    def lift(self, mnemonic, operands):
++        return Lifter().lift_instruction(_insn(mnemonic, operands))
++
++    def test_cvtss2si_rounds_by_mxcsr(self):
++        self.assertEqual(
++            self.lift("cvtss2si", [_reg("eax"), _mem("esp", 4)]),
++            ["eax = (uint32_t)SSE_CVT_I32((double)MEMF(esp), 0); /* cvtss2si */"])
++
++    def test_cvttss2si_truncates(self):
++        self.assertEqual(
++            self.lift("cvttss2si", [_reg("eax"), _reg("xmm0")]),
++            ["eax = (uint32_t)SSE_CVT_I32((double)xmm0.f[0], 1); /* cvttss2si */"])
++
++    def test_cvtsd2si_reads_the_double_lane(self):
++        self.assertEqual(
++            self.lift("cvtsd2si", [_reg("ecx"), _reg("xmm1")]),
++            ["ecx = (uint32_t)SSE_CVT_I32((double)xmm1.d[0], 0); /* cvtsd2si */"])
++
++    def test_cvttsd2si_from_memory_reads_a_double(self):
++        self.assertEqual(
++            self.lift("cvttsd2si", [_reg("edx"), _mem("eax", 8)]),
++            ["edx = (uint32_t)SSE_CVT_I32((double)MEMD(eax), 1); /* cvttsd2si */"])
++
++
++if __name__ == "__main__":
++    unittest.main()
