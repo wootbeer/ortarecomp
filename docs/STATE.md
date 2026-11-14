@@ -81,9 +81,9 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    letterboxed by the game. Movies: Display > Movies (Zoom) fills a wide
    window, subtitles kept. Cutscenes: at 21:9 the game's two bars (one
    draw of the HUD routine, `cutscene_bars` in `d3d_hle.c`) are dropped;
-   first try kept them (the log now says why). HUD Edges leaves a frame
-   alone once a full-screen sprite (a menu's backdrop) is drawn: menu
-   cursors in a corner had moved. Gameplay:
+   bars are 66 and 74 lines (the log says what became of them). HUD
+   Edges leaves a frame and the next alone once a full-screen sprite (a
+   menu's backdrop) is drawn: menu cursors in a corner had moved. Gameplay:
    Aspect ratio 21:9 (`widescreen.c`, HUD sprites squeezed back in
    `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
    pieces to the sides); menus come out pillarboxed to 16:9. 16:9 <-> 21:9

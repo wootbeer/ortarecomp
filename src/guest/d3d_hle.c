@@ -299,11 +299,12 @@ static void peek_guest(void)
     }
 }
 
-/* A sprite of the HUD routine has covered the whole screen this frame:
- * a menu's backdrop (the pause menu's dimming, the results screen's map).
- * HUD Edges then leaves the rest of the frame's sprites in the middle: a
- * menu's cursor in a corner is not the radar. Cleared at each Swap. */
-static bool hud_menu_frame;
+/* A sprite of the HUD routine has covered the whole screen this frame, or
+ * the one before: a menu's backdrop (the pause menu's dimming, the results
+ * screen's map). HUD Edges then leaves the sprites in the middle: a menu's
+ * cursor in a corner is not the radar. The frame before counts too, as the
+ * cursor is drawn before the backdrop at times (a player saw it jump). */
+static bool hud_menu_frame, hud_menu_before;
 
 /* D3DDevice_Swap(Flags): the end of a frame. Like the console, it shows the
  * frame at a vblank, waiting for as many as the presentation interval asks
@@ -314,6 +315,7 @@ void sub_002BAFC0(void)
     uint64_t n;
 
     pdo_widescreen_frame();     /* the aspect setting changed between 16:9 and 21:9 */
+    hud_menu_before = hud_menu_frame;
     hud_menu_frame = false;
     if (swap_interval > 0) {
         while (current_vblank() < last_vblank + (Uint64)swap_interval)
@@ -2239,7 +2241,7 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
         return;                 /* as wide as the screen */
     }
     *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
-    if (pdo_settings_get()->hud_edges && !hud_menu_frame &&
+    if (pdo_settings_get()->hud_edges && !hud_menu_frame && !hud_menu_before &&
         (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f)) {
         w3 = (float)rtw / 3.0f;
         if (x0 < w3 && x1 <= 2.0f * w3)
@@ -2250,8 +2252,8 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
 }
 
 /* Real-time cutscenes (an episode's opening, say): the game letterboxes
- * them with two black bars, 66 lines each at the top and bottom of its 480
- * (a captured frame of episode 1's opening), drawn as one draw of two quads
+ * them with two black bars, 66 lines at the top and 74 at the bottom of
+ * its 480 (episode 1's opening), drawn as one draw of two quads
  * by the HUD's sprite routine (returning to 0x0006A24B), untextured, over
  * the whole width. The scene is drawn under them over the whole frame (to
  * its own texture, then stretched over 640x480), and the band between them
@@ -2312,7 +2314,7 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
         memcpy(q[1], t, sizeof t);
     }
     if (q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
-        q[1][1] > 2.0f * (float)rth / 3.0f && SDL_fabsf(q[0][3] - ((float)rth - q[1][1])) <= 2.0f) {
+        q[1][1] > 2.0f * (float)rth / 3.0f) {
         bars_log("dropped", st.vshader, 0, q[0][3], q[1][1]);
         return true;
     }
