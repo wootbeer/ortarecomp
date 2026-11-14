@@ -13,7 +13,9 @@
   between 4:3 and widescreen, the next time the game starts (the menu says
   so), and until then the picture keeps the shape the game started with.
   At 21:9 real-time cutscenes fill the screen: the game's own black bars
-  above and below them are not drawn (issue 13).
+  above and below them are not drawn, the subtitles shown over the
+  picture. HUD Edges moves only the gameplay HUD: menu cursors and
+  subtitles stay in place (issue 13).
 
 ### Changed
 
