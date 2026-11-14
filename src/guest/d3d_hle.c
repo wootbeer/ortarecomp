@@ -2188,57 +2188,34 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
     return ok;
 }
 
-/* Where a HUD sprite goes, in normalised screen coordinates (-1..1, y up):
- * x' = x * sx + tx, y' = y * sy + ty (all 1 and 0: where the game put it).
- * The game draws its HUD as screen-space sprites from one routine (the
- * draw returning to 0x0006A24B, from the batch 0x0006A340). A sprite as
- * wide as the screen (a background) is left as it is. Things placed by the
- * camera (the reticle, lock-on marks) are not sprites of that routine.
- *
- * Wider than 16:9 (21:9, src/guest/widescreen.c): the game lays its HUD
- * out for 16:9, squeezing each piece by 0.75 about the middle in a score
- * of places, so on a wider screen it comes out stretched; each sprite is
- * squeezed again, by 16:9 over the screen's width: about the middle
- * (Display > HUD Centered: the 16:9 layout in the middle), or (Edges) for
- * a sprite in the top or bottom third, about the screen's left edge if it
- * starts in the left third and does not reach the right third, about the
- * right edge for the mirror case, else about the middle: the radar and the
- * gauges go out to the sides, whole, while menus and story text stay in
- * the middle.
- *
- * Fit to window Zoom, when it cuts the frame's top and bottom (or sides)
- * off: each sprite is pulled into what the window shows, about the corner,
- * edge or middle of the frame it belongs to (by the thirds, as Edges),
- * that point moved to the same place on the part shown, and scaled down by
- * as much as the picture was enlarged past fitting: the radar and gauges
- * whole and at their usual size in the window's corners. */
-typedef struct hud_place { float sx, tx, sy, ty; } hud_place;
-
-static int third_of(float lo, float hi, float size)
+/* The HUD in the game's 16:9 mode made wider (21:9, src/guest/widescreen.c).
+ * The game lays its HUD out for 16:9, squeezing each piece by 0.75 about
+ * the middle in a score of places, then draws them all as screen-space
+ * sprites from one routine (the draw returning to 0x0006A24B, from the
+ * batch 0x0006A340). On a wider screen those come out stretched, so each
+ * such sprite is squeezed again, by 16:9 over the screen's width: about
+ * the middle (Display > HUD Centered: the 16:9 layout in the middle of the
+ * screen), or (Edges) for a sprite in the top or bottom third of the
+ * screen, about the screen's left edge if it starts in the left third and
+ * does not reach the right third, about the right edge for the mirror
+ * case, else about the middle: the radar and the gauges go out to the
+ * sides, whole, while menus and story text (the middle third, or across
+ * it) stay in the middle. A sprite as wide as the
+ * screen (a background) is left as it is. Things placed by the camera (the
+ * reticle, lock-on marks) are not sprites of that routine and need
+ * nothing. The factor in *k (1: none) and the point it is about, in clip
+ * space (-1 left, 0 middle, 1 right), in *anchor. */
+static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count, float *k, float *anchor)
 {
-    float t = size / 3.0f;
-    if (lo < t && hi <= 2.0f * t)
-        return -1;
-    if (hi > 2.0f * t && lo >= t)
-        return 1;
-    return 0;
-}
+    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f, w3;
+    int rtw, rth;
 
-static bool hud_sprite_place(uint32_t base, uint32_t stride, uint32_t first, uint32_t count, hud_place *hp)
-{
-    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f, vx, vy;
-    int rtw, rth, ax, ay;
-    bool wider, zoomed;
-
-    hp->sx = hp->sy = 1.0f;
-    hp->tx = hp->ty = 0.0f;
-    wider = pdo_widescreen_active() && pdo_widescreen_ratio() > 16.0f / 9.0f + 0.01f;
-    pdo_gfx_zoom_visible(&vx, &vy);
-    zoomed = vx < 0.995f || vy < 0.995f;
-    if (!wider && !zoomed)
-        return false;
+    *k = 1.0f;
+    *anchor = 0.0f;
+    if (!pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
+        return;
     if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || !count)
-        return false;
+        return;
     target_size(&rtw, &rth);
     for (uint32_t i = 0; i < count; i++) {
         uint32_t w[2] = { MEM32(base + (first + i) * stride), MEM32(base + (first + i) * stride + 4) };
@@ -2250,25 +2227,15 @@ static bool hud_sprite_place(uint32_t base, uint32_t stride, uint32_t first, uin
         y1 = SDL_max(y1, p[1]);
     }
     if (x0 <= 0.5f && x1 >= (float)rtw - 1.5f)
-        return false;           /* as wide as the screen */
-    ax = third_of(x0, x1, (float)rtw);
-    ay = -third_of(y0, y1, (float)rth);         /* y up */
-    if (wider) {
-        float k = (16.0f / 9.0f) / pdo_widescreen_ratio();
-        float at = 0.0f;
-        if (pdo_settings_get()->hud_edges && (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f))
-            at = (float)ax;
-        hp->sx = k;
-        hp->tx = at * (1.0f - k);
+        return;                 /* as wide as the screen */
+    *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
+    if (pdo_settings_get()->hud_edges && (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f)) {
+        w3 = (float)rtw / 3.0f;
+        if (x0 < w3 && x1 <= 2.0f * w3)
+            *anchor = -1.0f;
+        else if (x1 > 2.0f * w3 && x0 >= w3)
+            *anchor = 1.0f;
     }
-    if (zoomed) {
-        float s = SDL_min(vx, vy);
-        hp->sx *= s;
-        hp->tx = hp->tx * s + (float)ax * (vx - s);
-        hp->sy = s;
-        hp->ty = (float)ay * (vy - s);
-    }
-    return true;
 }
 
 /* The shared part of every draw: vertices [first, first+count) of stream
@@ -2286,11 +2253,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     static pdo_gpu_fvf gpu_f;
     bool fvf_on_gpu = false;                /* or the fixed-function vertices do */
     bool cpu_too = true;                    /* and the CPU makes the vertices as well */
-    hud_place hud;                          /* a HUD sprite moved: 21:9, or Fit Zoom */
-    bool hud_moved;
+    float hud_k, hud_at;                    /* a HUD sprite's squeeze, on a wider screen, and about where */
 
     state_init();
-    hud_moved = hud_sprite_place(base, stride, first, count, &hud);
+    hud_squeeze(base, stride, first, count, &hud_k, &hud_at);
     if (count > vcap) {
         vcap = count * 2;
         vbuf = SDL_realloc(vbuf, vcap * sizeof *vbuf);
@@ -2332,7 +2298,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                 last = pdo_gfx_frame_count();
             }
         }
-    } else if (type != 1 && !hud_moved && pdo_settings_get()->gpu_fixed &&
+    } else if (type != 1 && hud_k == 1.0f && pdo_settings_get()->gpu_fixed &&
                fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
         fvf_on_gpu = true;
         pre = (gpu_f.u.layout0[2] & PDO_FVF_PRE) != 0;
@@ -2345,10 +2311,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             SDL_Log("d3d: FVF 0x%x not handled", st.vshader);
         draws_dropped++;
         return;
-    } else if (hud_moved) {
-        for (uint32_t i = 0; i < count; i++) {  /* clip space: normalised times w */
-            vbuf[i].pos[0] = vbuf[i].pos[0] * hud.sx + hud.tx * vbuf[i].pos[3];
-            vbuf[i].pos[1] = vbuf[i].pos[1] * hud.sy + hud.ty * vbuf[i].pos[3];
+    } else if (hud_k != 1.0f) {
+        for (uint32_t i = 0; i < count; i++) {  /* clip space: the middle is 0, the edges -w and w */
+            float at = hud_at * vbuf[i].pos[3];
+            vbuf[i].pos[0] = at + (vbuf[i].pos[0] - at) * hud_k;
         }
     }
     fill_draw_state(&d, pre);

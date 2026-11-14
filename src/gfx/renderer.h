@@ -286,10 +286,6 @@ bool pdo_gfx_paused(void);
 bool pdo_gfx_pump_events(void);
 
 uint64_t pdo_gfx_frame_count(void);
-/* How much of the frame's width and height the window shows (1: all, less
- * when Fit to window is Zoom and cuts the overflow off), as of the last
- * frame shown. */
-void pdo_gfx_zoom_visible(float *vx, float *vy);
 /* Lossless Scaling frame generation shows this run's frames (lsfg_present.h). */
 bool pdo_gfx_lsfg_active(void);
 

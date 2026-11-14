@@ -3283,17 +3283,6 @@ static Uint32 pre_sw, pre_sh;
 
 static SDL_GPUTexture *lsfg_target(Uint32 *w, Uint32 *h);
 
-/* The share of the frame's width and height the window shows, in 1/65536
- * (Fit to window Zoom cuts the rest off): set by the main thread, read by
- * the game's. */
-static SDL_AtomicInt zoom_vis[2] = { { 65536 }, { 65536 } };
-
-void pdo_gfx_zoom_visible(float *vx, float *vy)
-{
-    *vx = (float)SDL_GetAtomicInt(&zoom_vis[0]) / 65536.0f;
-    *vy = (float)SDL_GetAtomicInt(&zoom_vis[1]) / 65536.0f;
-}
-
 static void present_to_window(SDL_GPUCommandBuffer *cmd)
 {
     const pdo_settings *st = pdo_settings_get();
@@ -3362,9 +3351,6 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         float kz = SDL_max((float)sw / aw, (float)sh / frame_h);
         float k = st->fit == PDO_FIT_ZOOM ? kz : kf;
         float mr[4];
-        /* What Zoom leaves of the frame, for the HUD (d3d_hle.c, hud_place). */
-        SDL_SetAtomicInt(&zoom_vis[0], (int)(SDL_min(1.0f, (float)sw / (aw * k)) * 65536.0f));
-        SDL_SetAtomicInt(&zoom_vis[1], (int)(SDL_min(1.0f, (float)sh / (frame_h * k)) * 65536.0f));
         SDL_zero(fitv);
         fitv.w = SDL_floorf(aw * kf);
         fitv.h = SDL_floorf(frame_h * kf);
