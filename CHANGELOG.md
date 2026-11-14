@@ -1,21 +1,20 @@
 # Changelog
 
-## Unreleased
+## v0.1.7 (beta)
 
 ### Added
 
 - Ultrawide: Options > Display > Aspect ratio 21:9. The game shows a wider
-  view, as its own 16:9 mode does; the HUD keeps its shape and its 16:9
-  layout in the middle of the screen, and menus are shown at 16:9 in the
-  middle. Display > HUD: Centered, or Edges to move the radar and gauges
-  out to the screen's sides. Movies follow Display > Movies (Zoom fills a
-  21:9 screen). Switching between 16:9 and 21:9 takes effect at once;
-  between 4:3 and widescreen, the next time the game starts (the menu says
-  so), and until then the picture keeps the shape the game started with.
-  At 21:9 real-time cutscenes fill the screen: the game's own black bars
-  above and below them are not drawn, the subtitles shown over the
-  picture. HUD Edges moves only the gameplay HUD: menu cursors and
-  subtitles stay in place (issue 13).
+  view, as its own 16:9 mode does, and the HUD keeps its shape: Display >
+  HUD Centered keeps its 16:9 layout in the middle of the screen, Edges
+  moves the radar and gauges out to the screen's sides (menus and
+  subtitles stay in the middle). Real-time cutscenes fill the screen,
+  without the game's black bars above and below, the subtitles over the
+  picture; movies follow Display > Movies (Zoom fills a 21:9 screen).
+  Menus are shown at 16:9 in the middle (issue 13).
+- Switching between 16:9 and 21:9 takes effect at once, mid-game too;
+  between 4:3 and widescreen the next time the game starts (the menu says
+  so), the picture keeping its shape until then.
 
 ### Changed
 

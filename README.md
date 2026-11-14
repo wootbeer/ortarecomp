@@ -19,9 +19,12 @@ Android build is planned.
 
 - **Higher resolutions:** render at 1x to 8x the original resolution (8x is
   5120x3840).
-- **Widescreen:** the game's own 16:9 mode, 21:9 ultrawide, or the original 4:3; bars,
-  stretch or zoom to fit any window or screen. Movies can be shown at
-  their own shape without the game's black bars, subtitles kept.
+- **Widescreen:** the game's own 16:9 mode, the original 4:3, or 21:9
+  ultrawide: a wider view, the HUD in its 16:9 layout or out at the
+  screen's edges, and real-time cutscenes filling the screen without the
+  game's black bars. Bars, stretch or zoom to fit any window or screen.
+  Movies can be shown at their own shape without the game's black bars,
+  subtitles kept.
 - **Anti-aliasing:** MSAA up to 8x, or FXAA; anisotropic texture filtering
   up to 16x.
 - **Smooth motion:** frame interpolation above 60 fps for high refresh rate
@@ -34,8 +37,8 @@ Android build is planned.
   stereo speakers, headphones or 5.1 surround (shared front and back as on
   the console; or a simple pan), the movies' own 5.1 soundtracks, the
   game's room reverb and a master volume.
-- **Controls:** controllers, keyboard and mouse (with mouse aim), every
-  button rebindable.
+- **Controls:** controllers (with vibration), keyboard and mouse (with
+  mouse aim), every button rebindable.
 - **Three save files** (the original keeps one), picked in the launcher.
 - **Extras:** open every Pandora's Box item without touching your save,
   skip the boot logos or the launcher, an FPS counter, fullscreen (Alt+Enter), portable
@@ -121,6 +124,8 @@ Known:
 - The original Panzer Dragoon (the Saturn game unlocked in Pandora's Box)
   is not available yet.
 - USA version only.
+- Switching between 4:3 and widescreen takes effect the next time the game
+  starts (16:9 and 21:9 switch at once).
 
 Else:
 - Please see the "Issues" section in GitHub.
