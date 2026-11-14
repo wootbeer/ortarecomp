@@ -90,6 +90,12 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
   CRI and input through `src/hle/`; boots at 60 fps through the opening
   narration and the opening movie (ALL_OP.SFD) with its subtitles. No
   failed indirect call.
+- pd1 draws its frames in software (one 640x480 picture a frame), so its
+  bugs are in recompiled game code, not in the renderer. The HUD gauge and
+  radar were drawn off by up to 128 pixels when high: `cwd` was not lifted
+  (patch 0035), found by tracing the HUD's polygons in an F12 capture
+  (`src/pd1/trace.c`) and a watchpoint on the gauge's pixels. Confirmed
+  fixed on Windows.
 - pd1-only so far: its frame limiter (`src/pd1/frame.c`; it counts vblanks
   with its vertical-blank callback, which `src/hle/d3d_hle.c` now runs once
   per vblank from its waits, as the console's interrupt does) and two seeds.
