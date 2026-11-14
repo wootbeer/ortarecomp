@@ -1,6 +1,6 @@
 # Current state
 
-v0.1.6 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
+v0.1.7 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
 through all ten episodes and the ending, with music, movies, saves, bosses
 and Pandora's Box. Changes are listed in `CHANGELOG.md`.
 History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
@@ -26,6 +26,14 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
   Movies (Display > Movies, Original by default): `d3d_hle.c` marks a
   movie's picture (its size from the .sfd), the window pass shows it alone
   with subtitles laid over its bottom (`movie_only`).
+- Widescreen (`widescreen.c`): 16:9 is the game's own mode; 21:9 widens
+  its view after the display setup, 16:9 <-> 21:9 mid-game from Swap, 4:3
+  <-> wide at the next start. In `d3d_hle.c` the HUD routine's sprites are
+  squeezed back (`hud_squeeze`; HUD Edges sends corner pieces to the
+  sides, but not in a frame that drew a full-screen sprite or the
+  cutscene bars) and the cutscene bars are dropped (`cutscene_bars`, the
+  log says what became of them). Fit Zoom crops the HUD with the rest.
+  Rumble is passed through (XInputSetState).
 - Lossless Scaling frame generation (experimental): `lib/lsfg` (lsfg-vk and
   DXVK's DXBC compiler, from the BattleTanx port), run on SDL's own device
   through `patches/SDL/0001` (local, applied by CMake), host side in
@@ -77,22 +85,6 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
-8. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
-   letterboxed by the game. Movies: Display > Movies (Zoom) fills a wide
-   window, subtitles kept. Cutscenes: at 21:9 the game's two bars (one
-   draw of the HUD routine, `cutscene_bars` in `d3d_hle.c`) are dropped;
-   bars are 66 and 74 lines (the log says what became of them). HUD
-   Edges leaves a frame and the next alone once a full-screen sprite (a
-   menu's backdrop) is drawn: menu cursors in a corner had moved. Gameplay:
-   Aspect ratio 21:9 (`widescreen.c`, HUD sprites squeezed back in
-   `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
-   pieces to the sides); menus come out pillarboxed to 16:9. 16:9 <-> 21:9
-   applies mid-game (from Swap, re-handing the view value); 4:3 <-> wide
-   needs a restart, the picture held to what the game set up (tried in
-   play, Windows). Fit Zoom crops the HUD with the rest: on a wide
-   screen, 4:3 is for Bars. Rumble
-   is passed through (XInputSetState); the log says when the game first
-   sends it.
 
 ## Testing
 

@@ -1,5 +1,5 @@
 /*
- * Widescreen: Panzer Dragoon Orta's own 16:9 mode.
+ * Widescreen: Panzer Dragoon Orta's own 16:9 mode, and 21:9.
  *
  * The display setup (0x0003D020) asks the game's display object (at
  * 0x0041A06C) for its video mode, query 15, and with bit 8 of the answer
@@ -7,8 +7,14 @@
  * 4/3, and a flag at 0x00342754 that the camera and the screen layout read
  * (the HUD's round radar comes out narrow, to be stretched back). Our
  * kernel's video flags never set that bit, so the game stayed 4:3. With
- * the aspect setting at 16:9 we set it, and the window pass shows the
- * frame at 16:9 (renderer.c, present_to_window).
+ * the aspect setting at 16:9 or 21:9 we set it, and the window pass shows
+ * the frame at that shape (renderer.c, present_to_window).
+ *
+ * 21:9 widens the view further after the setup (sub_0003D020 below); the
+ * HUD is squeezed back and the cutscene bars dropped in d3d_hle.c
+ * (hud_squeeze, cutscene_bars). 16:9 and 21:9 switch at the next frame;
+ * 4:3 and widescreen only at the next start, as the game sets that up
+ * once.
  */
 
 #include <SDL3/SDL.h>

@@ -289,6 +289,18 @@ batch (0x0006A340 from 0x00011B00 and 0x000121F0, each sprite drawn by
 0x0006A120, the draw returning to 0x0006A24B). The reticle and lock-on
 marks are not sprites of that batch. In play the game also draws 16-line
 black bars at the top and bottom (0x0006A0A8, as for movie fades).
+Handing the display object a new value mid-game (from Swap) switches the
+view at once; query 15's answer is read once, so 4:3 and widescreen do not
+switch until the next start.
+
+Real-time cutscenes are letterboxed by two black bars, 66 lines at the top
+and 74 at the bottom of 480 (episode 1's opening), drawn as one untextured
+draw of two quads by the same sprite routine. The scene is rendered to its
+own 512x512 target (viewport 0,12 512x360) and stretched over the whole
+640x480 (0x0004AA19) before the bars, so the picture is there under them.
+Subtitles are several sprite draws of the batch, each with a dark outline.
+Menus draw a full-screen sprite of the batch before their items: the pause
+menu a dimming quad, the results screen its map.
 
 ## Input and the reticle
 

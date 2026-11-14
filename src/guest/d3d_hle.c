@@ -299,13 +299,14 @@ static void peek_guest(void)
     }
 }
 
-/* A sprite of the HUD routine has covered the whole screen this frame, or
- * the one before: a menu's backdrop (the pause menu's dimming, the results
- * screen's map); or the frame is a cutscene's (its bars, cutscene_bars).
- * HUD Edges then leaves the sprites in the middle: a menu's cursor in a
- * corner is not the radar, and a line of subtitles comes in several draws
- * that Edges pulled apart (their dark outline showed beside them). The frame before counts too, as the
- * cursor is drawn before the backdrop at times (a player saw it jump). */
+/* 21:9, HUD Edges (hud_squeeze): this frame or the one before is a menu's
+ * or a cutscene's, not gameplay's. A sprite of the HUD routine covered the
+ * whole screen (the pause menu's dimming, the results screen's map), or
+ * the cutscene bars were drawn (cutscene_bars). Edges then leaves the
+ * sprites in the middle: a menu's cursor in a corner is not the radar, and
+ * a line of subtitles is several draws that Edges would pull apart. The
+ * frame before counts too: a menu's cursor is drawn before its backdrop at
+ * times. Swap moves this frame's to the one before. */
 static bool hud_menu_frame, hud_menu_before;
 
 /* D3DDevice_Swap(Flags): the end of a frame. Like the console, it shows the
@@ -2199,72 +2200,74 @@ static bool timed_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
     return ok;
 }
 
-/* The HUD in the game's 16:9 mode made wider (21:9, src/guest/widescreen.c).
- * The game lays its HUD out for 16:9, squeezing each piece by 0.75 about
- * the middle in a score of places, then draws them all as screen-space
- * sprites from one routine (the draw returning to 0x0006A24B, from the
- * batch 0x0006A340). On a wider screen those come out stretched, so each
- * such sprite is squeezed again, by 16:9 over the screen's width: about
- * the middle (Display > HUD Centered: the 16:9 layout in the middle of the
- * screen), or (Edges) for a sprite in the top or bottom third of the
- * screen, about the screen's left edge if it starts in the left third and
- * does not reach the right third, about the right edge for the mirror
- * case, else about the middle: the radar and the gauges go out to the
- * sides, whole, while menus and story text (the middle third, or across
- * it) stay in the middle. A sprite as wide as the
- * screen (a background) is left as it is. Things placed by the camera (the
- * reticle, lock-on marks) are not sprites of that routine and need
- * nothing. The factor in *k (1: none) and the point it is about, in clip
- * space (-1 left, 0 middle, 1 right), in *anchor. */
-static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count, float *k, float *anchor)
+/* On a screen wider than 16:9 (21:9, src/guest/widescreen.c): whether this
+ * draw is a sprite of the game's HUD routine -- the screen-space sprites of
+ * the HUD, menus and story text, all drawn from one routine (the draw
+ * returning to 0x0006A24B, from the batch 0x0006A340) -- and if so the
+ * bounds of its vertices, in the game's pixels. */
+static bool hud_sprite(uint32_t base, uint32_t stride, uint32_t first, uint32_t count, float box[4])
 {
-    float x0 = 1e9f, x1 = -1e9f, y0 = 1e9f, y1 = -1e9f, w3;
-    int rtw, rth;
-
-    *k = 1.0f;
-    *anchor = 0.0f;
-    if (!pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
-        return;
-    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || !count)
-        return;
-    target_size(&rtw, &rth);
+    if (!count || !pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
+        return false;
+    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004)
+        return false;
+    box[0] = box[1] = 1e9f;
+    box[2] = box[3] = -1e9f;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t w[2] = { MEM32(base + (first + i) * stride), MEM32(base + (first + i) * stride + 4) };
         float p[2];
         memcpy(p, w, sizeof p);
-        x0 = SDL_min(x0, p[0]);
-        x1 = SDL_max(x1, p[0]);
-        y0 = SDL_min(y0, p[1]);
-        y1 = SDL_max(y1, p[1]);
+        box[0] = SDL_min(box[0], p[0]);
+        box[1] = SDL_min(box[1], p[1]);
+        box[2] = SDL_max(box[2], p[0]);
+        box[3] = SDL_max(box[3], p[1]);
     }
-    if (x0 <= 0.5f && x1 >= (float)rtw - 1.5f) {
-        if (y0 <= 0.5f && y1 >= (float)rth - 1.5f)
+    return true;
+}
+
+/* The HUD on a screen wider than 16:9. The game lays its HUD out for 16:9,
+ * squeezing each piece by 0.75 about the middle in a score of places, so on
+ * a wider screen its sprites come out stretched; each is squeezed again, by
+ * 16:9 over the screen's width. About the middle (Display > HUD Centered:
+ * the 16:9 layout in the middle of the screen), or with Edges, for a sprite
+ * in the top or bottom third: about the screen's left edge if it starts in
+ * the left third and does not reach the right third, about the right edge
+ * for the mirror case, else about the middle. The radar and the gauges go
+ * out to the sides, whole; menus and story text (across the middle) stay,
+ * and so does all of a menu's or a cutscene's frame (hud_menu_frame). A
+ * sprite as wide as the screen (a background) is left as it is. Things
+ * placed by the camera (the reticle, lock-on marks) are not sprites of the
+ * routine. The factor in *k (1: none) and the point it is about, in
+ * normalised x (-1 left, 0 middle, 1 right), in *anchor. */
+static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t count, float *k, float *anchor)
+{
+    float b[4], w3;
+    int rtw, rth;
+
+    *k = 1.0f;
+    *anchor = 0.0f;
+    if (!hud_sprite(base, stride, first, count, b))
+        return;
+    target_size(&rtw, &rth);
+    if (b[0] <= 0.5f && b[2] >= (float)rtw - 1.5f) {
+        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f)
             hud_menu_frame = true;
         return;                 /* as wide as the screen */
     }
     *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
     if (pdo_settings_get()->hud_edges && !hud_menu_frame && !hud_menu_before &&
-        (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f)) {
+        (b[3] <= (float)rth / 3.0f || b[1] >= 2.0f * (float)rth / 3.0f)) {
         w3 = (float)rtw / 3.0f;
-        if (x0 < w3 && x1 <= 2.0f * w3)
+        if (b[0] < w3 && b[2] <= 2.0f * w3)
             *anchor = -1.0f;
-        else if (x1 > 2.0f * w3 && x0 >= w3)
+        else if (b[2] > 2.0f * w3 && b[0] >= w3)
             *anchor = 1.0f;
     }
 }
 
-/* Real-time cutscenes (an episode's opening, say): the game letterboxes
- * them with two black bars, 66 lines at the top and 74 at the bottom of
- * its 480 (episode 1's opening), drawn as one draw of two quads
- * by the HUD's sprite routine (returning to 0x0006A24B), untextured, over
- * the whole width. The scene is drawn under them over the whole frame (to
- * its own texture, then stretched over 640x480), and the band between them
- * is about 2.45:1, so on a 21:9 screen the bars only shrink a picture of
- * the screen's own shape: there they are not drawn. The thin strips at the
- * very top and bottom (16 lines, 0x0006A0A8) are in every frame and stay. */
-/* The log says what became of a draw that looked like the bars: each
- * outcome when it differs from the last, at most 8 lines a run. */
-static void bars_log(const char *what, uint32_t fvf, uint32_t color, float a, float b)
+/* What became of a draw that looked like the cutscene bars, for the log:
+ * each outcome when it differs from the last, at most 8 lines a run. */
+static void bars_log(const char *what, uint32_t color, float a, float b)
 {
     static const char *last;
     static int n;
@@ -2273,55 +2276,52 @@ static void bars_log(const char *what, uint32_t fvf, uint32_t color, float a, fl
         return;
     last = what;
     n++;
-    SDL_Log("widescreen: cutscene bars %s (fvf 0x%x, color %08x, %.1f %.1f)", what, fvf, color, a, b);
+    SDL_Log("widescreen: cutscene bars %s (color %08x, %.1f %.1f)", what, color, a, b);
 }
 
+/* Real-time cutscenes (an episode's opening, say): the game letterboxes
+ * them with two black bars, 66 lines at the top and 74 at the bottom of
+ * its 480 (episode 1's opening), one draw of two quads by the HUD routine,
+ * untextured, over the whole width. The scene is drawn under them over the
+ * whole frame (to its own texture, then stretched over 640x480), and the
+ * band between them is about 2.45:1, so on a 21:9 screen the bars only
+ * shrink a picture of the screen's own shape: there they are not drawn
+ * (true: drop the draw). The thin strips at the very top and bottom (16
+ * lines, 0x0006A0A8) are in every frame and stay. */
 static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
 {
-    float q[2][4];      /* each quad's x0, y0, x1, y1 */
+    float q[2][4], b[4];    /* each quad's x0, y0, x1, y1 */
     int rtw, rth;
 
-    if (count != 8 || !pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
-        return false;
-    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004)
+    if (count != 8 || !hud_sprite(base, stride, first, count, b))
         return false;
     target_size(&rtw, &rth);
     for (int k = 0; k < 2; k++) {
-        q[k][0] = q[k][1] = 1e9f;
-        q[k][2] = q[k][3] = -1e9f;
         for (uint32_t i = 0; i < 4; i++) {
             uint32_t v = base + (first + 4 * k + i) * stride;
-            float x, y;
-            uint32_t w[2] = { MEM32(v), MEM32(v + 4) };
-            memcpy(&x, &w[0], 4);
-            memcpy(&y, &w[1], 4);
             if ((st.vshader & 0x040) && (MEM32(v + 16) & 0x00FFFFFFu)) {
-                bars_log("not black", st.vshader, MEM32(v + 16), x, y);
+                bars_log("not black", MEM32(v + 16), 0, 0);
                 return false;
             }
-            q[k][0] = SDL_min(q[k][0], x);
-            q[k][1] = SDL_min(q[k][1], y);
-            q[k][2] = SDL_max(q[k][2], x);
-            q[k][3] = SDL_max(q[k][3], y);
         }
+        hud_sprite(base, stride, first + 4 * k, 4, q[k]);
         if (q[k][0] > 0.5f || q[k][2] < (float)rtw - 1.5f) {
-            bars_log("not the whole width", st.vshader, 0, q[k][0], q[k][2]);
+            bars_log("not the whole width", 0, q[k][0], q[k][2]);
             return false;
         }
     }
     if (q[0][1] > q[1][1]) {            /* the top one first */
-        float t[4];
-        memcpy(t, q[0], sizeof t);
-        memcpy(q[0], q[1], sizeof t);
-        memcpy(q[1], t, sizeof t);
+        memcpy(b, q[0], sizeof b);
+        memcpy(q[0], q[1], sizeof b);
+        memcpy(q[1], b, sizeof b);
     }
     if (q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
         q[1][1] > 2.0f * (float)rth / 3.0f) {
-        bars_log("dropped", st.vshader, 0, q[0][3], q[1][1]);
+        bars_log("dropped", 0, q[0][3], q[1][1]);
         hud_menu_frame = true;          /* a cutscene: subtitles, no HUD for Edges to move */
         return true;
     }
-    bars_log("not two bars", st.vshader, 0, q[0][3], q[1][1]);
+    bars_log("not two bars", 0, q[0][3], q[1][1]);
     return false;
 }
 
@@ -2401,7 +2401,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         draws_dropped++;
         return;
     } else if (hud_k != 1.0f) {
-        for (uint32_t i = 0; i < count; i++) {  /* clip space: the middle is 0, the edges -w and w */
+        for (uint32_t i = 0; i < count; i++) {  /* clip space: the middle 0, the edges -w and w */
             float at = hud_at * vbuf[i].pos[3];
             vbuf[i].pos[0] = at + (vbuf[i].pos[0] - at) * hud_k;
         }
