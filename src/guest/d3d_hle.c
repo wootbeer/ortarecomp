@@ -301,8 +301,10 @@ static void peek_guest(void)
 
 /* A sprite of the HUD routine has covered the whole screen this frame, or
  * the one before: a menu's backdrop (the pause menu's dimming, the results
- * screen's map). HUD Edges then leaves the sprites in the middle: a menu's
- * cursor in a corner is not the radar. The frame before counts too, as the
+ * screen's map); or the frame is a cutscene's (its bars, cutscene_bars).
+ * HUD Edges then leaves the sprites in the middle: a menu's cursor in a
+ * corner is not the radar, and a line of subtitles comes in several draws
+ * that Edges pulled apart (their dark outline showed beside them). The frame before counts too, as the
  * cursor is drawn before the backdrop at times (a player saw it jump). */
 static bool hud_menu_frame, hud_menu_before;
 
@@ -2316,6 +2318,7 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
     if (q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
         q[1][1] > 2.0f * (float)rth / 3.0f) {
         bars_log("dropped", st.vshader, 0, q[0][3], q[1][1]);
+        hud_menu_frame = true;          /* a cutscene: subtitles, no HUD for Edges to move */
         return true;
     }
     bars_log("not two bars", st.vshader, 0, q[0][3], q[1][1]);
