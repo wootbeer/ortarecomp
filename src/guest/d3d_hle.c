@@ -299,6 +299,12 @@ static void peek_guest(void)
     }
 }
 
+/* A sprite of the HUD routine has covered the whole screen this frame:
+ * a menu's backdrop (the pause menu's dimming, the results screen's map).
+ * HUD Edges then leaves the rest of the frame's sprites in the middle: a
+ * menu's cursor in a corner is not the radar. Cleared at each Swap. */
+static bool hud_menu_frame;
+
 /* D3DDevice_Swap(Flags): the end of a frame. Like the console, it shows the
  * frame at a vblank, waiting for as many as the presentation interval asks
  * since the previous one. */
@@ -308,6 +314,7 @@ void sub_002BAFC0(void)
     uint64_t n;
 
     pdo_widescreen_frame();     /* the aspect setting changed between 16:9 and 21:9 */
+    hud_menu_frame = false;
     if (swap_interval > 0) {
         while (current_vblank() < last_vblank + (Uint64)swap_interval)
             wait_vblank_for(true);
@@ -2226,10 +2233,14 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
         y0 = SDL_min(y0, p[1]);
         y1 = SDL_max(y1, p[1]);
     }
-    if (x0 <= 0.5f && x1 >= (float)rtw - 1.5f)
+    if (x0 <= 0.5f && x1 >= (float)rtw - 1.5f) {
+        if (y0 <= 0.5f && y1 >= (float)rth - 1.5f)
+            hud_menu_frame = true;
         return;                 /* as wide as the screen */
+    }
     *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
-    if (pdo_settings_get()->hud_edges && (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f)) {
+    if (pdo_settings_get()->hud_edges && !hud_menu_frame &&
+        (y1 <= (float)rth / 3.0f || y0 >= 2.0f * (float)rth / 3.0f)) {
         w3 = (float)rtw / 3.0f;
         if (x0 < w3 && x1 <= 2.0f * w3)
             *anchor = -1.0f;
@@ -2247,6 +2258,20 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
  * is about 2.45:1, so on a 21:9 screen the bars only shrink a picture of
  * the screen's own shape: there they are not drawn. The thin strips at the
  * very top and bottom (16 lines, 0x0006A0A8) are in every frame and stay. */
+/* The log says what became of a draw that looked like the bars: each
+ * outcome when it differs from the last, at most 8 lines a run. */
+static void bars_log(const char *what, uint32_t fvf, uint32_t color, float a, float b)
+{
+    static const char *last;
+    static int n;
+
+    if ((last && strcmp(what, last) == 0) || n >= 8)
+        return;
+    last = what;
+    n++;
+    SDL_Log("widescreen: cutscene bars %s (fvf 0x%x, color %08x, %.1f %.1f)", what, fvf, color, a, b);
+}
+
 static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
 {
     float q[2][4];      /* each quad's x0, y0, x1, y1 */
@@ -2254,7 +2279,7 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
 
     if (count != 8 || !pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
         return false;
-    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || st.tex[0])
+    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004)
         return false;
     target_size(&rtw, &rth);
     for (int k = 0; k < 2; k++) {
@@ -2266,15 +2291,19 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
             uint32_t w[2] = { MEM32(v), MEM32(v + 4) };
             memcpy(&x, &w[0], 4);
             memcpy(&y, &w[1], 4);
-            if ((st.vshader & 0x040) && (MEM32(v + 16) & 0x00FFFFFFu))
-                return false;           /* not black */
+            if ((st.vshader & 0x040) && (MEM32(v + 16) & 0x00FFFFFFu)) {
+                bars_log("not black", st.vshader, MEM32(v + 16), x, y);
+                return false;
+            }
             q[k][0] = SDL_min(q[k][0], x);
             q[k][1] = SDL_min(q[k][1], y);
             q[k][2] = SDL_max(q[k][2], x);
             q[k][3] = SDL_max(q[k][3], y);
         }
-        if (q[k][0] > 0.5f || q[k][2] < (float)rtw - 1.5f)
-            return false;               /* not the whole width */
+        if (q[k][0] > 0.5f || q[k][2] < (float)rtw - 1.5f) {
+            bars_log("not the whole width", st.vshader, 0, q[k][0], q[k][2]);
+            return false;
+        }
     }
     if (q[0][1] > q[1][1]) {            /* the top one first */
         float t[4];
@@ -2282,8 +2311,13 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
         memcpy(q[0], q[1], sizeof t);
         memcpy(q[1], t, sizeof t);
     }
-    return q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
-           q[1][1] > 2.0f * (float)rth / 3.0f && SDL_fabsf(q[0][3] - ((float)rth - q[1][1])) <= 2.0f;
+    if (q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
+        q[1][1] > 2.0f * (float)rth / 3.0f && SDL_fabsf(q[0][3] - ((float)rth - q[1][1])) <= 2.0f) {
+        bars_log("dropped", st.vshader, 0, q[0][3], q[1][1]);
+        return true;
+    }
+    bars_log("not two bars", st.vshader, 0, q[0][3], q[1][1]);
+    return false;
 }
 
 /* The shared part of every draw: vertices [first, first+count) of stream
