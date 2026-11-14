@@ -11,8 +11,11 @@
   out to the screen's sides. Movies follow Display > Movies (Zoom fills a
   21:9 screen). Switching between 16:9 and 21:9 takes effect at once;
   between 4:3 and widescreen, the next time the game starts (the menu says
-  so), and until then the picture keeps the shape the game started with
-  (issue 13).
+  so), and until then the picture keeps the shape the game started with.
+  At 21:9 real-time cutscenes fill the screen: the game's own black bars
+  above and below them are not drawn, the subtitles shown over the
+  picture. HUD Edges moves only the gameplay HUD: menu cursors and
+  subtitles stay in place (issue 13).
 
 ### Changed
 
