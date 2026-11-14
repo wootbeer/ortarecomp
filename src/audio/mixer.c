@@ -58,6 +58,7 @@ typedef struct voice {
     /* The Xbox's HRTF (pdo_voice_set_3d_hrtf): each ear's FIR in place of
      * the model head's filter, fed from that ear's delayed samples. */
     bool           hrtf;
+    float          hrtf_front, hrtf_back;            /* 5.1: the front and back pairs' gains */
     float          hrtf_h[2][PDO_HRTF_TAPS];
     float          hrtf_x[2][PDO_HRTF_TAPS];         /* each ear's input, newest first */
     float          direct, room;        /* I3DL2 source levels, linear */
@@ -252,8 +253,16 @@ static void update_gains(voice *v)
             for (int b = 0; b < PDO_BIN_SPEAKERS; b++)
                 if (level * v->g6[b] > v->gain[ch][b])
                     v->gain[ch][b] = level * v->g6[b];
+        } else if (bin < PDO_BIN_SPEAKERS && v->hrtf && v->hrtf_back > 0.0f &&
+                   (bin == PDO_BIN_FRONT_LEFT || bin == PDO_BIN_FRONT_RIGHT)) {
+            /* HRTF on 5.1: a front bin's ear feeds the back speaker of its
+             * side too, the voice's level shared between front and back */
+            float g = db100_to_gain(v->desc.bins[i].volume) * side_gain(v, bin) * v->direct;
+            v->gain[ch][bin] = g * v->hrtf_front;
+            v->gain[ch][bin == PDO_BIN_FRONT_LEFT ? PDO_BIN_BACK_LEFT : PDO_BIN_BACK_RIGHT] = g * v->hrtf_back;
         } else if (bin < PDO_BIN_SPEAKERS)
-            v->gain[ch][bin] = db100_to_gain(v->desc.bins[i].volume) * side_gain(v, bin) * v->direct;
+            v->gain[ch][bin] = db100_to_gain(v->desc.bins[i].volume) * side_gain(v, bin) * v->direct *
+                               (v->hrtf ? v->hrtf_front : 1.0f);
         else if (bin == PDO_BIN_I3DL2) {
             v->gain[ch][SEND] = db100_to_gain(v->desc.bins[i].volume) * v->room * dist;
             sends = true;
@@ -869,9 +878,12 @@ void pdo_voice_set_3d_ears(int id, float gain, float lateral, float front)
     WITH_VOICE(id, set_ears(v, gain, lateral, front));
 }
 
-static void set_hrtf(voice *v, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2])
+static void set_hrtf(voice *v, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2], float front,
+                     float back)
 {
     v->pan6 = false;
+    v->hrtf_front = front;
+    v->hrtf_back = back;
     if (v->desc.channels != 1) {    /* stereo 3D buffers: no HRTF (the APU's is for mono voices) */
         v->ears = v->hrtf = false;
         v->g3d[0] = v->g3d[1] = gain * 0.70710678f;
@@ -890,9 +902,10 @@ static void set_hrtf(voice *v, float gain, float h[2][PDO_HRTF_TAPS], const floa
     update_gains(v);
 }
 
-void pdo_voice_set_3d_hrtf(int id, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2])
+void pdo_voice_set_3d_hrtf(int id, float gain, float h[2][PDO_HRTF_TAPS], const float delay[2], float front,
+                           float back)
 {
-    WITH_VOICE(id, set_hrtf(v, gain, h, delay));
+    WITH_VOICE(id, set_hrtf(v, gain, h, delay, front, back));
 }
 
 /* Pairwise constant-power panning around the four corner speakers, by the

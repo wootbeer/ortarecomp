@@ -3346,7 +3346,7 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
          * all of it, bars elsewhere -- also where the overlay goes, so it is
          * whole in every mode; zoomed to fill, the overflow cut off;
          * stretched to the window. */
-        float aw = pdo_widescreen_active() ? frame_h * 16.0f / 9.0f : (float)frame_w;
+        float aw = pdo_widescreen_active() ? frame_h * pdo_widescreen_ratio() : (float)frame_w;
         float kf = SDL_min((float)sw / aw, (float)sh / frame_h);
         float kz = SDL_max((float)sw / aw, (float)sh / frame_h);
         float k = st->fit == PDO_FIT_ZOOM ? kz : kf;

@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- Ultrawide: Options > Display > Aspect ratio 21:9. The game shows a wider
+  view, as its own 16:9 mode does; the HUD keeps its shape and its 16:9
+  layout in the middle of the screen, and menus are shown at 16:9 in the
+  middle. Display > HUD: Centered, or Edges to move the radar and gauges
+  out to the screen's sides. Movies follow Display > Movies (Zoom fills a
+  21:9 screen). Switching between 16:9 and 21:9 takes effect at once;
+  between 4:3 and widescreen, the next time the game starts (the menu says
+  so), and until then the picture keeps the shape the game started with
+  (issue 13).
+
+### Changed
+
+- 5.1: 3D sound now works on 5.1 too, as on the console: each sound goes
+  through the Xbox's HRTF filters for left and right and is shared between
+  the front and back speakers by the game's own rule (all front within 45
+  degrees of ahead, all back within 45 degrees of behind, even overhead).
+  Options > Sound > 3D sound Off keeps the earlier panning around the four
+  speakers.
+
 ## v0.1.6 (beta)
 
 ### Added

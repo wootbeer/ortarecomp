@@ -210,7 +210,19 @@ virtual addresses in the USA `default.xbe`.
   to the console by ear; PDO_HRTF=n another scale, 0 the old pan). Against
   that pan (equal power, -3 dB each ear straight ahead), episode 1's machine gun alone through the
   HRTF is +3.7, +3.1, -0.9, -1.2 dB (100-500, 500-2k, 2k-6k, 6k-16k Hz)
-  at n = 256, 6 dB less at 512.
+  at n = 256, 6 dB less at 512. The far ear's filter is a smooth low-pass
+  with more bass than the near ear's (+17 dB at 200 Hz at 90 degrees), the
+  near ear's rises to the treble; the near ear hears it up to 0.67 ms first
+  (measured: the near channel leads in 9 of 10 windows).
+- 5.1 (a flag in DirectSound's speaker state, +0x78 of [voice+0xD0]):
+  the HRTF lookup folds an azimuth past 90 degrees onto the front
+  (0x002C5553), and 0x002C520B shares the voice's power between the front
+  (bins 6/7) and back (8/9) pairs: back = (1 - |el|/90)(|az|/90 - 1) + 0.5,
+  held to 0..1, each share to a volume as 1000 log10 (0x002C4D46). When K
+  (distance x the listener's distance factor x an internal per-buffer
+  scale at +0x40 of the DS3DBUFFER copy, also in the Doppler code) is under
+  0.5, back becomes 0.5 + (back - 0.5) K / 2. Without the flag all goes
+  front.
 - Enemy machine guns (24,012 and 13,212-byte ADPCM samples, mono 44.1 kHz,
   0.97 s and 0.53 s): each sound has a template buffer; every burst moves
   the template and every copy still playing to the shooter, then starts a
@@ -265,6 +277,18 @@ sets the widescreen flag at 0x00342754, which the camera and the screen
 layout read (the HUD's radar is drawn narrow, to be stretched to 16:9).
 Our kernel's video flags never set bit 8; src/guest/widescreen.c does when
 the aspect setting is 16:9. The game reads it once, at start.
+
+21:9: after the setup the aspect value is scaled by (64/27)/(16/9) and
+handed to the display object again (method +0x208, stdcall this and the
+value): the camera renders the wider view, nothing missing at the edges in
+episode 1. The HUD is laid out for 16:9 by about 20 functions reading the
+flag (0x00011B90, 0x00032660 and 0x00069700 squeeze by 0.75 about x = 320,
+constants 0x0030CAA8 and 0x0030CAAC, the 0.75 shared by 32 places; others
+call helpers such as 0x0003E640), which queue sprites drawn later in one
+batch (0x0006A340 from 0x00011B00 and 0x000121F0, each sprite drawn by
+0x0006A120, the draw returning to 0x0006A24B). The reticle and lock-on
+marks are not sprites of that batch. In play the game also draws 16-line
+black bars at the top and bottom (0x0006A0A8, as for movie fades).
 
 ## Input and the reticle
 

@@ -20,6 +20,7 @@ typedef struct pdo_settings {
     int  render_scale2;     /* 2-16: render targets at half this multiple of the game's size (3: 1.5x) */
     int  msaa;              /* 1, 2, 4 or 8 samples */
     int  aspect;            /* PDO_ASPECT_*; 16:9 is the game's own widescreen mode */
+    bool hud_edges;         /* 21:9: the HUD out to the screen's sides, not its 16:9 layout (d3d_hle.c) */
     int  fit;               /* PDO_FIT_*: how the picture fills the window */
     int  movie_fit;         /* PDO_MOVIE_*: how a movie's picture fills it (renderer.c) */
     bool soft_filter;       /* TV-like vertical softening at presentation */
@@ -55,12 +56,13 @@ typedef struct pdo_settings {
     int  pic_saturation;    /* 0..200 % */
     int  audio_out;         /* PDO_AUDIO_*: stereo; headphones (with hrtf off, a model head);
                                or 5.1, 3D sounds around four speakers (mixer.c) */
-    bool hrtf;              /* Stereo/Headphones: 3D sounds through the Xbox's HRTF filters, else a
-                               pan or the model head (src/guest/dsound_hle.c) */
+    bool hrtf;              /* 3D sounds through the Xbox's HRTF filters (on 5.1 shared front and
+                               back), else a pan, the model head or the corners (dsound_hle.c) */
     int  save_slot;         /* 1-3: which save file the game sees (pdo_save_dir), chosen before it starts */
 } pdo_settings;
 
-enum { PDO_ASPECT_4_3, PDO_ASPECT_16_9, PDO_ASPECT_COUNT };
+/* 21:9 is the game's widescreen mode made wider (2.37:1, 64:27). */
+enum { PDO_ASPECT_4_3, PDO_ASPECT_16_9, PDO_ASPECT_21_9, PDO_ASPECT_COUNT };
 enum { PDO_AUDIO_STEREO, PDO_AUDIO_HEADPHONES, PDO_AUDIO_SURROUND, PDO_AUDIO_COUNT };
 /* The whole picture with bars; stretched to the window; zoomed to fill it,
  * the overflow cut off. */
@@ -70,10 +72,17 @@ enum { PDO_FIT_BARS, PDO_FIT_STRETCH, PDO_FIT_ZOOM, PDO_FIT_COUNT };
  * or zoomed. */
 enum { PDO_MOVIE_ORIGINAL, PDO_MOVIE_BARS, PDO_MOVIE_STRETCH, PDO_MOVIE_ZOOM, PDO_MOVIE_COUNT };
 
-/* Whether the game set itself up in its widescreen mode (anamorphic 16:9:
- * a wider view squeezed into 640x480), which it reads once at start:
- * src/guest/widescreen.c. */
+/* Whether the game set itself up in its widescreen mode (anamorphic 16:9,
+ * or wider: a wider view squeezed into 640x480), which it reads once at
+ * start, and the shape its picture is meant to be shown at (4/3 when not
+ * widescreen): src/guest/widescreen.c. */
 bool pdo_widescreen_active(void);
+float pdo_widescreen_ratio(void);
+/* The aspect setting asks for 4:3 in a widescreen game or the other way:
+ * that takes a restart (16:9 and 21:9 switch at the next frame). */
+bool pdo_widescreen_needs_restart(void);
+/* Game thread, once a frame: applies a change between 16:9 and 21:9. */
+void pdo_widescreen_frame(void);
 
 /* The current settings: defaults until pdo_config_load reads the file. */
 pdo_settings *pdo_settings_get(void);

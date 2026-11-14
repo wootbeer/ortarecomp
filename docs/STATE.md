@@ -33,8 +33,9 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
   player's Lossless.dll to run. F1 > Advanced > Frame gen.
 - `src/audio/`: mixer, I3DL2 reverb, output Stereo / Headphones / 5.1 (the
   six speaker bins out as they are, 3D voices panned around the corners).
-  On Stereo and Headphones 3D voices go through the game's own HRTF
-  tables (Sound > 3D sound; Off: a pan, or the model head on Headphones). With 5.1, GetSpeakerConfig reports a Dolby Digital console
+  3D voices go through the game's own HRTF tables, on 5.1 shared between
+  the front and back pairs as DirectSound does (Sound > 3D sound; Off: a
+  pan, the model head on Headphones, the corners on 5.1). With 5.1, GetSpeakerConfig reports a Dolby Digital console
   and movies with an .aix (opening_bs, ins1_bs, ins2_bs: three stereo ADX
   streams) play it: CRI routes a buffer per speaker pair, and we write our
   own decoding (`src/audio/aix.c`) over its chunks, since CRI's fills only
@@ -79,9 +80,15 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
 8. Wishlist (issue 13): ultrawide for movies and real-time cutscenes, both
    letterboxed by the game. Movies: Display > Movies (Zoom) fills a wide
    window, subtitles kept. Cutscenes: the game draws the
-   bars itself, so its cutscene state has to be found first. Gameplay
-   ultrawide is not planned. Rumble is passed through (XInputSetState); the
-   log says when the game first sends it.
+   bars itself, so its cutscene state has to be found first. Gameplay:
+   Aspect ratio 21:9 (`widescreen.c`, HUD sprites squeezed back in
+   `d3d_hle.c`, `hud_squeeze`; Display > HUD Edges anchors top and bottom
+   pieces to the sides); menus come out pillarboxed to 16:9. 16:9 <-> 21:9
+   applies mid-game (from Swap, re-handing the view value); 4:3 <-> wide
+   needs a restart, the picture held to what the game set up. Untested
+   in play since that change. Rumble
+   is passed through (XInputSetState); the log says when the game first
+   sends it.
 
 ## Testing
 
