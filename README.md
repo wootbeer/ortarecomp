@@ -30,7 +30,7 @@ Android build is planned.
 - **Color correction:** brightness, contrast, gamma and saturation, a CRT
   look, optional TV softening, and bloom (Low or High) that leaves the HUD
   alone.
-- **Sound:** 3D positional audio through the Xbox's own HRTF filters (on
+- **Sound:** 3D positional audio through HRTF filters (on
   speakers or headphones; or a simple pan), or 5.1 surround (3D sounds placed around four
   speakers, and the movies' own 5.1 soundtracks), with the game's room
   reverb and a master volume.
@@ -71,7 +71,8 @@ want to save settings, saves and game files locally.
 ## Frame Generation
 
 Options (F1) > Advanced > Frame gen.: **Interp.** blends the game's own
-frames (ours); **LS 2x/3x/4x** uses Lossless Scaling's frame generation
+frames (ours).  
+**LS 2x/3x/4x** uses Lossless Scaling's frame generation
 (LSFG 3.1) to show two to four pictures per game frame, 120 to 240 fps from
 the game's 60, so it wants a screen that fast. It needs your own copy of
 [Lossless Scaling](https://store.steampowered.com/app/993090/Lossless_Scaling/)'s
@@ -82,7 +83,7 @@ motion. Turning Lossless Scaling on or off takes effect at the next start;
 it adds about one game frame of delay. Lossless Scaling guesses the frames
 between from the finished pictures, so fast motion can smear, as in the
 Lossless Scaling app; Interp. redraws the scene itself. Experimental.
-Nothing from Lossless Scaling is in this repository or a release.
+Nothing from Lossless Scaling is in this repository or a release.  
 
 ## Steam Deck / Linux
 
