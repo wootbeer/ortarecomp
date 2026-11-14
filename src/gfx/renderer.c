@@ -5320,7 +5320,10 @@ void pdo_gfx_main_loop(void)
     for (;;) {
         frame_data *f;
         /* Frame generation makes the frames between the game's instead. */
-        bool want = pdo_settings_get()->frame_interp && !lsfg_on && !getenv("PDO_BENCHMARK");
+        /* pd1 draws its frame itself, one flat picture: no geometry to
+         * blend, only frames to repeat (the counter rose, the motion not). */
+        bool want = pdo_settings_get()->frame_interp && !lsfg_on && !getenv("PDO_BENCHMARK")
+                    && pdo_program_active() == PDO_PROGRAM_ORTA;
         bool interp = want && interp_ok;
         Uint64 now = SDL_GetTicksNS();
 
