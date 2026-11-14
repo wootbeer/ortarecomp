@@ -299,26 +299,36 @@ static void peek_guest(void)
     }
 }
 
-/* 21:9, HUD Edges (hud_squeeze): this frame or the one before is a menu's
- * or a cutscene's, not gameplay's. A sprite of the HUD routine covered the
- * whole screen (the pause menu's dimming, the results screen's map), or
- * the cutscene bars were drawn (cutscene_bars); a light flash over the
- * whole screen does not count (hud_squeeze). Edges then leaves the
- * sprites in the middle: a menu's cursor in a corner is not the radar, and
- * a line of subtitles is several draws that Edges would pull apart. The
- * frame before counts too: a menu's cursor is drawn before its backdrop at
- * times. Swap moves this frame's to the one before. */
-static bool hud_menu_frame, hud_menu_before;
-static char hud_menu_why[96];       /* what set hud_menu_frame, for the log */
+/* 21:9, HUD Edges (hud_squeeze): whether the frame is a menu's or a
+ * cutscene's, not gameplay's; Edges then leaves the sprites in the middle:
+ * a menu's cursor in a corner is not the radar, and a line of subtitles is
+ * several draws that Edges would pull apart.
+ *
+ * A cutscene: its bars were drawn this frame or the one before
+ * (cutscene_bars; the frame before as some sprites come before them).
+ * A menu: a backdrop -- a sprite of the HUD routine over the whole screen,
+ * textured or dark (the pause menu's dimming, the results screen's map) --
+ * in each of the last 20 frames. A flash in play is one too, briefly:
+ * episode 1's lightning covers the screen for 11 to 14 frames every few
+ * seconds, at times nearly black, with the HUD on it. So a menu's cursor
+ * is at the side for a third of a second as the menu opens. Swap counts
+ * the frames. */
+static bool hud_bars_frame, hud_bars_before, hud_backdrop_frame;
+static int hud_backdrop_run;        /* frames in a row with a backdrop, to the last Swap */
+static char hud_menu_why[96];       /* the last backdrop or the bars, for the log */
+
+static bool hud_menu(void)
+{
+    return hud_bars_frame || hud_bars_before || hud_backdrop_run >= 20;
+}
 
 /* The log says when Edges stops and starts moving the HUD (at most 40
- * lines a run), and what stopped it: to tell a gameplay effect that covers
- * the screen from a menu. */
+ * lines a run), and what stopped it. At Swap, for the next frame. */
 static void hud_menu_log(void)
 {
     static bool was;
     static int n;
-    bool now = hud_menu_frame || hud_menu_before;
+    bool now = hud_menu();
 
     if (now == was || !pdo_settings_get()->hud_edges || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
         return;
@@ -337,9 +347,11 @@ void sub_002BAFC0(void)
     uint64_t n;
 
     pdo_widescreen_frame();     /* the aspect setting changed between 16:9 and 21:9 */
+    hud_bars_before = hud_bars_frame;
+    hud_bars_frame = false;
+    hud_backdrop_run = hud_backdrop_frame ? hud_backdrop_run + 1 : 0;
+    hud_backdrop_frame = false;
     hud_menu_log();
-    hud_menu_before = hud_menu_frame;
-    hud_menu_frame = false;
     if (swap_interval > 0) {
         while (current_vblank() < last_vblank + (Uint64)swap_interval)
             wait_vblank_for(true);
@@ -2254,7 +2266,7 @@ static bool hud_sprite(uint32_t base, uint32_t stride, uint32_t first, uint32_t 
  * the left third and does not reach the right third, about the right edge
  * for the mirror case, else about the middle. The radar and the gauges go
  * out to the sides, whole; menus and story text (across the middle) stay,
- * and so does all of a menu's or a cutscene's frame (hud_menu_frame). A
+ * and so does all of a menu's or a cutscene's frame (hud_menu). A
  * sprite as wide as the screen (a background) is left as it is. Things
  * placed by the camera (the reticle, lock-on marks) are not sprites of the
  * routine. The factor in *k (1: none) and the point it is about, in
@@ -2272,19 +2284,17 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
     if (b[0] <= 0.5f && b[2] >= (float)rtw - 1.5f) {
         uint32_t c = (st.vshader & 0x040) ? MEM32(base + first * stride + 16) : 0xFFFFFFFFu;
         bool dark = (c & 0xFF) < 0x40 && ((c >> 8) & 0xFF) < 0x40 && ((c >> 16) & 0xFF) < 0x40;
-        /* A backdrop is textured (the results screen's map) or dark (the
-         * pause menu's dimming, a fade); an untextured light one is a
-         * gameplay flash (episode 1's lightning, white or pale blue, for
-         * about 14 frames every few seconds), with the HUD on screen. */
-        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f && !hud_menu_frame && (st.tex[0] || dark)) {
-            hud_menu_frame = true;
+        /* A backdrop (hud_backdrop_run) is textured or dark: an
+         * untextured light one is a flash in play. */
+        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f && !hud_backdrop_frame && (st.tex[0] || dark)) {
+            hud_backdrop_frame = true;
             snprintf(hud_menu_why, sizeof hud_menu_why, "a full-screen sprite, %u vertices, texture %08x, color %08x",
                      count, st.tex[0] ? MEM32(st.tex[0] + 4) : 0u, c);
         }
         return;                 /* as wide as the screen */
     }
     *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
-    if (pdo_settings_get()->hud_edges && !hud_menu_frame && !hud_menu_before &&
+    if (pdo_settings_get()->hud_edges && !hud_menu() &&
         (b[3] <= (float)rth / 3.0f || b[1] >= 2.0f * (float)rth / 3.0f)) {
         w3 = (float)rtw / 3.0f;
         if (b[0] < w3 && b[2] <= 2.0f * w3)
@@ -2347,7 +2357,7 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
     if (q[0][1] <= 0.5f && q[0][3] < (float)rth / 3.0f && q[1][3] >= (float)rth - 0.5f &&
         q[1][1] > 2.0f * (float)rth / 3.0f) {
         bars_log("dropped", 0, q[0][3], q[1][1]);
-        hud_menu_frame = true;          /* a cutscene: subtitles, no HUD for Edges to move */
+        hud_bars_frame = true;          /* a cutscene: subtitles, no HUD for Edges to move */
         SDL_strlcpy(hud_menu_why, "the cutscene bars", sizeof hud_menu_why);
         return true;
     }

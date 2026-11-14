@@ -30,9 +30,10 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
   its view after the display setup, 16:9 <-> 21:9 mid-game from Swap, 4:3
   <-> wide at the next start. In `d3d_hle.c` the HUD routine's sprites are
   squeezed back (`hud_squeeze`; HUD Edges sends corner pieces to the
-  sides, but not in a frame that drew a full-screen sprite or the
-  cutscene bars) and the cutscene bars are dropped (`cutscene_bars`, the
-  log says what became of them). Fit Zoom crops the HUD with the rest.
+  sides, but not with the cutscene bars or 20 frames of a full-screen
+  backdrop, `hud_menu`: lightning flashes last 11-14) and the cutscene
+  bars are dropped (`cutscene_bars`). The log says when Edges stops and
+  why, and what became of the bars. Fit Zoom crops the HUD with the rest.
   Rumble is passed through (XInputSetState).
 - Lossless Scaling frame generation (experimental): `lib/lsfg` (lsfg-vk and
   DXVK's DXBC compiler, from the BattleTanx port), run on SDL's own device
