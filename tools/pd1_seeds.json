@@ -1,1 +1,4 @@
-[]
+[
+  {"start": "0x002723C7", "observed": true, "note": "XAPI input init, called through a table at boot (failed indirect call); follows a ret 4 with no padding, inside 0x00272365 as found. Orta's 0x00307525, the same code"},
+  {"start": "0x001B6E30", "observed": false, "note": "a C++ method in a vtable, folded into 0x001B6D60 as found; not called yet. Orta's 0x0028A5E0, the same code"}
+]
