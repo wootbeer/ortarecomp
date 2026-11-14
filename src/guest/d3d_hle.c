@@ -308,6 +308,24 @@ static void peek_guest(void)
  * frame before counts too: a menu's cursor is drawn before its backdrop at
  * times. Swap moves this frame's to the one before. */
 static bool hud_menu_frame, hud_menu_before;
+static char hud_menu_why[96];       /* what set hud_menu_frame, for the log */
+
+/* The log says when Edges stops and starts moving the HUD (at most 40
+ * lines a run), and what stopped it: to tell a gameplay effect that covers
+ * the screen from a menu. */
+static void hud_menu_log(void)
+{
+    static bool was;
+    static int n;
+    bool now = hud_menu_frame || hud_menu_before;
+
+    if (now == was || !pdo_settings_get()->hud_edges || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
+        return;
+    was = now;
+    if (n++ < 40)
+        SDL_Log("widescreen: HUD Edges %s at frame %llu%s%s", now ? "off" : "on",
+                (unsigned long long)pdo_gfx_frame_count(), now ? ": " : "", now ? hud_menu_why : "");
+}
 
 /* D3DDevice_Swap(Flags): the end of a frame. Like the console, it shows the
  * frame at a vblank, waiting for as many as the presentation interval asks
@@ -318,6 +336,7 @@ void sub_002BAFC0(void)
     uint64_t n;
 
     pdo_widescreen_frame();     /* the aspect setting changed between 16:9 and 21:9 */
+    hud_menu_log();
     hud_menu_before = hud_menu_frame;
     hud_menu_frame = false;
     if (swap_interval > 0) {
@@ -2250,8 +2269,13 @@ static void hud_squeeze(uint32_t base, uint32_t stride, uint32_t first, uint32_t
         return;
     target_size(&rtw, &rth);
     if (b[0] <= 0.5f && b[2] >= (float)rtw - 1.5f) {
-        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f)
+        if (b[1] <= 0.5f && b[3] >= (float)rth - 1.5f && !hud_menu_frame) {
+            uint32_t v = base + first * stride;
             hud_menu_frame = true;
+            snprintf(hud_menu_why, sizeof hud_menu_why, "a full-screen sprite, %u vertices, fvf 0x%x, texture %08x, color %08x",
+                     count, st.vshader, st.tex[0] ? MEM32(st.tex[0] + 4) : 0u,
+                     (st.vshader & 0x040) ? MEM32(v + 16) : 0u);
+        }
         return;                 /* as wide as the screen */
     }
     *k = (16.0f / 9.0f) / pdo_widescreen_ratio();
@@ -2319,6 +2343,7 @@ static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32
         q[1][1] > 2.0f * (float)rth / 3.0f) {
         bars_log("dropped", 0, q[0][3], q[1][1]);
         hud_menu_frame = true;          /* a cutscene: subtitles, no HUD for Edges to move */
+        SDL_strlcpy(hud_menu_why, "the cutscene bars", sizeof hud_menu_why);
         return true;
     }
     bars_log("not two bars", 0, q[0][3], q[1][1]);
