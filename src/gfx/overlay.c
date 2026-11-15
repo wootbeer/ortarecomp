@@ -836,7 +836,7 @@ static const char *help_of(int item)
     case ITEM_LAUNCHER: return "Start at once. Shift: launcher.";
     case ITEM_VSYNC:  return "Fast/Off: more fps. Off tears.";
     case ITEM_SHADOWS: return "Low: lighter on the GPU.";
-    case ITEM_RATE:   return "30: steady, half the GPU work.";
+    case ITEM_RATE:   return "60 is default.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",
