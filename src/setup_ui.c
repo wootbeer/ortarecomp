@@ -183,7 +183,11 @@ bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check)
     bool ok = false;
 
     SDL_zero(u);
+#ifdef __ANDROID__
+    if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, 640, 360, SDL_WINDOW_FULLSCREEN, &u.window, &u.renderer))
+#else
     if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, 640, 360, 0, &u.window, &u.renderer))
+#endif
         SDL_Log("setup: no window (%s); dialogs will be parentless", SDL_GetError());
     draw(&u, -1);
 

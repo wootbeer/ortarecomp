@@ -873,7 +873,11 @@ static const char *help_of(int item)
 #endif
     case ITEM_GPU:    return "The graphics API.";
     case ITEM_START:  return launcher_files_ok ? "Play." : "Choose your game files first.";
+#ifdef __ANDROID__
+    case ITEM_PICK:   return "Your disc image.";
+#else
     case ITEM_PICK:   return "A disc image or a folder.";
+#endif
     case ITEM_EXIT:   return "Quit.";
     case ITEM_CLOSE:  return "Back to the game.";
     case ITEM_QUIT:   return "Unsaved progress is lost.";

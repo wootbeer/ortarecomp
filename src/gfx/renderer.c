@@ -1960,7 +1960,11 @@ static bool init_here(int width, int height)
         SDL_SetNumberProperty(wp, SDL_PROP_WINDOW_CREATE_Y_NUMBER, placed ? st->win_y : (int)SDL_WINDOWPOS_CENTERED);
         SDL_SetBooleanProperty(wp, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
         SDL_SetBooleanProperty(wp, SDL_PROP_WINDOW_CREATE_MAXIMIZED_BOOLEAN, st->win_maximized);
+#ifdef __ANDROID__
+        SDL_SetBooleanProperty(wp, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, true);   /* the whole screen */
+#else
         SDL_SetBooleanProperty(wp, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, st->fullscreen);
+#endif
         window = SDL_CreateWindowWithProperties(wp);
         SDL_DestroyProperties(wp);
         /* In front and with the focus: a run started by the program before

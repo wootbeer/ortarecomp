@@ -357,8 +357,15 @@ static bool run_launcher(pdo_config *cfg, pdo_game_check *check, bool *have_game
     int choice = PDO_LAUNCH_NONE;
 
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+    /* Android: always the whole screen (a window there keeps the system
+     * bars, and gets a size of its own). */
+#ifdef __ANDROID__
+    const SDL_WindowFlags win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_FULLSCREEN;
+#else
+    const SDL_WindowFlags win_flags = SDL_WINDOW_RESIZABLE;
+#endif
     if (!SDL_CreateWindowAndRenderer(APP_NAME, st->win_w >= 320 ? st->win_w : 1280, st->win_h >= 240 ? st->win_h : 960,
-                                     SDL_WINDOW_RESIZABLE, &win, &ren)) {
+                                     win_flags, &win, &ren)) {
         SDL_Log("launcher: no window (%s); starting the game", SDL_GetError());
         return *have_game;
     }
