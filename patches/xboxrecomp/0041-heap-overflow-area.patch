@@ -1,0 +1,267 @@
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -92,6 +92,11 @@
+         return 0;
+     if (end <= mapped)
+         return 1;
++    {   /* the heap's overflow area: the block holding va, whole */
++        uint32_t ob, os;
++        if (xbox_HeapOverflowBlock(va, &ob, &os))
++            return os && end <= (uint64_t)ob + os;
++    }
+     return va >= XBOX_CONTIG_BASE
+         && end <= (uint64_t)XBOX_CONTIG_BASE + XBOX_CONTIG_SIZE;
+ }
+@@ -989,7 +994,9 @@
+      * Until then, say so: silent aliasing surfaces as corrupted data
+      * structures far from here, which is the worst way to find it.
+      */
+-    if (base_hint >= (g_xbox_map_size ? g_xbox_map_size : g_xbox_total_ram)) {
++    uint32_t ovf_base, ovf_size;
++    if (base_hint >= (g_xbox_map_size ? g_xbox_map_size : g_xbox_total_ram)
++            && !xbox_HeapOverflowBlock(base_hint, &ovf_base, &ovf_size)) {
+         static unsigned warned;
+         if (warned++ < 8)
+             fprintf(stderr,
+@@ -1152,6 +1159,23 @@
+             g_eax = 0;
+             return;
+         }
++    }
++
++    /* A block of the heap's overflow area: committed, its own size. */
++    {
++        uint32_t ob, os;
++
++        if (xbox_HeapOverflowBlock(base_va, &ob, &os) && os) {
++            BRIDGE_MEM32(info_va + 0x00) = page_base;
++            BRIDGE_MEM32(info_va + 0x04) = ob;
++            BRIDGE_MEM32(info_va + 0x08) = 0x04;       /* PAGE_READWRITE */
++            BRIDGE_MEM32(info_va + 0x0C) = ob + os - page_base;
++            BRIDGE_MEM32(info_va + 0x10) = 0x1000;     /* MEM_COMMIT */
++            BRIDGE_MEM32(info_va + 0x14) = 0x04;
++            BRIDGE_MEM32(info_va + 0x18) = 0x20000;    /* MEM_PRIVATE */
++            g_eax = 0;
++            return;
++        }
+     }
+ 
+     BRIDGE_MEM32(info_va + 0x00) = page_base;          /* BaseAddress */
+--- a/src/kernel/xbox_memory_layout.c
++++ b/src/kernel/xbox_memory_layout.c
+@@ -1725,6 +1725,8 @@
+ volatile uint32_t g_icall_trace_idx = 0;
+ volatile uint64_t g_icall_count = 0;
+ 
++static void heap_overflow_init(void);  /* the heap's overflow area, below */
++
+ BOOL xbox_MemoryLayoutInit(const void *xbe_data, size_t xbe_size)
+ {
+     g_force_return = getenv("RECOMP_FORCE_RETURN") != NULL;
+@@ -2646,6 +2648,7 @@
+      * mirrors, while a fixed host address is still likely to be free. */
+     guest_vmem_init(g_memory_offset, g_memory_size,
+                     (uint64_t)g_memory_size * (1u + XBOX_NUM_MIRRORS));
++    heap_overflow_init();
+ 
+     /*
+      * Tiled / write-combined aperture at 0xF0000000.
+@@ -3323,12 +3326,158 @@
+ 
+ static uint32_t heap_alloc_locked(uint32_t size, uint32_t alignment);
+ 
++/* The heap's overflow area.
++ *
++ * On the console a large virtual allocation (NtAllocateVirtualMemory, pool)
++ * takes free pages wherever they are: page tables make them contiguous.
++ * Here every guest address is its own physical address, so the same request
++ * needs one free run of the whole size, and a heap fragmented by a long
++ * session can refuse what the console would grant. Panzer Dragoon Orta,
++ * played from the first episode on, asks for 5.8 MB at the seventh's boss
++ * with 20 MB free in pieces of at most 5.7 MB, gets nothing, and reports a
++ * dirty disc.
++ *
++ * So a request the heap cannot place comes from here instead: 128 MB of
++ * guest address space above the RAM mirrors, fresh pages (no alias of low
++ * memory), mapped at layout time while the host range is still free. Only a
++ * request that would otherwise fail ever lands here, so nothing that works
++ * changes. Blocks are pages, first fit, merged when freed; the heap's own
++ * lock covers them. Off while RECOMP_EXT_VMA's tracker owns that range. */
++#define HEAP_OVF_SIZE   (128u * 1024u * 1024u)
++#define HEAP_OVF_BLOCKS 4096
++static uint32_t g_ovf_lo, g_ovf_hi;
++static struct { uint32_t addr, size; int free; } g_ovf[HEAP_OVF_BLOCKS];
++static int g_ovf_count;
++
++static void heap_overflow_init(void)
++{
++    uint64_t lo = (uint64_t)g_memory_size * (1u + XBOX_NUM_MIRRORS);
++    uintptr_t native;
++    void *p;
++
++    if (guest_vmem_active() || lo + HEAP_OVF_SIZE > XBOX_CONTIG_BASE)
++        return;
++    native = (uintptr_t)lo + (uintptr_t)g_memory_offset;
++    span_release(native, HEAP_OVF_SIZE);
++    p = VirtualAlloc((LPVOID)native, HEAP_OVF_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
++    if (p != (void *)native) {
++        if (p)
++            VirtualFree(p, 0, MEM_RELEASE);
++        fprintf(stderr, "  Heap overflow area: host range at %p taken (error %lu);"
++                        " a fragmented heap can refuse large requests\n",
++                (void *)native, GetLastError());
++        return;
++    }
++    g_ovf_lo = (uint32_t)lo;
++    g_ovf_hi = (uint32_t)lo + HEAP_OVF_SIZE;
++    g_ovf[0].addr = g_ovf_lo;
++    g_ovf[0].size = HEAP_OVF_SIZE;
++    g_ovf[0].free = 1;
++    g_ovf_count = 1;
++    fprintf(stderr, "  Heap overflow area: %u MB at Xbox VA 0x%08X\n",
++            HEAP_OVF_SIZE / (1024 * 1024), g_ovf_lo);
++}
++
++/* Caller holds g_heap_lock. */
++static uint32_t heap_overflow_alloc(uint32_t size, uint32_t alignment)
++{
++    static int told;
++
++    if (!g_ovf_count || !size || size > HEAP_OVF_SIZE)
++        return 0;
++    size = (size + 4095u) & ~4095u;
++    if (alignment < 4096)
++        alignment = 4096;
++    for (int i = 0; i < g_ovf_count; i++) {
++        uint32_t a, end, front, back;
++        if (!g_ovf[i].free || g_ovf[i].size < size)
++            continue;
++        a = (g_ovf[i].addr + alignment - 1) & ~(alignment - 1);
++        end = g_ovf[i].addr + g_ovf[i].size;
++        if ((uint64_t)a + size > end)
++            continue;
++        front = a - g_ovf[i].addr;
++        back = end - (a + size);
++        if (g_ovf_count + (front != 0) + (back != 0) > HEAP_OVF_BLOCKS)
++            return 0;
++        if (front) {
++            memmove(&g_ovf[i + 1], &g_ovf[i], (size_t)(g_ovf_count - i) * sizeof g_ovf[0]);
++            g_ovf_count++;
++            g_ovf[i].size = front;          /* stays free */
++            i++;
++        }
++        g_ovf[i].addr = a;
++        g_ovf[i].size = size;
++        g_ovf[i].free = 0;
++        if (back) {
++            memmove(&g_ovf[i + 2], &g_ovf[i + 1], (size_t)(g_ovf_count - i - 1) * sizeof g_ovf[0]);
++            g_ovf_count++;
++            g_ovf[i + 1].addr = a + size;
++            g_ovf[i + 1].size = back;
++            g_ovf[i + 1].free = 1;
++        }
++        memset((void *)((uintptr_t)a + g_memory_offset), 0, size);
++        if (told++ < 16) {
++            fprintf(stderr, "  [HEAP] %u bytes from the overflow area at 0x%08X"
++                            " (no free block that size in the heap)\n", size, a);
++            fflush(stderr);
++        }
++        return a;
++    }
++    return 0;
++}
++
++/* Caller holds g_heap_lock. Returns 1 when va was the overflow area's. */
++static int heap_overflow_free(uint32_t va)
++{
++    if (!g_ovf_count || va < g_ovf_lo || va >= g_ovf_hi)
++        return 0;
++    for (int i = 0; i < g_ovf_count; i++) {
++        if (g_ovf[i].addr != va || g_ovf[i].free)
++            continue;
++        g_ovf[i].free = 1;
++        if (i + 1 < g_ovf_count && g_ovf[i + 1].free) {
++            g_ovf[i].size += g_ovf[i + 1].size;
++            memmove(&g_ovf[i + 1], &g_ovf[i + 2], (size_t)(g_ovf_count - i - 2) * sizeof g_ovf[0]);
++            g_ovf_count--;
++        }
++        if (i > 0 && g_ovf[i - 1].free) {
++            g_ovf[i - 1].size += g_ovf[i].size;
++            memmove(&g_ovf[i], &g_ovf[i + 1], (size_t)(g_ovf_count - i - 1) * sizeof g_ovf[0]);
++            g_ovf_count--;
++        }
++        break;
++    }
++    return 1;
++}
++
++int xbox_HeapOverflowBlock(uint32_t va, uint32_t *base, uint32_t *size)
++{
++    int r = 0;
++
++    *base = *size = 0;
++    if (!g_ovf_count || va < g_ovf_lo || va >= g_ovf_hi)
++        return 0;
++    AcquireSRWLockShared(&g_heap_lock);
++    for (int i = 0; i < g_ovf_count; i++)
++        if (!g_ovf[i].free && va >= g_ovf[i].addr && va - g_ovf[i].addr < g_ovf[i].size) {
++            *base = g_ovf[i].addr;
++            *size = g_ovf[i].size;
++            break;
++        }
++    r = 1;
++    ReleaseSRWLockShared(&g_heap_lock);
++    return r;
++}
++
+ uint32_t xbox_HeapAlloc(uint32_t size, uint32_t alignment)
+ {
+     uint32_t r;
+ 
+     AcquireSRWLockExclusive(&g_heap_lock);
+     r = heap_alloc_locked(size, alignment);
++    if (!r)
++        r = heap_overflow_alloc(size, alignment);
+     ReleaseSRWLockExclusive(&g_heap_lock);
+     return r;
+ }
+@@ -3470,10 +3619,12 @@
+ uint32_t xbox_HeapBlockSize(uint32_t xbox_va)
+ {
+     int i;
+-    uint32_t r = 0;
++    uint32_t r = 0, ob, os;
+ 
+     if (!xbox_va)
+         return 0;
++    if (xbox_HeapOverflowBlock(xbox_va, &ob, &os))
++        return os ? os - (xbox_va - ob) : 0;
+     AcquireSRWLockShared(&g_heap_lock);
+     for (i = 0; i < g_heap_block_count; i++) {
+         if (g_heap_blocks[i].free)
+@@ -3496,6 +3647,10 @@
+         return;
+     }
+     AcquireSRWLockExclusive(&g_heap_lock);
++    if (heap_overflow_free(xbox_va)) {
++        ReleaseSRWLockExclusive(&g_heap_lock);
++        return;
++    }
+     frees++;
+     if (frees <= 8) {
+         fprintf(stderr, "  [HEAP] free #%d va=0x%08X blocks=%d\n",
+--- a/src/kernel/xbox_memory_layout.h
++++ b/src/kernel/xbox_memory_layout.h
+@@ -466,6 +466,12 @@
+ uint32_t xbox_HeapBlockSize(uint32_t xbox_va);
+ 
+ /**
++ * The heap's overflow area (see xbox_HeapAlloc): whether va is in it, and
++ * if so the live block holding it (*base, *size; 0 when va is in no block).
++ */
++int xbox_HeapOverflowBlock(uint32_t va, uint32_t *base, uint32_t *size);
++
++/**
+  * True when RECOMP_HEAP_RECLAIM is set: freed heap blocks are split rather than
+  * handed over whole, and NtFreeVirtualMemory returns heap memory to the heap.
+  * Off by default; it changes which address later allocations get.

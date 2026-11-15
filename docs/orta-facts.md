@@ -87,6 +87,17 @@ virtual addresses in the USA `default.xbe`.
   game's allocator: RtlAllocateHeap 0x00230435, RtlFreeHeap 0x00230BEC
   (both stdcall, 3 arguments), HeapFree wrapper 0x00231597.
 
+- Played from episode 1 to 7 in one sitting, the kernel heap (48.5 MB,
+  every guest address its own physical one) ends up fragmented: at the
+  episode 7 boss (st07_boss.mtb just opened) the game asks for 5,949,536
+  bytes with 20 MB free but no free block over 5.7 MB, retries 11 times,
+  probes MmAllocateContiguousMemory from 32 MB down in 4 KB steps, then
+  shows the "dirty or damaged disc" screen. About 1,090 threads have been
+  started by then; each takes a stack slice from the heap (returned) and a
+  KTHREAD copy and TIB (kept). On the console the pages need not be
+  contiguous. Patch 0041 gives the heap an overflow area above the RAM
+  mirrors (guest 0x74000000, 128 MB) for requests it cannot place.
+
 - Orta's threads assume one CPU. Run truly in parallel, the sound request
   processor (0x000692C0) walked a list (0x0021E570, 0x00220520) another
   thread was reallocating and called through a stale entry (a crash after
