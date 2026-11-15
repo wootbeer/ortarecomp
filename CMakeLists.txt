@@ -202,12 +202,35 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         src/audio/reverb.c
         src/gfx/renderer.c
         src/gfx/overlay.c
+        src/gfx/vsh_spec.c
         src/gfx/xtex.c)
     target_include_directories(pdo_host PUBLIC "${PDO_GEN_DIR}" src)
     target_link_libraries(pdo_host PUBLIC xbox_kernel SDL3::SDL3-static)
     target_link_libraries(pdo_recomp PUBLIC pdo_host)
     if(WIN32)
         target_link_libraries(pdo_host PUBLIC dbghelp)
+    endif()
+    # glslang (external/glslang, pinned): the game's vertex programs made into
+    # shaders of their own at run time (src/gfx/vsh_spec.c). The compiler
+    # only: no optimizer, HLSL, tools or tests. Without it they are
+    # interpreted on the GPU, as before.
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/external/glslang/CMakeLists.txt")
+        set(ENABLE_OPT OFF CACHE BOOL "" FORCE)
+        set(ENABLE_HLSL OFF CACHE BOOL "" FORCE)
+        set(ENABLE_GLSLANG_BINARIES OFF CACHE BOOL "" FORCE)
+        set(ENABLE_GLSLANG_JS OFF CACHE BOOL "" FORCE)
+        set(GLSLANG_TESTS OFF CACHE BOOL "" FORCE)
+        set(GLSLANG_ENABLE_INSTALL OFF CACHE BOOL "" FORCE)
+        set(BUILD_EXTERNAL OFF CACHE BOOL "" FORCE)
+        set(ENABLE_PCH OFF CACHE BOOL "" FORCE)
+        set(BUILD_SHARED_LIBS OFF)
+        add_subdirectory(external/glslang ${CMAKE_BINARY_DIR}/glslang EXCLUDE_FROM_ALL)
+        target_link_libraries(pdo_host PUBLIC glslang::glslang glslang::glslang-default-resource-limits)
+        target_compile_definitions(pdo_host PRIVATE PDO_HAVE_GLSLANG=1)
+        message(STATUS "Orta Recomp: vertex programs made into their own shaders (glslang)")
+    else()
+        message(STATUS "Orta Recomp: no external/glslang (git submodule update --init); "
+                       "vertex programs are interpreted on the GPU")
     endif()
     # The vertex program interpreter rounds every operation, as the NV2A
     # does: no fused multiply-add (fp:precise is MSVC's default already).

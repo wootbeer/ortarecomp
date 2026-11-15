@@ -8,6 +8,7 @@
 #include "gfx/overlay.h"
 
 #include "gfx/shaders_spv.h"
+#include "gfx/vsh_spec.h"
 #include "gfx/xtex.h"
 #ifdef PDO_HAVE_LSFG
 #include "gfx/lsfg_present.h"
@@ -30,7 +31,7 @@
 #endif
 
 #define WINDOW_TITLE   "Orta Recomp"
-#define MAX_PIPELINES  1024
+#define MAX_PIPELINES  4096
 #define MAX_SAMPLERS   64
 #define MAX_TEXTURES   4096
 
@@ -705,6 +706,128 @@ static SDL_GPUCompareOp compare_op(uint16_t gl)
 
 static struct { pdo_pipeline_state key; SDL_GPUGraphicsPipeline *p; } pipelines[MAX_PIPELINES];
 static int npipelines;
+/* Looked up per draw: an index by the key's hash (place + 1; 0 empty). */
+#define PIPE_SLOTS (MAX_PIPELINES * 2)
+static uint16_t pipe_slot[PIPE_SLOTS];
+
+static uint32_t pipe_hash(const pdo_pipeline_state *ps)
+{
+    const uint8_t *b = (const uint8_t *)ps;
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < sizeof *ps; i++)
+        h = (h ^ b[i]) * 16777619u;
+    return h;
+}
+
+static SDL_GPUGraphicsPipeline *find_pipeline(const pdo_pipeline_state *ps)
+{
+    for (uint32_t h = pipe_hash(ps) % PIPE_SLOTS;; h = (h + 1) % PIPE_SLOTS) {
+        int i = pipe_slot[h] - 1;
+        if (i < 0)
+            return NULL;
+        if (!memcmp(&pipelines[i].key, ps, sizeof *ps))
+            return pipelines[i].p;
+    }
+}
+
+static void index_pipeline(int i)
+{
+    uint32_t h = pipe_hash(&pipelines[i].key) % PIPE_SLOTS;
+    while (pipe_slot[h])
+        h = (h + 1) % PIPE_SLOTS;
+    pipe_slot[h] = (uint16_t)(i + 1);
+}
+
+/* Vertex programs as their own shaders (vsh_spec.h): the shader per key,
+ * and per program (its place in progs) its key once made. */
+typedef struct { uint64_t key; SDL_GPUShader *s; } spec_shader;
+static spec_shader *spec_shaders;
+static uint32_t nspec_shaders, cap_spec_shaders;
+typedef struct { int32_t base; uint32_t count; uint64_t key; int state; } spec_prog;
+#define SPEC_PROG_SLOTS 4096u
+static spec_prog spec_progs[SPEC_PROG_SLOTS];   /* by base; state 0 empty, 1 asked, 2 ready, -1 none */
+static uint32_t spec_new_pipelines;             /* made this frame: one a frame, not a hitch */
+static uint32_t spec_draws, interp_draws;       /* GPU program draws each way, for the log */
+
+static SDL_GPUShader *make_shader_sb(const uint8_t *code, size_t len, SDL_GPUShaderStage stage,
+                                     Uint32 samplers_n, Uint32 uniforms_n, Uint32 storage_n);
+
+/* The shader of a key: made from its SPIR-V when made or on disk (pipelines
+ * made up front ask before the program is met), else NULL. */
+static SDL_GPUShader *spec_shader_of(uint64_t key)
+{
+    const uint32_t *spv;
+    size_t bytes;
+    SDL_GPUShader *sh;
+
+    for (uint32_t i = 0; i < nspec_shaders; i++)
+        if (spec_shaders[i].key == key)
+            return spec_shaders[i].s;
+    if (!pdo_vsh_spec_find(key, &spv, &bytes))
+        return NULL;
+    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 5);
+    if (!sh) {
+        SDL_Log("gfx: vertex program %016llx: no shader (%s)", (unsigned long long)key, SDL_GetError());
+        return NULL;
+    }
+    if (nspec_shaders == cap_spec_shaders) {
+        uint32_t cap = cap_spec_shaders ? cap_spec_shaders * 2 : 64;
+        spec_shader *n = SDL_realloc(spec_shaders, cap * sizeof *n);
+        if (!n) {
+            SDL_ReleaseGPUShader(dev, sh);
+            return NULL;
+        }
+        spec_shaders = n;
+        cap_spec_shaders = cap;
+    }
+    spec_shaders[nspec_shaders].key = key;
+    spec_shaders[nspec_shaders].s = sh;
+    nspec_shaders++;
+    return sh;
+}
+
+/* The key of the program at base (count instructions, its code in progs)
+ * when its own shader is ready, else 0 (asked for the first time). */
+static uint64_t spec_key_of(const uint32_t *progs, uint32_t nprogs, int32_t base, uint32_t count)
+{
+    spec_prog *e = NULL;
+    const uint32_t *spv;
+    size_t bytes;
+    int st;
+
+    if (base < 0 || !count || (uint64_t)base * 4 + (uint64_t)count * 8 > nprogs)
+        return 0;
+    for (uint32_t h = (uint32_t)base * 2654435761u % SPEC_PROG_SLOTS, n = 0; n < SPEC_PROG_SLOTS;
+         h = (h + 1) % SPEC_PROG_SLOTS, n++) {
+        if (!spec_progs[h].state || (spec_progs[h].base == base && spec_progs[h].count == count)) {
+            e = &spec_progs[h];
+            break;
+        }
+    }
+    if (!e || e->state < 0)
+        return 0;
+    if (e->state == 2)
+        return e->key;
+    if (!e->state) {
+        e->base = base;
+        e->count = count;
+        e->key = pdo_vsh_spec_key(progs + (size_t)base * 4, count);
+        e->state = 1;
+    }
+    st = pdo_vsh_spec_get(e->key, progs + (size_t)base * 4, count, &spv, &bytes);
+    if (st < 0) {
+        e->state = -1;
+        return 0;
+    }
+    if (st == 0)
+        return 0;
+    if (!spec_shader_of(e->key)) {
+        e->state = -1;
+        return 0;
+    }
+    e->state = 2;
+    return e->key;
+}
 
 /* Making a pipeline mid-frame can take the driver tens of milliseconds, a
  * visible hitch the first time an effect appears. Every state combination
@@ -813,6 +936,13 @@ uint64_t pdo_gfx_take_swap_wait_ns(void)
     return t;
 }
 
+void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted)
+{
+    *own = spec_draws;
+    *interpreted = interp_draws;
+    spec_draws = interp_draws = 0;
+}
+
 uint64_t pdo_gfx_take_pipeline_ns(uint32_t *made)
 {
     Uint64 t = pipeline_ns;
@@ -829,15 +959,21 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
     SDL_GPUVertexAttribute attrs[9];
     SDL_GPUColorTargetDescription ct;
     SDL_GPUGraphicsPipeline *p;
+    SDL_GPUShader *spec_vs = NULL;
     uint32_t cw = ps->color_write;
     Uint64 t0;
 
-    for (int i = 0; i < npipelines; i++)
-        if (!memcmp(&pipelines[i].key, ps, sizeof *ps))
-            return pipelines[i].p;
+    p = find_pipeline(ps);
+    if (p)
+        return p;
     if (npipelines == MAX_PIPELINES)
         return pipelines[0].p;
     t0 = SDL_GetTicksNS();
+    if (ps->gpu_vsh == 1 && (ps->vsh_spec[0] || ps->vsh_spec[1])) {
+        spec_vs = spec_shader_of((uint64_t)ps->vsh_spec[1] << 32 | ps->vsh_spec[0]);
+        if (!spec_vs)
+            return NULL;
+    }
 
     /* Slot 1: the previous game frame's vertices, for interpolation. */
     SDL_zero(vb);
@@ -885,7 +1021,7 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
         ((cw & 0xFF000000u) ? SDL_GPU_COLORCOMPONENT_A : 0));
 
     SDL_zero(pi);
-    pi.vertex_shader = ps->gpu_vsh == 1 ? vsh_vs : ps->gpu_vsh == 2 ? fvf_vs : vs;
+    pi.vertex_shader = ps->gpu_vsh == 1 ? (spec_vs ? spec_vs : vsh_vs) : ps->gpu_vsh == 2 ? fvf_vs : vs;
     pi.fragment_shader = ps->combiners && fs_ps ? fs_ps : fs;
     if (!ps->gpu_vsh) {         /* vsh.vert reads its streams from storage buffers */
         pi.vertex_input_state.vertex_buffer_descriptions = vb;
@@ -944,6 +1080,7 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
     }
     pipelines[npipelines].key = *ps;
     pipelines[npipelines].p = p;
+    index_pipeline(npipelines);
     npipelines++;
     if (!warming) {
         pipeline_ns += SDL_GetTicksNS() - t0;
@@ -1669,6 +1806,7 @@ static void apply_quality(void)
     for (int i = 0; i < npipelines; i++)
         SDL_ReleaseGPUGraphicsPipeline(dev, pipelines[i].p);
     npipelines = 0;
+    memset(pipe_slot, 0, sizeof pipe_slot);
     SDL_ReleaseGPUTexture(dev, frame_color);
     SDL_ReleaseGPUTexture(dev, frame_depth);
     SDL_ReleaseGPUTexture(dev, frame_ms);
@@ -2719,6 +2857,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
 
     upload_frame(cmd);
     cur_target = NULL;
+    spec_new_pipelines = 0;
     if (bloom)
         for (uint32_t i = F->ncmds; i-- > 0;)
             if (F->cmds[i].kind == CMD_DRAW && is_3d(F, &F->cmds[i])) {
@@ -2782,7 +2921,32 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             ps.single_sample = cur_target && cur_target->depth_only;
             ps.gpu_vsh = gpu;
             ps.combiners = (c->draw.ff.ps_final[2] & 0xFF) != 0;
+            ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+            /* The program's own shader when made, unless the draw is
+             * paired with another program (only the interpreter runs two).
+             * Its pipelines one a frame: until then, the interpreter's. */
+            if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                uint64_t key = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
+                if (key) {
+                    ps.vsh_spec[0] = (uint32_t)key;
+                    ps.vsh_spec[1] = (uint32_t)(key >> 32);
+                    if (!find_pipeline(&ps)) {
+                        if (spec_new_pipelines >= 1)
+                            ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                        else
+                            spec_new_pipelines++;
+                    }
+                }
+                if (ps.vsh_spec[0] || ps.vsh_spec[1])
+                    spec_draws++;
+                else
+                    interp_draws++;
+            }
             p = get_pipeline(&ps);
+            if (!p && (ps.vsh_spec[0] || ps.vsh_spec[1])) {
+                ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                p = get_pipeline(&ps);
+            }
         }
         if (!p)
             continue;

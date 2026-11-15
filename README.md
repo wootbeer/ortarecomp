@@ -147,6 +147,8 @@ Else:
   frame generation
 - [SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers) (MIT), for
   building that
+- [glslang](https://github.com/KhronosGroup/glslang) (BSD and others, see
+  its license): the game's vertex programs made into GPU shaders of their own
 
 ## License
 
