@@ -119,6 +119,31 @@ static void append_quoted(wchar_t *cmd, size_t cap, const char *arg)
 }
 #endif
 
+#ifdef _WIN32
+typedef struct window_find { DWORD pid; HWND hwnd; } window_find;
+
+static BOOL CALLBACK window_of_cb(HWND hwnd, LPARAM lp)
+{
+    window_find *wf = (window_find *)lp;
+    DWORD pid = 0;
+
+    GetWindowThreadProcessId(hwnd, &pid);
+    if (pid == wf->pid && IsWindowVisible(hwnd) && !GetWindow(hwnd, GW_OWNER)) {
+        wf->hwnd = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+/* A visible top-level window of process `pid`, if it has one yet. */
+static HWND window_of(DWORD pid)
+{
+    window_find wf = { pid, NULL };
+    EnumWindows(window_of_cb, (LPARAM)&wf);
+    return wf.hwnd;
+}
+#endif
+
 /* Start OrtaRecomp again on `program`: this run's arguments without the ones
  * that chose the program or the launcher, then --boot --program NAME
  * --launch-data FILE. Returns only if it could not. */
@@ -165,8 +190,28 @@ static void restart_on(pdo_program program, const char *data_file)
         }
         /* Windows lets a process take the foreground only if the one in
          * front allows it: the new window otherwise opened without the
-         * focus, and so without the gamepad, until clicked. */
+         * focus, and so without the gamepad, until clicked. Allowing it
+         * and leaving at once was not enough: this window closed first,
+         * Windows put the next one in line in front (a browser, say), and
+         * the new window, seconds later, opened behind it. So this one
+         * stays until the new process shows its window, puts that in front
+         * while it still has the foreground itself, and only then goes;
+         * at most 20 s, or as soon as the new process ends. */
         AllowSetForegroundWindow(pi.dwProcessId);
+        {
+            HWND found = NULL;
+            for (int i = 0; i < 200 && !found; i++) {
+                found = window_of(pi.dwProcessId);
+                if (!found && WaitForSingleObject(pi.hProcess, 100) == WAIT_OBJECT_0)
+                    break;
+            }
+            if (found) {
+                SetForegroundWindow(found);
+                SDL_Log("launch: the new window is in front");
+            } else {
+                SDL_Log("launch: no window from the new process to put in front");
+            }
+        }
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         ExitProcess(0);
