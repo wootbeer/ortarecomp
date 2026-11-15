@@ -809,7 +809,7 @@ static uint64_t spec_key_of(const uint32_t *progs, uint32_t nprogs, int32_t base
     size_t bytes;
     int st;
 
-    if (base < 0 || !count || (uint64_t)base * 4 + (uint64_t)count * 8 > nprogs)
+    if (base < 0 || !count)
         return 0;
     for (uint32_t h = (uint32_t)base * 2654435761u % SPEC_PROG_SLOTS, n = 0; n < SPEC_PROG_SLOTS;
          h = (h + 1) % SPEC_PROG_SLOTS, n++) {
@@ -822,6 +822,11 @@ static uint64_t spec_key_of(const uint32_t *progs, uint32_t nprogs, int32_t base
         return 0;
     if (e->state == 2)
         return e->key;
+    /* The code itself, only to make the key or ask for the shader: a frame
+     * recorded before the program arrived has an older copy of progs (its
+     * own), without it. A program at a place never changes. */
+    if ((uint64_t)base * 4 + (uint64_t)count * 8 > nprogs)
+        return 0;
     if (!e->state) {
         e->base = base;
         e->count = count;
