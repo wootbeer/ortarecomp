@@ -26,7 +26,7 @@
 
 #include "guest/program.h"
 
-enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS, ITEM_VOLUME,
+enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
        ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
@@ -46,10 +46,10 @@ static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT };
 static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
-static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS,
+static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS,
                                     ITEM_FPS, ITEM_BACK };
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
+                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
@@ -244,7 +244,7 @@ static bool item_inactive(int item)
         return false;
     switch (item) {
     case ITEM_SCALE: case ITEM_ANISO: case ITEM_ASPECT: case ITEM_HUD: case ITEM_MOVIES:
-    case ITEM_SHADOWS: case ITEM_VSH: case ITEM_FVF: case ITEM_INTERP: case ITEM_BOX:
+    case ITEM_SHADOWS: case ITEM_VSH: case ITEM_FVF: case ITEM_INTERP: case ITEM_BOX: case ITEM_RATE:
     case ITEM_LOGOS:
         return true;
     default:
@@ -294,6 +294,7 @@ static void change(int dir)
     case ITEM_LAUNCHER: s->skip_launcher = !s->skip_launcher; break;
     case ITEM_VSYNC:  s->vsync = (s->vsync + (dir < 0 ? 2 : 1)) % 3; break;
     case ITEM_SHADOWS: s->shadow_original = !s->shadow_original; break;
+    case ITEM_RATE:   s->fps30 = !s->fps30; break;
     case ITEM_RUMBLE: s->rumble = SDL_clamp((s->rumble + 10 * dir) / 10 * 10, 0, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
@@ -693,6 +694,7 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_LAUNCHER: snprintf(v, n, "%s", s->skip_launcher ? "On" : "Off"); break;
     case ITEM_VSYNC:  snprintf(v, n, "%s", s->vsync == PDO_VSYNC_OFF ? "Off" : s->vsync == PDO_VSYNC_FAST ? "Fast" : "On"); break;
     case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Low" : "High"); break;
+    case ITEM_RATE:   snprintf(v, n, "%s", s->fps30 ? "30" : "60"); break;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);
@@ -770,6 +772,7 @@ static const char *label_of(int item)
     case ITEM_LAUNCHER: return "Skip launcher";
     case ITEM_VSYNC:  return "VSync";
     case ITEM_SHADOWS: return "Shadows";
+    case ITEM_RATE:   return "Frame rate";
     case ITEM_RUMBLE: return "Vibration";
     case ITEM_3D:     return "Output";
     case ITEM_HRTF:   return "3D sound";
@@ -833,6 +836,7 @@ static const char *help_of(int item)
     case ITEM_LAUNCHER: return "Start at once. Shift: launcher.";
     case ITEM_VSYNC:  return "Fast/Off: more fps. Off tears.";
     case ITEM_SHADOWS: return "Low: lighter on the GPU.";
+    case ITEM_RATE:   return "30: steady, half the GPU work.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",

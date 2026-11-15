@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Added
+
+- Options > Display > Frame rate: 60 (the default) or 30. At 30 every
+  other frame is shown, a steady 30 fps: smoother on a weak graphics chip
+  than a rate that keeps dropping from 60, and half its work. The game
+  still runs at full speed. Orta only; the original Panzer Dragoon keeps
+  its own 20 fps (issue 28).
+
 ### Fixed
 
 - The original Panzer Dragoon: the far sea was a flat pale band, distant

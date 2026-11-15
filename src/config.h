@@ -36,6 +36,7 @@ typedef struct pdo_settings {
     bool fullscreen;        /* borderless, the whole monitor (Alt+Enter) */
     bool fxaa;              /* edge smoothing on the finished frame (shaders/screen.frag) */
     int  vsync;             /* PDO_VSYNC_*: how frames reach the screen (renderer.c) */
+    bool fps30;             /* Orta's frames shown every other one, a steady 30 fps (renderer.c) */
     bool shadow_original;   /* Shadows: Low, shadow maps at the game's size, not scaled (renderer.c) */
     int  anisotropy;        /* 1 off, 2, 4, 8, 16: anisotropic filtering of smooth-filtered textures */
     int  bloom;             /* 0 off, 1 low, 2 high: on the scene, before the HUD (renderer.c) */

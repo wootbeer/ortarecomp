@@ -172,6 +172,8 @@ bool pdo_config_load(pdo_config *cfg)
         else if (strcmp(line, "vsync") == 0)
             settings.vsync = strcmp(eq + 1, "off") == 0 ? PDO_VSYNC_OFF
                            : strcmp(eq + 1, "fast") == 0 ? PDO_VSYNC_FAST : PDO_VSYNC_ON;
+        else if (strcmp(line, "frame_rate") == 0)
+            settings.fps30 = SDL_atoi(eq + 1) == 30;
         else if (strcmp(line, "window") == 0)        /* x,y,w,h */
             SDL_sscanf(eq + 1, "%d,%d,%d,%d", &settings.win_x, &settings.win_y, &settings.win_w, &settings.win_h);
         else if (strcmp(line, "window_maximized") == 0)
@@ -243,6 +245,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "fullscreen=%d\n"
                  "fxaa=%d\n"
                  "vsync=%s\n"
+                 "frame_rate=%d\n"
                  "shadows=%s\n"
                  "window=%d,%d,%d,%d\n"
                  "window_maximized=%d\n"
@@ -273,6 +276,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.lsfg_multiplier, settings.lsfg_performance,
                  settings.lsfg_dll, settings.fullscreen, settings.fxaa,
                  settings.vsync == PDO_VSYNC_OFF ? "off" : settings.vsync == PDO_VSYNC_FAST ? "fast" : "on",
+                 settings.fps30 ? 30 : 60,
                  settings.shadow_original ? "low" : "high",
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
                  settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble, settings.depth_reversed,
