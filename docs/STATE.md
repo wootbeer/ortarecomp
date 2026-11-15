@@ -1,6 +1,6 @@
 # Current state
 
-v0.1.9 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
+v0.1.10 (beta, Windows and Linux/Steam Deck; Android in progress, `android/`): Panzer Dragoon Orta plays
 through all ten episodes and the ending, with music, movies, saves, bosses
 and Pandora's Box, the original Panzer Dragoon included. Changes are
 listed in `CHANGELOG.md`.
@@ -23,7 +23,11 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
   (`crash_report.c`, `wait_trace.c`).
 - `src/gfx/renderer.c`: the game records frames on its thread; the main
   thread owns the window and draws them on the SDL GPU API (Vulkan), with
-  vertex programs and fixed-function vertices on the GPU. Frame
+  vertex programs and fixed-function vertices on the GPU. Each vertex
+  program becomes its own shader (`vsh_spec.c`: straight-line GLSL into
+  `vsh.vert`, glslang at run time, cached in `shaders/`); its pipelines are
+  made in the background (`bg_ask`), the interpreter drawing until then
+  and for draws paired across programs. `PDO_VSH_SPEC=0` turns it off. Frame
   interpolation pairs the draws of the last two frames (`match_frames`) and
   blends them; see the archive for what is and is not blended, and why.
   Movies (Display > Movies, Original by default): `d3d_hle.c` marks a
@@ -73,14 +77,19 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    two slow seconds. On weaker PCs, next: reuse group distances in the
    wrong-pair check, lazy bounds.
 2. A full play on the release build with no `[ICALL] Failed` in the log.
-3. First-time pipeline stalls (kept in `pipelines.bin` after).
+3. First-time pipeline stalls (kept in `pipelines.bin` after); programs'
+   own are made in the background. Next: a Vulkan pipeline cache
+   (`patches/SDL/0002`), for Android and low-end chips first.
+   Issue 10 (dirty disc at the episode 7 boss after a long session): heap
+   overflow area (patch 0041), to confirm in a full play on Windows.
 4. Steam Deck movies at 20 fps (issue 11). On Windows the same was MSVC
    leaving the huge generated functions (the movie decoder) unoptimised,
    fixed with /d2OptimizeHugeFunctions (v0.1.6). The Deck builds with GCC,
    which has no such limit: if it persists, F11 during a movie shows which
    thread is busy.
-5. Android (Vulkan/Turnip): measure the recompiled code and the guest CPU
-   lock on ARM; Linux's WaitForMultipleObjects polls with sleeps.
+5. Android (`android/`, `android/PLAN.md`): plays on a Retroid Pocket 6
+   at 60 fps once its shaders are made. Next: pipeline cache, touch
+   controls, the setup screen, Lossless Scaling, pd1.
 6. Gunfire (issue 15): the mixbins' -6 dB headroom, the reverb send by
    distance and the HRTF filters (taps / 512, chosen by ear against the
    console) are in; up to 12 machine-gun copies at once are the game's own.
