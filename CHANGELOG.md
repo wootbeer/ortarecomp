@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1.9 (beta)
 
 ### Added
 
@@ -16,6 +16,9 @@
   objects did not fade in and the radar was not see-through (issue 7). Its
   renderer draws those through a dither pattern it rotates a bit per pixel,
   and the recompiler lost the bit each rotation reports; it keeps it now.
+- Windows: switching between Orta and the original Panzer Dragoon, the new
+  window could open behind another one (a browser, say) without the focus
+  or the gamepad. The old window now hands the focus over before closing.
 
 ## v0.1.8 (beta)
 

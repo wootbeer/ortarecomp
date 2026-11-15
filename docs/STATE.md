@@ -1,6 +1,6 @@
 # Current state
 
-v0.1.8 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
+v0.1.9 (beta, Windows and Linux/Steam Deck): Panzer Dragoon Orta plays
 through all ten episodes and the ending, with music, movies, saves, bosses
 and Pandora's Box, the original Panzer Dragoon included. Changes are
 listed in `CHANGELOG.md`.
