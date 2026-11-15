@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- The original Panzer Dragoon: the far sea was a flat pale band, distant
+  objects did not fade in and the radar was not see-through (issue 7). Its
+  renderer draws those through a dither pattern it rotates a bit per pixel,
+  and the recompiler lost the bit each rotation reports; it keeps it now.
+
 ## v0.1.8 (beta)
 
 ### Added

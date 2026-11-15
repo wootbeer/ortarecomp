@@ -95,7 +95,13 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
   radar were drawn off by up to 128 pixels when high: `cwd` was not lifted
   (patch 0035), found by tracing the HUD's polygons in an F12 capture
   (`src/pd1/trace.c`) and a watchpoint on the gauge's pixels. Confirmed
-  fixed on Windows.
+  fixed on Windows. Its far sea, distance fades and see-through radar came
+  out solid (issue 7): its span routines draw them through a dither mask
+  they `ror` a bit per pixel, skipping the pixel on CF, and rotates never
+  set CF (patch 0038). Found by making the band's pixels read-only for one
+  frame and logging the writers (a local SIGSEGV/trap-flag watch, not kept).
+  The frame itself is composed in Direct3D from one 640x1440 A1R5G5B5
+  texture (three 640x480 layers) in about six blended passes.
 - pd1-only so far: its frame limiter (`src/pd1/frame.c`; it counts vblanks
   with its vertical-blank callback, which `src/hle/d3d_hle.c` now runs once
   per vblank from its waits, as the console's interrupt does) and two seeds.
