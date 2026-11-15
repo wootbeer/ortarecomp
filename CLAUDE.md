@@ -22,7 +22,7 @@ one function by address or name instead.
 - **xboxrecomp patches must not overlap.** `recomp.py` and CMake decide a
   patch is applied with `git apply --reverse --check`, one patch at a time.
   To change lines an earlier patch added, edit that patch instead.
-  There are 38 now (0001-0038).
+  There are 40 now (0001-0040).
 - **Third-party projects** (Cxbx-Reloaded, xemu, the JSRF Decompilation,
   other ports): facts only, no code. Symbol databases and listings are read
   from a local clone at run time, never committed. Our own GPL code from

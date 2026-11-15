@@ -14,7 +14,15 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PDO_RELEASE "A release build: no console window on Windows (tools/package.py)" OFF)
-option(PDO_WITH_PD1 "Link in pd1.xbe's recompiled code when gen-pd1/ exists" ON)
+# Android (android/, Android Studio): not yet -- switching programs restarts
+# the process, which an app cannot do; the Box's PANZER DRAGOON then goes
+# back to the main menu (src/guest/launch_guard.c).
+if(ANDROID)
+    set(PDO_WITH_PD1_DEFAULT OFF)
+else()
+    set(PDO_WITH_PD1_DEFAULT ON)
+endif()
+option(PDO_WITH_PD1 "Link in pd1.xbe's recompiled code when gen-pd1/ exists" ${PDO_WITH_PD1_DEFAULT})
 # Diagnosis of code that behaves differently under MSVC: drop its huge-
 # function optimisation (see pdo_generated_options), or give pd1's generated
 # code extra flags of its own (e.g. /Od), leaving the rest as it is.
@@ -66,7 +74,15 @@ add_subdirectory(external/SDL EXCLUDE_FROM_ALL)
 
 # ── Launcher ─────────────────────────────────────────────────────────────
 
-add_executable(OrtaRecomp
+# On Android the game is libmain.so, which SDL's SDLActivity loads and whose
+# SDL_main it calls (SDL_main.h renames main); SDL itself is linked in.
+if(ANDROID)
+    add_library(OrtaRecomp SHARED)
+    set_target_properties(OrtaRecomp PROPERTIES OUTPUT_NAME main)
+else()
+    add_executable(OrtaRecomp)
+endif()
+target_sources(OrtaRecomp PRIVATE
     src/main.c
     src/config.c
     src/input_map.c
@@ -257,9 +273,10 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
     # SDK's or the system's. Without any, the game builds without it.
     set(PDO_SPIRV_HEADERS "" CACHE PATH "Folder holding spirv/unified1/spirv.hpp (SPIRV-Headers' include)")
     set(PDO_SPIRV_FOUND "")
+    # Not on Android yet: to come from btgarecomp's Android build.
     foreach(dir "${PDO_SPIRV_HEADERS}" "${CMAKE_CURRENT_SOURCE_DIR}/external/SPIRV-Headers/include"
                 "$ENV{VULKAN_SDK}/include" "$ENV{VULKAN_SDK}/Include" "/usr/include")
-        if(NOT PDO_SPIRV_FOUND AND dir AND EXISTS "${dir}/spirv/unified1/spirv.hpp")
+        if(NOT ANDROID AND NOT PDO_SPIRV_FOUND AND dir AND EXISTS "${dir}/spirv/unified1/spirv.hpp")
             set(PDO_SPIRV_FOUND "${dir}")
         endif()
     endforeach()

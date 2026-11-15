@@ -1,0 +1,6 @@
+# Copy to local.properties (in this android/ folder; never committed). Android Studio writes
+# sdk.dir itself when it opens the project. Forward slashes, also on Windows.
+sdk.dir=C:/Users/<you>/AppData/Local/Android/Sdk
+
+# Your desktop checkout, where tools/recomp.py wrote gen/ from your disc (android/README.md).
+orta.desktopDir=C:/dev/ortarecomp

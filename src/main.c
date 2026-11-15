@@ -33,6 +33,10 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <stdlib.h>
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -105,6 +109,27 @@ static void SDLCALL log_to_stderr(void *user, int category, SDL_LogPriority prio
 }
 #endif
 
+#ifdef __ANDROID__
+static void SDLCALL log_to_file_and_logcat(void *user, int category, SDL_LogPriority priority, const char *message)
+{
+    (void)user; (void)category;
+    fprintf(stderr, "%s%s\n", priority >= SDL_LOG_PRIORITY_ERROR ? "ERROR: "
+                              : priority == SDL_LOG_PRIORITY_WARN ? "WARNING: " : "", message);
+    __android_log_write(priority >= SDL_LOG_PRIORITY_ERROR ? ANDROID_LOG_ERROR
+                        : priority == SDL_LOG_PRIORITY_WARN ? ANDROID_LOG_WARN : ANDROID_LOG_INFO,
+                        "Orta", message);
+}
+
+/* android/: OrtaActivity leaves a marker in the app's storage while the game
+ * is in front, to tell a crash at the next start; a quit removes it. */
+static void remove_running_marker(void)
+{
+    char path[PDO_PATH_MAX];
+    snprintf(path, sizeof path, "%srunning", pdo_data_dir());
+    SDL_RemovePath(path);
+}
+#endif
+
 /* append: a run started by the program before it (relaunch.c) carries on
  * that run's log. */
 static bool open_log(const char *path, bool append)
@@ -147,6 +172,10 @@ static bool open_log(const char *path, bool append)
     dup2(fd, 1);
     dup2(fd, 2);
     close(fd);
+#endif
+#ifdef __ANDROID__
+    /* SDL_Log goes to logcat alone on Android: to the log file as well. */
+    SDL_SetLogOutputFunction(log_to_file_and_logcat, NULL);
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
     return true;
@@ -408,6 +437,9 @@ int main(int argc, char **argv)
 
     if (!parse_args(argc, argv, &opt))
         return 2;
+#ifdef __ANDROID__
+    atexit(remove_running_marker);
+#endif
     if (opt.log && !open_log(opt.log, opt.launch_data != NULL))
         return 2;
 #ifdef PDO_RELEASE

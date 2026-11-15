@@ -28,7 +28,11 @@
 #else
 #define _GNU_SOURCE
 #include <dlfcn.h>
+#ifdef __ANDROID__
+#include <unwind.h>
+#else
 #include <execinfo.h>
+#endif
 #include <signal.h>
 #include <unistd.h>
 #endif
@@ -301,6 +305,29 @@ static void print_host_frame(void *pc)
     }
     fputc('\n', stderr);
 }
+
+#ifdef __ANDROID__
+/* Android's C library has backtrace() only from Android 13 (API 33); the
+ * unwinder every Android build carries does the same. */
+typedef struct unwind_trace { void **pcs; int n, max; } unwind_trace;
+
+static _Unwind_Reason_Code unwind_one(struct _Unwind_Context *ctx, void *arg)
+{
+    unwind_trace *t = arg;
+    uintptr_t pc = _Unwind_GetIP(ctx);
+
+    if (pc && t->n < t->max)
+        t->pcs[t->n++] = (void *)pc;
+    return t->n < t->max ? _URC_NO_REASON : _URC_END_OF_STACK;
+}
+
+static int backtrace(void **pcs, int max)
+{
+    unwind_trace t = { pcs, 0, max };
+    _Unwind_Backtrace(unwind_one, &t);
+    return t.n;
+}
+#endif
 
 static void crash_signal(int sig, siginfo_t *si, void *uc)
 {
