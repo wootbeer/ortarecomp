@@ -40,6 +40,9 @@ Android build is planned.
 - **Controls:** controllers (with vibration), keyboard and mouse (with
   mouse aim), every button rebindable.
 - **Three save files** (the original keeps one), picked in the launcher.
+- **The original Panzer Dragoon:** Pandora's Box > APPENDIX > PANZER
+  DRAGOON plays the 1995 game from the Orta disc, recompiled as well, and
+  its EXIT comes back to Orta.
 - **Extras:** open every Pandora's Box item without touching your save,
   skip the boot logos or the launcher, an FPS counter, fullscreen (Alt+Enter), portable
   mode.
@@ -121,8 +124,10 @@ Known:
 - Frame interpolation can show odd frames in some scenes.
 - The first time an effect appears it can stutter once while its shaders are
   built; they are kept for next time.
-- The original Panzer Dragoon (the Saturn game unlocked in Pandora's Box)
-  is not available yet.
+- The original Panzer Dragoon: the window closes and opens again when
+  switching to it or back. It runs at 20 fps, as on the console (Lossless
+  Scaling's frame generation can smooth it), and draws its own 640x480
+  picture, so most Display options do not change it.
 - USA version only.
 - Switching between 4:3 and widescreen takes effect the next time the game
   starts (16:9 and 21:9 switch at once).

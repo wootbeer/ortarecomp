@@ -362,10 +362,36 @@ leaves the Box (0x000B8080) with next scene -2 (Box object at 0x00474058,
 +0x7D4): it takes everything down, saves and tail-jumps to 0x000120D0, which
 shuts down sound and graphics and calls XLaunchNewImageA (0x0022CE3C) with
 "d:\pd1.xbe". EXIT leaves for scene 9 (the main menu, started in mode
-0x20003); scene 10 is the title as at boot. src/guest/launch_guard.c sends
--2 to scene 9 until pd1.xbe is recompiled too. Box navigation from FLIGHT
-RECORDS: right goes EXIT, APPENDIX, ENCYCLOPEDIA, BOX GAME; left SUB
-SCENARIOS.
+0x20003); scene 10 is the title as at boot. With pd1 in the build the launch
+goes through (src/guest/relaunch.c restarts on it); without it,
+src/guest/launch_guard.c sends -2 to scene 9. Box
+navigation from FLIGHT RECORDS: right goes EXIT, APPENDIX, ENCYCLOPEDIA, BOX
+GAME; left SUB SCENARIOS.
+
+pd1.xbe itself: title "Panzer Dragoon(Xbox)", the same title ID as Orta
+(53450007), XDK 4928 QFE 1 for every library (as Orta), entry 0x001A64E3,
+kernel thunks 0x00277740. Sections: .text 0x00011000 (2.1 MB), D3D
+0x00219280, DSOUND 0x0022C3A0, MMATRIX, Sofdec (PSGSFD00/_I/_B/_P from
+0x0024AEA0), XGRPH 0x0024F4E0, WMADEC 0x00258540, XPP 0x00271620, .rdata
+0x00277740 (5.5 MB), .data 0x007C0C00 (6.9 MB), DOLBY 0x00E599A0; the image
+ends at 0x00E60B20, over xboxrecomp's default kernel data and stack
+addresses (patch 0034 moves them). Its files are under D:\P1MEDIA\ (the
+first it opens: TNRoman.bin); movies ALL_OP.SFD, SPECL1MV.SFD,
+ENDINGMV.SFD; music bgm02..16.wma, decoded by the XDK's WMA decoder in the
+guest; saves on TDATA/UDATA. Its title (press a button for the menu:
+NORMAL GAME, UP/DOWN REVERSE, EXIT) returns to Orta from EXIT, launching
+\Device\CdRom0;default.xbe with launch data type 0. 3830 of its
+functions are identical to Orta's (tools/xbe_match.py), among them most of
+D3D, DSOUND, XPP and WMADEC.
+
+pd1 at run time: it counts vblanks with its vertical-blank callback
+(0x001A39E0 adds 1 to 0x0098D6C0) and paces frames with 0x00124437 (cdecl,
+n: spins until n vblanks since the last call, kept at 0x0092D4A4); its
+opening runs at 60 fps. Movies start through 0x00124D99 (cdecl, the .sfd
+name, e.g. ALL_OP.SFD); every 2D quad, movie picture included, is drawn by
+one list renderer (0x001B6AE0, from the main loop 0x00121B10) through
+0x001A8500. It loads TNRoman.bin, pad_alert.bmp, wave_00.cmp and
+NARATION.CGZ first, then OPENING.CGZ before the opening movie.
 
 ## Boost and brake ends
 

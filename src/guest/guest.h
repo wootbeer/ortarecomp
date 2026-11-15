@@ -30,14 +30,17 @@ void pdo_guest_cpu_load(const pdo_guest_cpu *c);
 
 void pdo_guest_shutdown(void);
 
+/* Switching between the disc's programs (src/guest/relaunch.c): when a title
+ * boots one this build has, OrtaRecomp starts again on it with its launch
+ * data. Install before running the title; load the data handed over (from
+ * --launch-data) after pdo_guest_init. */
+void pdo_relaunch_install(int argc, char **argv);
+bool pdo_relaunch_load(const char *file);
+
 /* Write every game file the title opens, once each, to list_path. */
 void pdo_guest_log_opened_files(const char *list_path);
 
-/* Image hash of the XBE the code was generated from (from pdo_build_info.h),
- * as lower-case hex. */
-const char *pdo_guest_built_from(void);
-
-/* The game's movie setup opens a movie (src/guest/dsound_hle.c sees it):
+/* The game's movie setup opens a movie (src/hle/dsound_hle.c sees it):
  * its .sfd name, a guest address. d3d_hle.c reads the picture's size. */
 void pdo_movie_opened(uint32_t sfd_name_va);
 

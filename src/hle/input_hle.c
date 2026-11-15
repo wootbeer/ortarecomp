@@ -21,6 +21,7 @@
  */
 
 #include "recomp_types.h"
+#include "hle/program_va.h"
 #include "input_map.h"
 #include "config.h"
 
@@ -40,7 +41,7 @@
  * table's port masks itself (0x0029DA22), so they are kept current:
  * +0 connected now, +4 changed since the last XGetDevices, +8 connected at
  * the last XGetDevices. */
-#define TYPE_GAMEPAD 0x003067CCu
+#define TYPE_GAMEPAD PROG_VA(0x003067CCu, 0x0027164Cu)
 #define TYPE_CURRENT  0
 #define TYPE_CHANGED  4
 #define TYPE_PREVIOUS 8

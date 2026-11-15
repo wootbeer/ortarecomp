@@ -13,6 +13,7 @@
  */
 
 #include "recomp_types.h"
+#include "hle/program_va.h"
 
 #include "config.h"
 #include "gfx/renderer.h"
@@ -31,7 +32,7 @@
 #define HAVE_SSE2 1
 #endif
 
-#define D3D_DEVICE_PTR      0x002BD708u     /* D3D__pDevice */
+#define D3D_DEVICE_PTR      PROG_VA(0x002BD708u, 0x00228F78u)  /* D3D__pDevice */
 /* Device fields moved by 0x124 from 4134: JSRF's callback is at +0x242C. */
 #define DEV_VBLANK_CALLBACK 0x2550u         /* set by SetVerticalBlankCallback (0x002ADC90) */
 #define DEV_BACKBUFFERS     0x21C0u         /* surfaces GetBackBuffer2 returns, by index */
@@ -196,37 +197,58 @@ static Uint64 current_vblank(void)
     return epoch && now > epoch ? (now - epoch) / vblank_ns() : 0;
 }
 
-void sub_002ADCB0(void)
+/* The title's vertical-blank callback (SetVerticalBlankCallback), which the
+ * console's vblank interrupt runs every vblank, whether anyone waits or not.
+ * Nothing interrupts the recompiled code, so it runs from the waits here:
+ * once for each vblank since it last ran, as the interrupt would have (a
+ * title that counts vblanks with it, as pd1 does, sees them all); more than
+ * a second behind, only the latest. Whoever reaches a vblank first runs it.
+ * Orta registers no callback. */
+static void run_vblank_callbacks(Uint64 index)
 {
-    Uint64 index = wait_vblank();
-    uint32_t dev, cb;
-    int prev;
+    for (;;) {
+        int prev = SDL_GetAtomicInt(&last_called);
+        Uint64 next;
+        uint32_t dev, cb;
 
-    /* The interrupt runs the title's callback once per vblank, whoever is
-     * waiting: the first waiter to reach a new vblank runs it. */
-    prev = SDL_GetAtomicInt(&last_called);
-    if ((Uint64)prev < index && SDL_CompareAndSwapAtomicInt(&last_called, prev, (int)index)) {
+        if ((Uint64)prev >= index)
+            return;
+        next = index - (Uint64)prev > 60 ? index : (Uint64)prev + 1;
+        if (!SDL_CompareAndSwapAtomicInt(&last_called, prev, (int)next))
+            continue;
         dev = MEM32(D3D_DEVICE_PTR);
         cb = dev ? MEM32(dev + DEV_VBLANK_CALLBACK) : 0;
         if (cb) {
             if (!vblank_data)
                 vblank_data = xbox_HeapAlloc(12, 4);
             if (vblank_data) {
-                MEM32(vblank_data + 0) = (uint32_t)index;  /* VBlank */
+                MEM32(vblank_data + 0) = (uint32_t)next;   /* VBlank */
                 MEM32(vblank_data + 4) = 0;                /* Swap */
                 MEM32(vblank_data + 8) = 0;                /* Flags */
                 call_guest_cdecl1(cb, vblank_data);
             }
         }
-        if (index <= 3 || index % 600 == 0)
-            SDL_Log("d3d: vblank %llu", (unsigned long long)index);
+        if (next <= 3 || next % 600 == 0)
+            SDL_Log("d3d: vblank %llu", (unsigned long long)next);
     }
+}
+
+/* Wait for the next vblank and run what the interrupt would have. Also for
+ * a title's own vblank waits (src/pd1/). */
+void pdo_d3d_vblank_wait(void)
+{
+    run_vblank_callbacks(wait_vblank());
     /* Loading screens and movies wait here for seconds without a Swap: keep
      * the window answering (Windows marks it "Not Responding" otherwise). */
     if (!pdo_gfx_pump_events()) {
         SDL_Log("d3d: window closed");
         exit(0);
     }
+}
+
+void sub_002ADCB0(void)
+{
+    pdo_d3d_vblank_wait();
     g_esp += 4;
 }
 
@@ -444,7 +466,7 @@ void sub_002B2F10(void)
 {
     uint32_t dev = g_ecx, put;
 
-    if ((MEM32(dev + 8) & 0x2000) || MEM32(0x002BD70C)) {
+    if ((MEM32(dev + 8) & 0x2000) || MEM32(PROG_VA(0x002BD70Cu, 0x00228F7Cu))) {
         sub_002B2F10_gen();
         return;
     }
@@ -508,8 +530,8 @@ void d3d_trace_call(uint32_t va, const char *name, int args)
  * the library's tables at draw time (D3D__RenderState, D3D__TextureState),
  * which also covers the game's inline writes to them. */
 
-#define RS_BASE 0x002BD918u   /* D3D__RenderState[] */
-#define TS_BASE 0x002BD718u   /* D3D__TextureState[4][32] */
+#define RS_BASE PROG_VA(0x002BD918u, 0x00229188u)   /* D3D__RenderState[] */
+#define TS_BASE PROG_VA(0x002BD718u, 0x00228F88u)   /* D3D__TextureState[4][32] */
 #define RS(i)    MEM32(RS_BASE + 4u * (i))
 #define TS(s, i) MEM32(TS_BASE + 128u * (s) + 4u * (i))
 
@@ -550,7 +572,7 @@ enum {
  * blending stayed off and text boxes came out opaque. Record the value under
  * the state whose method it is, from the XDK's own encode table (states 57-83;
  * the values of simple states are the NV2A ones). */
-#define RS_ENCODE 0x00310BFCu
+#define RS_ENCODE PROG_VA(0x00310BFCu, 0x006E7854u)
 void sub_002AF710_enter(void)
 {
     static uint32_t method[83 + 1];
@@ -782,7 +804,7 @@ void sub_002AE6F0(void)
                                    (unsigned long long)pdo_gfx_frame_count(), a[0], a[1]);
             for (uint32_t k = 0, found = 0; k < 64 && found < 6 && len < 220; k++) {
                 uint32_t w = MEM32(g_esp + 4 * k);
-                if (w >= 0x00011000u && w < 0x002AC080u) {
+                if (w >= 0x00011000u && w < PROG_VA(0x002AC080u, 0x00219280u)) {   /* game code */
                     len += SDL_snprintf(line + len, sizeof line - len, " %08x", w);
                     found++;
                 }
@@ -930,7 +952,7 @@ void sub_002B19A0(void)
  * itself) copy each constant to VSH_SHADOW + 16 * slot, slot being the NV2A
  * one (D3D register + 96). It is read at each draw. */
 
-#define VSH_SHADOW 0x002BEB08u
+#define VSH_SHADOW PROG_VA(0x002BEB08u, 0x0022A368u)
 
 static float vconst[PDO_VSH_CONSTANTS][4];
 
@@ -983,7 +1005,7 @@ extern void sub_002B1B10_gen(void);
 void sub_002B1B10(void)
 {
     if ((MEM32(g_esp + 4) & ~0x10u) == 0)
-        shadow_constants(60, 0x002BC618u, 12);
+        shadow_constants(60, PROG_VA(0x002BC618u, 0x00227EA0u), 12);
     sub_002B1B10_gen();
 }
 
@@ -2241,7 +2263,7 @@ static bool hud_sprite(uint32_t base, uint32_t stride, uint32_t first, uint32_t 
 {
     if (!count || !pdo_widescreen_active() || pdo_widescreen_ratio() <= 16.0f / 9.0f + 0.01f)
         return false;
-    if (MEM32(g_esp) != 0x0006A24Bu || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004)
+    if (MEM32(g_esp) != PROG_VA(0x0006A24Bu, 0) || (st.vshader & 1) || (st.vshader & 0x00E) != 0x004)
         return false;
     box[0] = box[1] = 1e9f;
     box[2] = box[3] = -1e9f;
@@ -2447,7 +2469,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         }
     }
     fill_draw_state(&d, pre);
-    if (d.caller[0] == 0x000688E3u && pre && count >= 2 && stride >= 8)
+    if (d.caller[0] == PROG_VA(0x000688E3u, 0) && pre && count >= 2 && stride >= 8)
         mark_movie(st.vshader, base, stride, first, count);
     {   /* PDO_CAPTURE=frame: the render-state table around fog, once. */
         static long long cap = -2;
@@ -2669,7 +2691,7 @@ void sub_002AF010(void)
  * +0x6C. Nothing executes our push buffer, so End draws what was written:
  * the vertex runs, packed together over their headers, through the same path
  * as DrawVerticesUP with the vertex format the game set. */
-#define INLINE_CURSOR 0x004EB1ECu
+#define INLINE_CURSOR PROG_VA(0x004EB1ECu, 0x0098D99Cu)
 
 static uint32_t inline_type, inline_start, inline_stride;
 

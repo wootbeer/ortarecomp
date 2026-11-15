@@ -2,7 +2,8 @@
 
     python tools/package.py
 
-Needs gen/ (tools/recomp.py) first. Builds into build-release/ with no
+Needs gen/ (tools/recomp.py) first; gen-pd1/ (--program pd1) adds
+Pandora's Box's PANZER DRAGOON. Builds into build-release/ with no
 console window on Windows and the C runtime linked in, then writes
 dist/OrtaRecomp-v<version>-windows-x64.zip (Windows; run it from a Visual
 Studio developer shell, like a normal build) or
@@ -39,8 +40,16 @@ def main():
 
     # RelWithDebInfo: the configuration every test so far ran; the symbols
     # stay in build-release/ (the .pdb), for crash reports.
+    # Pandora's Box's PANZER DRAGOON (pd1.xbe, tools/recomp.py --program pd1):
+    # in the release when generated; without it the Box's PANZER DRAGOON goes
+    # back to the main menu.
+    if os.path.exists(os.path.join(ROOT, "gen-pd1", "recomp_dispatch.c")):
+        print("including Panzer Dragoon (gen-pd1/)")
+    else:
+        print("note: no gen-pd1/: this release will not have Pandora's Box's PANZER DRAGOON "
+              "(run tools/recomp.py --program pd1 on your disc image to include it)")
     run("cmake", "-S", ".", "-B", BUILD, "-G", "Ninja",
-        "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DPDO_RELEASE=ON")
+        "-DCMAKE_BUILD_TYPE=RelWithDebInfo", "-DPDO_RELEASE=ON", "-DPDO_WITH_PD1=ON")
     run("cmake", "--build", BUILD)
 
     windows = platform.system() == "Windows"

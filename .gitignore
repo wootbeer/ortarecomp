@@ -13,6 +13,7 @@ Media/
 media/
 # Anything derived from the game executable
 gen/
+gen-*/
 build/
 *.tsv
 listing_seeds.json

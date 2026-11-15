@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.1.8 (beta)
+
+### Added
+
+- Pandora's Box: APPENDIX > PANZER DRAGOON plays the original Panzer
+  Dragoon (pd1.xbe on the Orta disc), as on the console, and its title's
+  EXIT goes back to Orta. The window closes and opens again at each switch;
+  settings, the window's place and the log carry on. Its Direct3D, sound,
+  movies and controls are Orta's own; it draws its frames itself, so the
+  Options that change how the 3D world is drawn are greyed while it runs
+  (Display > Fit Zoom keeps it whole, with bars). Building it needs
+  `tools/recomp.py --program pd1` on your disc image (BUILDING.md).
+
+### Fixed
+
+- Two recompiler fixes for instructions Orta's code uses rarely: rounding
+  float-to-integer conversions now round instead of truncating, and agree
+  between compilers for values out of range.
+
 ## v0.1.7 (beta)
 
 ### Added

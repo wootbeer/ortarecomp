@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate src/guest/d3d_calltrace.c: one tracing entry hook per Direct3D
+"""Regenerate src/hle/d3d_calltrace.c: one tracing entry hook per Direct3D
 function the game calls (minus those we replace outright).
 
 Run after tools/recomp.py, from the repository root. Reads only the
@@ -70,7 +70,7 @@ def main():
         n = max([int(r or 0) for r in re.findall(r"/\* ret ?(\d*) \*/", body)] or [0]) // 4
         name = names.get(t, "?")
         out.append(f'void sub_{t:08X}_enter(void) {{ d3d_trace_call(0x{t:08X}u, "{name}", {n}); }}')
-    open(os.path.join(ROOT, "src/guest/d3d_calltrace.c"), "w").write("\n".join(out) + "\n")
+    open(os.path.join(ROOT, "src/hle/d3d_calltrace.c"), "w").write("\n".join(out) + "\n")
     print(f"{len(called - replaced)} hooks")
 
 

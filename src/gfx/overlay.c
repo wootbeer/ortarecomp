@@ -24,6 +24,8 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "guest/program.h"
+
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
        ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
@@ -230,11 +232,33 @@ static void page_back(void)
     dirty = true;
 }
 
+/* Settings with nothing to act on while pd1 (the original Panzer Dragoon)
+ * runs: it draws each frame itself, on the CPU, as one 640x480 picture, so
+ * what changes how the 3D world is drawn has none to change, and Orta's
+ * own options are Orta's. Shown greyed and left as they are; the finished
+ * picture's settings (fit, softening, Picture, FXAA) and frame generation
+ * still apply. */
+static bool item_inactive(int item)
+{
+    if (launcher || pdo_program_active() == PDO_PROGRAM_ORTA)
+        return false;
+    switch (item) {
+    case ITEM_SCALE: case ITEM_ANISO: case ITEM_ASPECT: case ITEM_HUD: case ITEM_MOVIES:
+    case ITEM_SHADOWS: case ITEM_VSH: case ITEM_FVF: case ITEM_INTERP: case ITEM_BOX:
+    case ITEM_LOGOS:
+        return true;
+    default:
+        return false;
+    }
+}
+
 /* Change the selected line by one step: dir -1 or +1. */
 static void change(int dir)
 {
     pdo_settings *s = pdo_settings_get();
 
+    if (item_inactive(ITEMS[selected]))
+        return;
     switch (ITEMS[selected]) {
     case ITEM_START:  if (dir > 0 && launcher_files_ok) launcher_choice = PDO_LAUNCH_START; break;
     case ITEM_PICK:   if (dir > 0) launcher_choice = PDO_LAUNCH_PICK; break;
@@ -776,6 +800,10 @@ static const char *label_of(int item)
  * panel's width. */
 static const char *help_of(int item)
 {
+    if (item_inactive(item))
+        return "No effect on Panzer Dragoon: it draws its own picture.";
+    if (item == ITEM_MSAA && !launcher && pdo_program_active() != PDO_PROGRAM_ORTA)
+        return "Panzer Dragoon: only FXAA applies.";
     switch (item) {
     case ITEM_SCALE:  return "Multiples of 640x480.";
     case ITEM_MSAA:   return "Smoother edges. MSAA is best.";
@@ -879,7 +907,7 @@ static void draw_menu(void)
         int item = items[i];
         float y = y0 + 4.0f + i * step;
         float fillv = value_of(item, v, sizeof v);
-        bool sel = i == selected, off = item == ITEM_START && !launcher_files_ok;
+        bool sel = i == selected, off = (item == ITEM_START && !launcher_files_ok) || item_inactive(item);
 
         if (item == ITEM_BACK || item == ITEM_CLOSE || item == ITEM_EXIT) {
             COLOR(COL_TRACK);
@@ -911,7 +939,9 @@ static void draw_menu(void)
             text(x0 + w - 1.5f - (float)strlen(v), y, v);
         } else if (v[0]) {
             float vx = x0 + w - 1.5f - (float)strlen(v);
-            if (sel && !is_link(item)) {     /* < value > on what Left/Right change */
+            if (off)
+                COLOR(COL_OFF);
+            else if (sel && !is_link(item)) {     /* < value > on what Left/Right change */
                 vx -= 2;
                 COLOR(COL_TITLE);
                 text(vx - 2, y, "<");

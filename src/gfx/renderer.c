@@ -12,6 +12,7 @@
 #ifdef PDO_HAVE_LSFG
 #include "gfx/lsfg_present.h"
 #endif
+#include "guest/program.h"
 #include "guest/vsh.h"      /* pdo_parallel */
 
 #include <SDL3/SDL.h>
@@ -35,7 +36,7 @@
 
 extern ptrdiff_t g_xbox_mem_offset;
 extern void pdo_dump_threads(void);   /* src/guest/crash_report.c: F11 */
-extern void pdo_dump_guest_waits(void);  /* src/guest/wait_trace.c */
+extern void pdo_dump_guest_waits(void);  /* src/hle/wait_trace.c */
 
 static SDL_GPUDevice *dev;
 static SDL_Window *window;
@@ -1962,6 +1963,11 @@ static bool init_here(int width, int height)
         SDL_SetBooleanProperty(wp, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, st->fullscreen);
         window = SDL_CreateWindowWithProperties(wp);
         SDL_DestroyProperties(wp);
+        /* In front and with the focus: a run started by the program before
+         * it (src/guest/relaunch.c) came up behind or unfocused on Windows,
+         * and SDL hands gamepads only to the focused window. */
+        if (window)
+            SDL_RaiseWindow(window);
     }
     if (window && SDL_ClaimWindowForGPUDevice(dev, window))
         have_swapchain = true;
@@ -3349,7 +3355,10 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         float aw = pdo_widescreen_active() ? frame_h * pdo_widescreen_ratio() : (float)frame_w;
         float kf = SDL_min((float)sw / aw, (float)sh / frame_h);
         float kz = SDL_max((float)sw / aw, (float)sh / frame_h);
-        float k = st->fit == PDO_FIT_ZOOM ? kz : kf;
+        /* Zoom is for Orta, whose widescreen modes fill most of a wide
+         * window: pd1 is 4:3 only, and zoomed to a 21:9 window it lost
+         * 40% of its height (its menus with it). It keeps bars. */
+        float k = st->fit == PDO_FIT_ZOOM && pdo_program_active() == PDO_PROGRAM_ORTA ? kz : kf;
         float mr[4];
         SDL_zero(fitv);
         fitv.w = SDL_floorf(aw * kf);
@@ -5316,7 +5325,10 @@ void pdo_gfx_main_loop(void)
     for (;;) {
         frame_data *f;
         /* Frame generation makes the frames between the game's instead. */
-        bool want = pdo_settings_get()->frame_interp && !lsfg_on && !getenv("PDO_BENCHMARK");
+        /* pd1 draws its frame itself, one flat picture: no geometry to
+         * blend, only frames to repeat (the counter rose, the motion not). */
+        bool want = pdo_settings_get()->frame_interp && !lsfg_on && !getenv("PDO_BENCHMARK")
+                    && pdo_program_active() == PDO_PROGRAM_ORTA;
         bool interp = want && interp_ok;
         Uint64 now = SDL_GetTicksNS();
 
