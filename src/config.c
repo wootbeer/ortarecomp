@@ -38,6 +38,9 @@ const char *pdo_data_dir(void)
         return data_dir;
 
     base = SDL_GetBasePath();
+#ifdef __ANDROID__
+    base = NULL;        /* "./" there; no portable mode: the app's storage (SDL's pref path) */
+#endif
     if (base) {
         char probe[PDO_PATH_MAX];
         snprintf(probe, sizeof probe, "%sportable.txt", base);
@@ -116,8 +119,19 @@ bool pdo_config_load(pdo_config *cfg)
         if (!eq || line[0] == '#' || line[0] == ';')
             continue;
         *eq = '\0';
-        if (strcmp(line, "game_dir") == 0)
+        if (strcmp(line, "game_dir") == 0) {
             SDL_strlcpy(cfg->game_dir, eq + 1, sizeof cfg->game_dir);
+#ifdef __ANDROID__
+            /* An earlier build saved the app's game folder as "./game"
+             * (assets.c): the same folder, by its full path. */
+            if (cfg->game_dir[0] && cfg->game_dir[0] != '/') {
+                const char *rel = cfg->game_dir[0] == '.' && cfg->game_dir[1] == '/' ? cfg->game_dir + 2 : cfg->game_dir;
+                char full[PDO_PATH_MAX];
+                snprintf(full, sizeof full, "%s%s", pdo_data_dir(), rel);
+                SDL_strlcpy(cfg->game_dir, full, sizeof cfg->game_dir);
+            }
+#endif
+        }
         else if (strcmp(line, "render_scale") == 0)
             settings.render_scale2 = clamp_int((int)SDL_lround(SDL_atof(eq + 1) * 2.0), 2, 16);
         else if (strcmp(line, "msaa") == 0) {
