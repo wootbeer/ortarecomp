@@ -9,7 +9,7 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
 ## How it fits together
 
 - `tools/recomp.py`: the USA `default.xbe` -> `gen/` through xboxrecomp
-  v0.13.1 and patches 0001-0036 (`patches/xboxrecomp/`), with seeds for
+  v0.13.1 and patches 0001-0037 (`patches/xboxrecomp/`), with seeds for
   functions the sweep misses (`tools/pdo_seeds.json`; every failed indirect
   call seen in play is seeded). 42 lifter jumps still go to stubs, all from
   data decoded as code.
@@ -88,9 +88,10 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    program, generated on its own into `gen-pd1/` (`recomp.py --program
    pd1`), linked in beside Orta, run alone with `--boot --program pd1`.
    Shares Orta's D3D/DSound/CRI/input hooks (`src/hle/`, mapped by
-   `tools/program_map.py`); plays its opening and opening movie. Next: a
-   play-through, its movie sites, then switching to it in-process. All in
-   `docs/two-programs.md`.
+   `tools/program_map.py`); playable. Pandora's Box launches it and its
+   title's EXIT returns, by restarting OrtaRecomp with the launch data
+   (`src/guest/relaunch.c`, patch 0037). Next: pd1 play-testing; an
+   in-process switch (for Android). All in `docs/two-programs.md`.
 8. Wishlist: the European (PAL) disc. Only the USA default.xbe is
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by

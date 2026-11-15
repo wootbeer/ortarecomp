@@ -1,0 +1,19 @@
+--- a/src/kernel/kernel_hal.c
++++ b/src/kernel/kernel_hal.c
+@@ -516,8 +516,16 @@
+  * exit the game cleanly.
+  * ============================================================================ */
+ 
++/* Set by the host to start another image itself when a title asks to boot
++ * one (routine 2, XLaunchNewImage, after it has filled the launch data
++ * page): a game with more than one program on its disc. It returns if it
++ * does not; the process then ends as before. */
++void (*xbox_relaunch_hook)(ULONG Routine) = NULL;
++
+ VOID __stdcall xbox_HalReturnToFirmware(ULONG Routine)
+ {
++    if (xbox_relaunch_hook)
++        xbox_relaunch_hook(Routine);
+     xbox_log(XBOX_LOG_INFO, XBOX_LOG_HAL,
+         "HalReturnToFirmware: routine=%u (exiting)", Routine);
+     /* stderr too: the kernel log file is rewritten on every run, so a title

@@ -281,7 +281,7 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
                        "building without Lossless Scaling frame generation")
     endif()
 
-    target_sources(OrtaRecomp PRIVATE src/guest/guest.c src/guest/program.c)
+    target_sources(OrtaRecomp PRIVATE src/guest/guest.c src/guest/program.c src/guest/relaunch.c)
     target_compile_definitions(OrtaRecomp PRIVATE PDO_HAVE_RECOMP=1)
     # Object libraries give their objects only to what links them directly.
     target_link_libraries(OrtaRecomp PRIVATE pdo_recomp pdo_host)

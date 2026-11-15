@@ -362,8 +362,9 @@ leaves the Box (0x000B8080) with next scene -2 (Box object at 0x00474058,
 +0x7D4): it takes everything down, saves and tail-jumps to 0x000120D0, which
 shuts down sound and graphics and calls XLaunchNewImageA (0x0022CE3C) with
 "d:\pd1.xbe". EXIT leaves for scene 9 (the main menu, started in mode
-0x20003); scene 10 is the title as at boot. src/guest/launch_guard.c sends
--2 to scene 9 until switching to pd1 is written (docs/two-programs.md). Box
+0x20003); scene 10 is the title as at boot. With pd1 in the build the launch
+goes through (src/guest/relaunch.c restarts on it); without it,
+src/guest/launch_guard.c sends -2 to scene 9. Box
 navigation from FLIGHT RECORDS: right goes EXIT, APPENDIX, ENCYCLOPEDIA, BOX
 GAME; left SUB SCENARIOS.
 
@@ -377,7 +378,9 @@ ends at 0x00E60B20, over xboxrecomp's default kernel data and stack
 addresses (patch 0034 moves them). Its files are under D:\P1MEDIA\ (the
 first it opens: TNRoman.bin); movies ALL_OP.SFD, SPECL1MV.SFD,
 ENDINGMV.SFD; music bgm02..16.wma, decoded by the XDK's WMA decoder in the
-guest; saves on TDATA/UDATA. It returns with d:\default.xbe. 3830 of its
+guest; saves on TDATA/UDATA. Its title (press a button for the menu:
+NORMAL GAME, UP/DOWN REVERSE, EXIT) returns to Orta from EXIT, launching
+\Device\CdRom0;default.xbe with launch data type 0. 3830 of its
 functions are identical to Orta's (tools/xbe_match.py), among them most of
 D3D, DSOUND, XPP and WMADEC.
 

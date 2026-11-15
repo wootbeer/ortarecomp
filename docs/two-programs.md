@@ -114,12 +114,20 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
    movie's among them, from one list renderer (0x001B6AE0, through the
    draw routine 0x001A8500), so the movie quad needs another tell than the
    caller (its texture, CRI's frame).
-3. **Switch in-process.** Orta's launch path (0x000120D0, then
-   XLaunchNewImageA 0x0022CE3C with `d:\pd1.xbe`) ends the program: leave
-   the title thread back to `pdo_guest_run`, stop the other guest threads
-   (a reboot generation the guest CPU lock checks), reset the kernel
-   objects, handles and heap, remap the address space from pd1.xbe with the
-   launch data page kept, `pdo_program_select(PDO_PROGRAM_PD1)`, enter at
-   0x001A64E3. pd1 leaves with `d:\default.xbe`; check whether Orta reads
-   the launch data to return to Pandora's Box. Fallback if the soft reboot
-   is too fragile: restart the process with `--program`.
+3. **Switch in-process** (done for now by restarting; Android wants
+   in-process). Today: the kernel calls `xbox_relaunch_hook` at
+   HalReturnToFirmware (patch 0037); `src/guest/relaunch.c` reads the launch
+   data page XLaunchNewImage filled (path at +8), and for `default.xbe` or
+   `pd1.xbe` this build has, saves the 4 KB page to `launch_data.bin` in the
+   data folder and starts OrtaRecomp again with `--boot --program NAME
+   --launch-data FILE` (Linux: `execv` of /proc/self/exe, the same process;
+   Windows: CreateProcess, then exit); the new run appends to the log and
+   puts the page back (`pdo_relaunch_load`) where XGetLaunchInfo reads it.
+   Pandora's Box's PANZER DRAGOON leaves Orta at 0x000120D0 with
+   `d:\pd1.xbe`; pd1's title EXIT asks for `\Device\CdRom0;default.xbe`
+   (launch data type 0, title 53450007). Tested pd1 -> Orta here (Orta then
+   stops for lack of its data in this container); Orta -> pd1 needs the
+   disc's files. In-process would replace only `restart_on`: stop the
+   guest threads (the guest CPU lock is the choke point), reset the kernel
+   (timers, interrupts, objects, handles, heap) and our caches keyed by
+   guest addresses, remap from the other XBE.

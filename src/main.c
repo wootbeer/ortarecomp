@@ -12,6 +12,8 @@
  *                               --boot): pd1 is Pandora's Box's Panzer
  *                               Dragoon (pd1.xbe), if this build has it
  *   OrtaRecomp --log FILE       write the log into FILE
+ *   (--launch-data FILE: internal, a program on the disc starting another;
+ *   src/guest/relaunch.c)
  *
  * Release builds always log: to ortarecomp.log in the data folder, the
  * run before kept as ortarecomp-previous.log.
@@ -52,6 +54,7 @@ typedef struct options {
     const char *import_iso;
     const char *log;
     const char *program;
+    const char *launch_data;    /* a program before this one handed this over */
 } options;
 
 static bool parse_args(int argc, char **argv, options *o)
@@ -76,6 +79,8 @@ static bool parse_args(int argc, char **argv, options *o)
             o->log = argv[++i];
         else if (strcmp(argv[i], "--program") == 0 && i + 1 < argc)
             o->program = argv[++i];
+        else if (strcmp(argv[i], "--launch-data") == 0 && i + 1 < argc)
+            o->launch_data = argv[++i];
         else {
             fprintf(stderr, "unknown argument: %s\n", argv[i]);
             return false;
@@ -100,12 +105,15 @@ static void SDLCALL log_to_stderr(void *user, int category, SDL_LogPriority prio
 }
 #endif
 
-static bool open_log(const char *path)
+/* append: a run started by the program before it (relaunch.c) carries on
+ * that run's log. */
+static bool open_log(const char *path, bool append)
 {
 #ifdef _WIN32
-    int fd = _open(path, _O_WRONLY | _O_CREAT | _O_TRUNC | _O_BINARY, _S_IREAD | _S_IWRITE);
+    int fd = _open(path, _O_WRONLY | _O_CREAT | (append ? _O_APPEND : _O_TRUNC) | _O_BINARY,
+                   _S_IREAD | _S_IWRITE);
 #else
-    int fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int fd = open(path, O_WRONLY | O_CREAT | (append ? O_APPEND : O_TRUNC), 0644);
 #endif
 
     if (fd < 0) {
@@ -193,7 +201,7 @@ static int SDLCALL game_thread(void *arg)
 }
 
 static int start_guest(const char *game_dir, const pdo_game_check *check, bool boot,
-                       pdo_program program)
+                       pdo_program program, const char *launch_data)
 {
     char path[PDO_PATH_MAX], save_dir[PDO_PATH_MAX], image_hex[65];
     const char *built_from = pdo_program_built_from(program);
@@ -259,6 +267,8 @@ static int start_guest(const char *game_dir, const pdo_game_check *check, bool b
         SDL_Thread *t;
         char list[PDO_PATH_MAX];
 
+        if (launch_data)
+            pdo_relaunch_load(launch_data);
         snprintf(list, sizeof list, "%sopened_files.txt", pdo_data_dir());
         pdo_guest_log_opened_files(list);
         SDL_Log("the game files the title opens are listed in %s", list);
@@ -398,16 +408,18 @@ int main(int argc, char **argv)
 
     if (!parse_args(argc, argv, &opt))
         return 2;
-    if (opt.log && !open_log(opt.log))
+    if (opt.log && !open_log(opt.log, opt.launch_data != NULL))
         return 2;
 #ifdef PDO_RELEASE
     if (!opt.log) {
         char log[PDO_PATH_MAX], old[PDO_PATH_MAX];
         snprintf(log, sizeof log, "%sortarecomp.log", pdo_data_dir());
         snprintf(old, sizeof old, "%sortarecomp-previous.log", pdo_data_dir());
-        SDL_RemovePath(old);
-        SDL_RenamePath(log, old);
-        open_log(log);
+        if (!opt.launch_data) {
+            SDL_RemovePath(old);
+            SDL_RenamePath(log, old);
+        }
+        open_log(log, opt.launch_data != NULL);
     }
 #endif
     SDL_SetAppMetadata(APP_NAME, PDO_VERSION, "io.github.ortarecomp");
@@ -487,7 +499,8 @@ int main(int argc, char **argv)
             SDL_Quit();
             return 1;
         }
-        rc = start_guest(cfg.game_dir, &check, !opt.no_boot, program);
+        pdo_relaunch_install(argc, argv);
+        rc = start_guest(cfg.game_dir, &check, !opt.no_boot, program, opt.launch_data);
         SDL_Quit();
         return rc;
     }

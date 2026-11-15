@@ -65,10 +65,11 @@ python tools/recomp.py path/to/Orta.iso
 It checks that this is the USA release, then writes almost two million lines
 of C into `gen/`. This takes about five minutes.
 
-Optional, work in progress: the original Panzer Dragoon from Pandora's Box
+Optional: the original Panzer Dragoon that Pandora's Box launches
 (`pd1.xbe` on the same disc) is a second program, generated on its own into
-`gen-pd1/` (about eight minutes). The build includes it when that folder
-exists:
+`gen-pd1/` (about eight minutes). The build (and `tools/package.py`)
+includes it when that folder exists; without it the Box's PANZER DRAGOON
+goes back to the main menu:
 
 ```bash
 python tools/recomp.py --program pd1 path/to/Orta.iso
@@ -105,8 +106,8 @@ OrtaRecomp --game-dir DIR   use an extracted game folder for this run
 OrtaRecomp --check          check the game files, print the result, exit
 OrtaRecomp --boot           start the game at once, without the launcher
 OrtaRecomp --boot --program pd1
-                            start Pandora's Box's Panzer Dragoon instead
-                            (when built with gen-pd1/; not playable yet)
+                            start Pandora's Box's Panzer Dragoon directly
+                            (when built with gen-pd1/)
 OrtaRecomp --log FILE       write the log straight into FILE (on Windows,
                             use this instead of piping through PowerShell,
                             which can stall the game)
