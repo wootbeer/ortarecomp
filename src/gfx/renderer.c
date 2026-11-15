@@ -749,6 +749,19 @@ static spec_prog spec_progs[SPEC_PROG_SLOTS];   /* by base; state 0 empty, 1 ask
 static uint32_t spec_draws, interp_draws;       /* GPU program draws each way, for the log */
 static uint32_t bg_made;                        /* their pipelines made in the background (bg_ask) */
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
+/* Programs' own pipelines made in the background (bg_main, below). */
+typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs; SDL_GPUGraphicsPipeline *p;
+                 uint32_t gen; bool save; } bg_job;
+static SDL_Mutex *bg_lock;
+static SDL_Condition *bg_wake;
+static SDL_Thread *bg_thread;
+static bg_job *bg_todo, *bg_done;
+static uint32_t bg_ntodo, bg_cap_todo, bg_ndone, bg_cap_done;
+static uint32_t pipe_gen;                 /* the quality settings pipelines are made for */
+static pdo_pipeline_state *bg_asked;      /* asked for and not yet back (render thread) */
+static uint32_t bg_nasked, bg_cap_asked;
+static SDL_AtomicU32 bg_busy_since_ms;    /* the one being made: when it started (0: none) */
+static uint32_t bg_slow_logs;
 
 static SDL_GPUShader *make_shader_sb(const uint8_t *code, size_t len, SDL_GPUShaderStage stage,
                                      Uint32 samplers_n, Uint32 uniforms_n, Uint32 storage_n);
@@ -954,6 +967,19 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
     *bg_ms = (double)bg_ns / 1e6;
     bg_made = 0;
     bg_ns = 0;
+    if (bg_thread) {
+        Uint32 since = SDL_GetAtomicU32(&bg_busy_since_ms);
+        Uint32 now = (Uint32)(SDL_GetTicksNS() / 1000000);
+        uint32_t waiting;
+        SDL_LockMutex(bg_lock);
+        waiting = bg_ntodo;
+        SDL_UnlockMutex(bg_lock);
+        if (since)
+            SDL_Log("gfx: background pipelines: %u waiting, %u asked for, the one being made for %.1f s",
+                    waiting, bg_nasked, (double)(now - since) / 1000.0);
+        else if (waiting)
+            SDL_Log("gfx: background pipelines: %u waiting, %u asked for", waiting, bg_nasked);
+    }
 }
 
 uint64_t pdo_gfx_take_pipeline_ns(uint32_t *made)
@@ -1138,16 +1164,6 @@ static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *
  * takes its own locks), handed back at the next frame's recording, and
  * until then the draw uses the interpreter's pipeline. Made for one set of
  * quality settings (pipe_gen): one made for an earlier set is dropped. */
-typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs; SDL_GPUGraphicsPipeline *p;
-                 uint32_t gen; bool save; } bg_job;
-static SDL_Mutex *bg_lock;
-static SDL_Condition *bg_wake;
-static SDL_Thread *bg_thread;
-static bg_job *bg_todo, *bg_done;
-static uint32_t bg_ntodo, bg_cap_todo, bg_ndone, bg_cap_done;
-static uint32_t pipe_gen;                 /* the quality settings pipelines are made for */
-static pdo_pipeline_state *bg_asked;      /* asked for and not yet back (render thread) */
-static uint32_t bg_nasked, bg_cap_asked;
 
 static int SDLCALL bg_main(void *unused)
 {
@@ -1162,9 +1178,14 @@ static int SDLCALL bg_main(void *unused)
         memmove(bg_todo, bg_todo + 1, --bg_ntodo * sizeof *bg_todo);
         SDL_UnlockMutex(bg_lock);
         t0 = SDL_GetTicksNS();
+        SDL_SetAtomicU32(&bg_busy_since_ms, (Uint32)(t0 / 1000000) | 1u);
         j.p = make_pipeline(&j.ps, j.vs);
+        SDL_SetAtomicU32(&bg_busy_since_ms, 0);
         SDL_LockMutex(bg_lock);
         bg_ns += SDL_GetTicksNS() - t0;
+        if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 32)
+            SDL_Log("gfx: a program's pipeline took %.0f ms to make%s (%u more waiting)",
+                    (double)(SDL_GetTicksNS() - t0) / 1e6, j.p ? "" : ", and failed", bg_ntodo);
         bg_done = grow(bg_done, &bg_cap_done, bg_ndone + 1, sizeof *bg_done);
         bg_done[bg_ndone++] = j;
     }
