@@ -13,8 +13,10 @@ git submodule update --init --recursive
 ```
 
 This pulls in `external/xboxrecomp` (the recompiler and kernel layer),
-`external/SDL` (SDL 3) and `external/SPIRV-Headers` (for Lossless Scaling
-frame generation).
+`external/SDL` (SDL 3), `external/SPIRV-Headers` (for Lossless Scaling
+frame generation) and `external/glslang` (the game's vertex programs made
+into GPU shaders of their own while it runs; without it they are
+interpreted on the GPU, slower on phones and handhelds).
 
 ## 2. Install dependencies
 

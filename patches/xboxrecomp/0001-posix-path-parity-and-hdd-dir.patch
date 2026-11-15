@@ -70,7 +70,7 @@ index caf6390..387843f 100644
      for (int i = 0; i < PATH_RULE_COUNT; i++) {
          skip = match_prefix(xbox_path, s_rules[i].prefix);
          if (skip) {
-@@ -490,6 +519,140 @@ static char s_game_dir[MAX_PATH];
+@@ -490,6 +519,149 @@ static char s_game_dir[MAX_PATH];
  static char s_save_dir[MAX_PATH];
  static BOOL s_initialized = FALSE;
  
@@ -182,7 +182,16 @@ index caf6390..387843f 100644
 +        memcpy(comp, p, clen);
 +        comp[clen] = '\0';
 +
-+        d = opendir(olen ? out : "/");
++        /* As written first: only a component that is not there is looked
++         * for ignoring case. Android lets an app use /data/data/<app> but
++         * not list /data or /data/data, so a walk listing every directory
++         * from "/" found none of the game's folders there. */
++        {
++            char cand[MAX_PATH];
++            snprintf(cand, sizeof(cand), "%s/%s", out, comp);
++            found = stat(cand, &st) == 0;
++        }
++        d = found ? NULL : opendir(olen ? out : "/");
 +        if (d) {
 +            while ((de = readdir(d)) != NULL) {
 +                if (strcasecmp(de->d_name, comp) == 0) {

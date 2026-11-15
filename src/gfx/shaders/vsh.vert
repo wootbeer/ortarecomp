@@ -10,6 +10,12 @@
 // x * 0 is 0 even for infinities; dot products add left to right; relative
 // constants clamp to 0..191; unwritten outputs are oD0 1, oD1 0, oT 0,
 // oFog 1, oPos (0, 0, 0, 1).
+//
+// Built with PDO_VSH_SPEC (src/gfx/vsh_spec.c, at run time), the program
+// is not interpreted: run_spec, generated from one program's code, follows
+// this file's run() instruction by instruction in straight-line code, its
+// registers plain variables. Both runs then read the same program; only
+// a draw paired with another program (prev_prog) needs the interpreter.
 
 layout(set = 0, binding = 0, std430) readonly buffer Streams { uint blob[]; };
 layout(set = 0, binding = 1, std430) readonly buffer Programs { uvec4 prog[]; };
@@ -33,7 +39,7 @@ layout(set = 1, binding = 0, std140) uniform Draw {
     ivec4 prev_in[4];
     vec4  blend_t;
     // Paired with a draw on another program: its base and count (y 0: the
-    // same program). Each program then runs on its own frame's constants and
+    // same program); z and w 0. Each program then runs on its own frame's constants and
     // streams, and the outputs are blended.
     ivec4 prev_prog;
     // The paired draw's viewport transform (c[58], c[59]): its positions
@@ -129,8 +135,29 @@ float rcc(float x)
     return (r < 0.0 || (r == 0.0 && 1.0 / r < 0.0)) ? -a : a;
 }
 
-vec4 R[30];
 vec4 O[16];
+
+#ifdef PDO_VSH_SPEC
+vec4 R[13];                     // run_spec leaves oPos in R[12]
+
+// Constant i of this frame's, the earlier frame's or both blended.
+vec4 cread(int i)
+{
+    if (mode == 1)
+        return pcbuf[interp.x + i];
+    if (mode == 2 || blend_t.x >= 1.0 || interp.x < 0)
+        return cbuf[info.z + i];
+    return mix(pcbuf[interp.x + i], cbuf[info.z + i], blend_t.x);
+}
+
+// A zero the compiler cannot see through (prev_prog.w is always 0): with
+// registers starting at a literal zero, a driver folds 0 + x to x and
+// -0 comes out where the interpreter has +0 (and 1 / -0 is -inf).
+vec4 opaque_zero() { return vec4(intBitsToFloat(prev_prog.w)); }
+
+void run_spec();
+#else
+vec4 R[30];
 
 vec4 operand(uint w, int cidx)
 {
@@ -223,6 +250,7 @@ void run(int base, int count)
             O[o_index] = mix(O[o_index], ((h.x >> 24) & 1u) != 0u ? I : M, mask_of((h.z >> 8) & 15u));
     }
 }
+#endif
 
 // Undo the viewport transform the program ended with (scale sc, offset of),
 // as fetch_vsh does. Reversed depth (renderer.c, info.w): 1 - z from the
@@ -246,13 +274,21 @@ void main()
         // (one program run on blended constants gave mixed
         // bone matrices, poses of neither frame).
         mode = 1;
+#ifdef PDO_VSH_SPEC
+        run_spec();
+#else
         if (prev_prog.y > 0) run(prev_prog.x, prev_prog.y);
         else run(info.x, info.y);
+#endif
         vec4 pc = to_clip(R[12], prev_vp_scale, prev_vp_offset);
         vec4 po[16];
         for (int i = 0; i < 16; i++) po[i] = O[i];
         mode = 2;
+#ifdef PDO_VSH_SPEC
+        run_spec();
+#else
         run(info.x, info.y);
+#endif
         vec4 nc = to_clip(R[12], vp_scale, vp_offset);
         // A vertex on the two sides of the eye in the two frames stays as the
         // newest frame has it: blended, it went through w 0 and its triangles
@@ -260,7 +296,11 @@ void main()
         gl_Position = (pc.w > 0.0) == (nc.w > 0.0) ? mix(pc, nc, blend_t.x) : nc;
         for (int i = 0; i < 16; i++) O[i] = mix(po[i], O[i], blend_t.x);
     } else {
+#ifdef PDO_VSH_SPEC
+        run_spec();
+#else
         run(info.x, info.y);
+#endif
         gl_Position = to_clip(R[12], vp_scale, vp_offset);
     }
     // Colors as the CPU packs them: NaN as 0, clamped, to 8 bits.

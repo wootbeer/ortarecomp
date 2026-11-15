@@ -1,0 +1,27 @@
+--- a/src/platform/win32_compat.c
++++ b/src/platform/win32_compat.c
+@@ -818,7 +818,11 @@
+ {
+     w32_object *o = (w32_object *)h;
+     if (!o || o->kind != K_THREAD) return FALSE;
++#if !defined(__ANDROID__)
+     pthread_cancel(o->thread);
++#endif
++    /* Android's C library has no pthread_cancel: the thread is reported
++     * ended and left to run. Nothing in the kernel layer calls this. */
+     pthread_mutex_lock(&o->lock);
+     o->exit_code = exitCode;
+     o->exited    = 1;
+@@ -1328,6 +1332,12 @@
+ {
+ #if defined(__APPLE__)
+     memset_s(ptr, cnt, 0, cnt);
++#elif defined(__ANDROID__)
++    /* No explicit_bzero in Android's C library: a volatile store the
++     * compiler cannot drop as dead. */
++    volatile unsigned char *p = (volatile unsigned char *)ptr;
++    while (cnt--)
++        *p++ = 0;
+ #else
+     explicit_bzero(ptr, cnt);
+ #endif

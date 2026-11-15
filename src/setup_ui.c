@@ -72,15 +72,27 @@ static void draw(ui *u, double fraction)
 
 static int ask_source(ui *u, const char *extra)
 {
+    /* Android: a disc image only. Its picker hands a folder over as a
+     * document tree, not a path the game can read files from. */
     static const SDL_MessageBoxButtonData buttons[] = {
         { SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, CHOICE_QUIT, "Quit" },
+#ifndef __ANDROID__
         { 0, CHOICE_FOLDER, "Game folder..." },
+#endif
         { SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, CHOICE_ISO, "Disc image..." },
     };
     char text[2048];
     SDL_MessageBoxData box;
     int choice = CHOICE_QUIT;
 
+#ifdef __ANDROID__
+    snprintf(text, sizeof text,
+             "%s%s"
+             "Orta Recomp needs your own copy of Panzer Dragoon Orta (USA).\n\n"
+             "Choose its disc image (.iso / .xiso). Its files are copied into the "
+             "app's own storage, so the image itself can be deleted afterwards.",
+             extra ? extra : "", extra ? "\n\n" : "");
+#else
     snprintf(text, sizeof text,
              "%s%s"
              "Orta Recomp needs your own copy of Panzer Dragoon Orta (USA).\n\n"
@@ -88,6 +100,7 @@ static int ask_source(ui *u, const char *extra)
              "holds all of the game's files (default.xbe and the rest of the disc).\n\n"
              "A disc image is copied into:\n%s",
              extra ? extra : "", extra ? "\n\n" : "", pdo_data_dir());
+#endif
 
     SDL_zero(box);
     box.flags = extra ? SDL_MESSAGEBOX_WARNING : SDL_MESSAGEBOX_INFORMATION;
@@ -103,15 +116,23 @@ static int ask_source(ui *u, const char *extra)
 
 static bool pick(ui *u, int choice, char *out, size_t len)
 {
+#ifndef __ANDROID__
     static const SDL_DialogFileFilter filters[] = {
         { "Xbox disc images", "iso;xiso" },
         { "All files", "*" },
     };
+#endif
     dialog_result r;
 
     SDL_zero(r);
     if (choice == CHOICE_ISO)
+#ifdef __ANDROID__
+        /* Android's picker filters by MIME type, and disc images have no
+         * dependable one: every file is offered. */
+        SDL_ShowOpenFileDialog(dialog_cb, &r, u->window, NULL, 0, NULL, false);
+#else
         SDL_ShowOpenFileDialog(dialog_cb, &r, u->window, filters, SDL_arraysize(filters), NULL, false);
+#endif
     else
         SDL_ShowOpenFolderDialog(dialog_cb, &r, u->window, NULL, false);
 
@@ -162,7 +183,11 @@ bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check)
     bool ok = false;
 
     SDL_zero(u);
+#ifdef __ANDROID__
+    if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, 640, 360, SDL_WINDOW_FULLSCREEN, &u.window, &u.renderer))
+#else
     if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, 640, 360, 0, &u.window, &u.renderer))
+#endif
         SDL_Log("setup: no window (%s); dialogs will be parentless", SDL_GetError());
     draw(&u, -1);
 

@@ -33,6 +33,10 @@
 
 #include <SDL3/SDL.h>
 #include <SDL3/SDL_main.h>
+#ifdef __ANDROID__
+#include <android/log.h>
+#include <stdlib.h>
+#endif
 
 #include <stdio.h>
 #include <string.h>
@@ -105,6 +109,27 @@ static void SDLCALL log_to_stderr(void *user, int category, SDL_LogPriority prio
 }
 #endif
 
+#ifdef __ANDROID__
+static void SDLCALL log_to_file_and_logcat(void *user, int category, SDL_LogPriority priority, const char *message)
+{
+    (void)user; (void)category;
+    fprintf(stderr, "%s%s\n", priority >= SDL_LOG_PRIORITY_ERROR ? "ERROR: "
+                              : priority == SDL_LOG_PRIORITY_WARN ? "WARNING: " : "", message);
+    __android_log_write(priority >= SDL_LOG_PRIORITY_ERROR ? ANDROID_LOG_ERROR
+                        : priority == SDL_LOG_PRIORITY_WARN ? ANDROID_LOG_WARN : ANDROID_LOG_INFO,
+                        "Orta", message);
+}
+
+/* android/: OrtaActivity leaves a marker in the app's storage while the game
+ * is in front, to tell a crash at the next start; a quit removes it. */
+static void remove_running_marker(void)
+{
+    char path[PDO_PATH_MAX];
+    snprintf(path, sizeof path, "%srunning", pdo_data_dir());
+    SDL_RemovePath(path);
+}
+#endif
+
 /* append: a run started by the program before it (relaunch.c) carries on
  * that run's log. */
 static bool open_log(const char *path, bool append)
@@ -147,6 +172,10 @@ static bool open_log(const char *path, bool append)
     dup2(fd, 1);
     dup2(fd, 2);
     close(fd);
+#endif
+#ifdef __ANDROID__
+    /* SDL_Log goes to logcat alone on Android: to the log file as well. */
+    SDL_SetLogOutputFunction(log_to_file_and_logcat, NULL);
 #endif
     setvbuf(stdout, NULL, _IONBF, 0);
     return true;
@@ -328,8 +357,15 @@ static bool run_launcher(pdo_config *cfg, pdo_game_check *check, bool *have_game
     int choice = PDO_LAUNCH_NONE;
 
     SDL_InitSubSystem(SDL_INIT_GAMEPAD);
+    /* Android: always the whole screen (a window there keeps the system
+     * bars, and gets a size of its own). */
+#ifdef __ANDROID__
+    const SDL_WindowFlags win_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_FULLSCREEN;
+#else
+    const SDL_WindowFlags win_flags = SDL_WINDOW_RESIZABLE;
+#endif
     if (!SDL_CreateWindowAndRenderer(APP_NAME, st->win_w >= 320 ? st->win_w : 1280, st->win_h >= 240 ? st->win_h : 960,
-                                     SDL_WINDOW_RESIZABLE, &win, &ren)) {
+                                     win_flags, &win, &ren)) {
         SDL_Log("launcher: no window (%s); starting the game", SDL_GetError());
         return *have_game;
     }
@@ -408,6 +444,9 @@ int main(int argc, char **argv)
 
     if (!parse_args(argc, argv, &opt))
         return 2;
+#ifdef __ANDROID__
+    atexit(remove_running_marker);
+#endif
     if (opt.log && !open_log(opt.log, opt.launch_data != NULL))
         return 2;
 #ifdef PDO_RELEASE

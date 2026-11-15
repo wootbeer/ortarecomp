@@ -77,3 +77,12 @@ __pycache__/
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# ── Android (android/) ───────────────────────────────────────────────────
+android/local.properties
+android/keystore.properties
+android/.gradle/
+android/.kotlin/
+android/app/.cxx/
+*.jks
+*.keystore

@@ -95,7 +95,15 @@ static SDL_EnumerationResult SDLCALL iso_cb(void *userdata, const char *dirname,
 
 bool pdo_assets_autodetect(char *out, size_t len, bool *is_iso)
 {
+#ifdef __ANDROID__
+    /* SDL's base path there is "./", which SDL's own file calls take as the
+     * app's storage but the kernel layer's open() as relative to "/": the
+     * game then found none of its files on the disc. The app's storage
+     * alone, by its full path. */
+    const char *roots[2] = { pdo_data_dir(), NULL };
+#else
     const char *roots[2] = { SDL_GetBasePath(), pdo_data_dir() };
+#endif
     pdo_game_check check;
     char path[PDO_PATH_MAX], err[512];
     int i;

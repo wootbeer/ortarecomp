@@ -1,5 +1,27 @@
 # Changelog
 
+## v0.1.10 (beta)
+
+### Fixed
+
+- "The disc may be dirty or damaged" at the episode 7 boss, after playing
+  from episode 1 in one sitting (issue 10). It was not the disc: by then
+  the game's memory was free in pieces too small for what the boss loads,
+  which the console (whose memory need not be in one piece) never runs
+  into. A request that finds no piece large enough now gets memory of its
+  own.
+
+### Changed
+
+- Vertex programs (the game's 3D models) are each made into a GPU shader
+  of their own, instead of all going through one that interprets them:
+  much lighter on handhelds, laptops and integrated graphics. The first
+  time a scene appears its shaders and pipelines are made in the
+  background while it plays (the old way draws meanwhile), then kept in
+  `shaders/` in the data folder and by the graphics driver, so it is
+  smooth from then on. The saved pipeline list (`pipelines.bin`) starts
+  again once.
+
 ## v0.1.9 (beta)
 
 ### Added

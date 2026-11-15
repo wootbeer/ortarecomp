@@ -1,0 +1,17 @@
+--- a/src/kernel/CMakeLists.txt
++++ b/src/kernel/CMakeLists.txt
+@@ -45,9 +45,11 @@
+     # include path that "platform/xbox_winnt.h" resolves against.
+     target_link_libraries(xbox_kernel PUBLIC platform kernel32 bcrypt)
+ else()
+-    # Linux: platform layer (POSIX host primitives) + OpenSSL for crypto.
+-    find_package(OpenSSL REQUIRED)
+-    target_link_libraries(xbox_kernel PUBLIC platform OpenSSL::Crypto)
++    # Linux, Android: the platform layer (POSIX host primitives). The kernel's
++    # crypto (SHA-1, RC4, HMAC in kernel_crypto.c) is its own software, so
++    # nothing here calls OpenSSL; requiring it stopped the Android build,
++    # whose NDK has none.
++    target_link_libraries(xbox_kernel PUBLIC platform)
+ endif()
+ 
+ if(MSVC)
