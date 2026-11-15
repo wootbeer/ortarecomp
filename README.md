@@ -29,7 +29,8 @@ Android build is planned.
   up to 16x.
 - **Smooth motion:** frame interpolation above 60 fps for high refresh rate
   displays (beta), or Lossless Scaling's frame generation with your own copy
-  of Lossless Scaling (experimental).
+  of Lossless Scaling (experimental). On a weak PC, a steady 30 fps (Display >
+  Frame rate) with the game at full speed.
 - **Color correction:** brightness, contrast, gamma and saturation, a CRT
   look, optional TV softening, and bloom (Low or High) that leaves the HUD
   alone.

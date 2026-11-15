@@ -5305,6 +5305,20 @@ void pdo_gfx_game_finished(void)
     SDL_UnlockMutex(q_lock);
 }
 
+/* Display > Frame rate 30 (Orta only): every other game frame is shown, a
+ * steady 30 fps -- smoother on a weak GPU than a rate that swings between 30
+ * and 60, and half its work. The game still runs at 60; an odd frame is left
+ * where the game thread hands frames over, so the next one replaces it and
+ * carries its texture uploads, as for any frame not drawn. One waiting over
+ * 40 ms (the game paused or loading), a capture or a screenshot is shown. pd1
+ * keeps its own 20 fps, each frame three vblanks. */
+static bool skip_odd_frame(const frame_data *f, bool cap30)
+{
+    return cap30 && (f->frame & 1) && !shot_frame(f)
+           && !(f->frame >= capture_frame && f->frame < capture_frame + capture_seq)
+           && SDL_GetTicksNS() - f->stamp < 40000000ull;
+}
+
 void pdo_gfx_main_loop(void)
 {
     frame_data *cur = NULL, *prev = NULL;
@@ -5327,8 +5341,10 @@ void pdo_gfx_main_loop(void)
         /* Frame generation makes the frames between the game's instead. */
         /* pd1 draws its frame itself, one flat picture: no geometry to
          * blend, only frames to repeat (the counter rose, the motion not). */
+        bool cap30 = pdo_settings_get()->fps30 && !lsfg_on && !getenv("PDO_BENCHMARK")
+                     && pdo_program_active() == PDO_PROGRAM_ORTA;
         bool want = pdo_settings_get()->frame_interp && !lsfg_on && !getenv("PDO_BENCHMARK")
-                    && pdo_program_active() == PDO_PROGRAM_ORTA;
+                    && pdo_program_active() == PDO_PROGRAM_ORTA && !cap30;
         bool interp = want && interp_ok;
         Uint64 now = SDL_GetTicksNS();
 
@@ -5375,7 +5391,7 @@ void pdo_gfx_main_loop(void)
             hold_for_overlay();
         SDL_LockMutex(q_lock);
         /* Interpolating, frames are drawn whether a new one came or not. */
-        if (!ready && !game_done && init_state != 1 && !(interp && prev))
+        if ((!ready || skip_odd_frame(ready, cap30)) && !game_done && init_state != 1 && !(interp && prev))
             SDL_WaitConditionTimeout(q_cond, q_lock, 4);
         if (init_state == 1) {
             SDL_UnlockMutex(q_lock);
@@ -5388,8 +5404,9 @@ void pdo_gfx_main_loop(void)
             SDL_UnlockMutex(q_lock);
             return;
         }
-        f = ready;
-        ready = NULL;
+        f = ready && !skip_odd_frame(ready, cap30) ? ready : NULL;
+        if (f)
+            ready = NULL;
         win_games += f != NULL;
         if (f) {
             held_prev = cur;

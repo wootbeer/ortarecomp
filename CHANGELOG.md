@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.9 (beta)
+
+### Added
+
+- Options > Display > Frame rate: 60 (the default) or 30. At 30 every
+  other frame is shown, a steady 30 fps: smoother on a weak graphics chip
+  than a rate that keeps dropping from 60, and half its work. The game
+  still runs at full speed. Orta only; the original Panzer Dragoon keeps
+  its own 20 fps (issue 28).
+
+### Fixed
+
+- The original Panzer Dragoon: the far sea was a flat pale band, distant
+  objects did not fade in and the radar was not see-through (issue 7). Its
+  renderer draws those through a dither pattern it rotates a bit per pixel,
+  and the recompiler lost the bit each rotation reports; it keeps it now.
+- Windows: switching between Orta and the original Panzer Dragoon, the new
+  window could open behind another one (a browser, say) without the focus
+  or the gamepad. The old window now hands the focus over before closing.
+
 ## v0.1.8 (beta)
 
 ### Added

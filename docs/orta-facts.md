@@ -384,6 +384,15 @@ NORMAL GAME, UP/DOWN REVERSE, EXIT) returns to Orta from EXIT, launching
 functions are identical to Orta's (tools/xbe_match.py), among them most of
 D3D, DSOUND, XPP and WMADEC.
 
+pd1's frame: its software renderer fills layer 0 of a 640x1440 A1R5G5B5
+texture (tex 0x00250000) and the frame is composed from it in Direct3D:
+layer 0 opaque, a multiply and an add of the vertex colour (a fade), layer 1
+(rows 480-960) blended by its alpha bit, then the multiply and add again;
+layer 1 was empty in play. Its span routines (0x0012B650, 0x0012D786,
+0x00129B50 among them) draw meshes and fades by a dither mask at
+[ebp-0xA4] rotated one bit per pixel (`ror ..., 1; jb skip`), and some
+brighten a quarter toward white (`~((~c >> 2) & 0x39E7)`).
+
 pd1 at run time: it counts vblanks with its vertical-blank callback
 (0x001A39E0 adds 1 to 0x0098D6C0) and paces frames with 0x00124437 (cdecl,
 n: spins until n vblanks since the last call, kept at 0x0092D4A4); its
