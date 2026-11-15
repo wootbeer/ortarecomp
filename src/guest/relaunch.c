@@ -163,6 +163,10 @@ static void restart_on(pdo_program program, const char *data_file)
             SDL_Log("launch: cannot start %s again (error %lu)", pdo_program_name(program), GetLastError());
             return;
         }
+        /* Windows lets a process take the foreground only if the one in
+         * front allows it: the new window otherwise opened without the
+         * focus, and so without the gamepad, until clicked. */
+        AllowSetForegroundWindow(pi.dwProcessId);
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         ExitProcess(0);

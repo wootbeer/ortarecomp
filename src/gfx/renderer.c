@@ -1963,6 +1963,11 @@ static bool init_here(int width, int height)
         SDL_SetBooleanProperty(wp, SDL_PROP_WINDOW_CREATE_FULLSCREEN_BOOLEAN, st->fullscreen);
         window = SDL_CreateWindowWithProperties(wp);
         SDL_DestroyProperties(wp);
+        /* In front and with the focus: a run started by the program before
+         * it (src/guest/relaunch.c) came up behind or unfocused on Windows,
+         * and SDL hands gamepads only to the focused window. */
+        if (window)
+            SDL_RaiseWindow(window);
     }
     if (window && SDL_ClaimWindowForGPUDevice(dev, window))
         have_swapchain = true;
