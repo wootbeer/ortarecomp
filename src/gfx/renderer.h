@@ -180,8 +180,9 @@ void pdo_gfx_set_depth(const pdo_surface *depth);
 int32_t pdo_gfx_vsh_program(const uint32_t *code, uint32_t count);
 
 /* Vertex program draws since the last call: with the program's own shader
- * (gfx/vsh_spec.h), and interpreted on the GPU. */
-void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted);
+ * (gfx/vsh_spec.h), and interpreted on the GPU; and their pipelines made in
+ * the background since, and the time that took. */
+void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_pipelines, double *bg_ms);
 
 typedef struct pdo_gpu_vsh {
     int32_t  program;                  /* pdo_gfx_vsh_program */

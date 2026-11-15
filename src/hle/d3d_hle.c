@@ -433,14 +433,15 @@ void sub_002BAFC0(void)
                 if (made)
                     SDL_Log("d3d: %u new pipelines made in the last %.1f s", made, (double)span / 1e9);
                 {
-                    uint32_t own, interp, pm, pf, pp;
-                    double pms;
-                    pdo_gfx_take_vsh_counts(&own, &interp);
+                    uint32_t own, interp, pm, pf, pp, bgp;
+                    double pms, bgms;
+                    pdo_gfx_take_vsh_counts(&own, &interp, &bgp, &bgms);
                     pdo_vsh_spec_counts(&pm, &pf, &pp, &pms);
-                    if (own || interp)
+                    if (own || interp || bgp)
                         SDL_Log("d3d: GPU vertex program draws: %u on their own shaders, %u interpreted; "
-                                "programs made %u (%u failed, %u to come), %.0f ms in all",
-                                own, interp, pm, pf, pp, pms);
+                                "programs made %u (%u failed, %u to come), %.0f ms in all; "
+                                "%u of their pipelines made in the background (%.0f ms)",
+                                own, interp, pm, pf, pp, pms, bgp, bgms);
                 }
                 {
                     uint32_t pc[4], drawn, dropped;

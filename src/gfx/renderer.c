@@ -746,8 +746,9 @@ static uint32_t nspec_shaders, cap_spec_shaders;
 typedef struct { int32_t base; uint32_t count; uint64_t key; int state; } spec_prog;
 #define SPEC_PROG_SLOTS 4096u
 static spec_prog spec_progs[SPEC_PROG_SLOTS];   /* by base; state 0 empty, 1 asked, 2 ready, -1 none */
-static uint32_t spec_new_pipelines;             /* made this frame: one a frame, not a hitch */
 static uint32_t spec_draws, interp_draws;       /* GPU program draws each way, for the log */
+static uint32_t bg_made;                        /* their pipelines made in the background (bg_ask) */
+static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 
 static SDL_GPUShader *make_shader_sb(const uint8_t *code, size_t len, SDL_GPUShaderStage stage,
                                      Uint32 samplers_n, Uint32 uniforms_n, Uint32 storage_n);
@@ -883,6 +884,7 @@ bool pdo_gfx_depth_reversed(void)
 }
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps);
+static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save);
 
 static void warm_pipelines(void)
 {
@@ -903,6 +905,13 @@ static void warm_pipelines(void)
              o += sizeof(pdo_pipeline_state)) {
             pdo_pipeline_state ps;
             memcpy(&ps, data + o, sizeof ps);
+            if (ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1])) {
+                /* a program's own shader: in the background, as in play */
+                SDL_GPUShader *sv = spec_shader_of((uint64_t)ps.vsh_spec[1] << 32 | ps.vsh_spec[0]);
+                if (sv)
+                    bg_ask(&ps, sv, false);
+                continue;
+            }
             get_pipeline(&ps);
         }
         warming = false;
@@ -936,11 +945,15 @@ uint64_t pdo_gfx_take_swap_wait_ns(void)
     return t;
 }
 
-void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted)
+void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_pipelines, double *bg_ms)
 {
     *own = spec_draws;
     *interpreted = interp_draws;
     spec_draws = interp_draws = 0;
+    *bg_pipelines = bg_made;
+    *bg_ms = (double)bg_ns / 1e6;
+    bg_made = 0;
+    bg_ns = 0;
 }
 
 uint64_t pdo_gfx_take_pipeline_ns(uint32_t *made)
@@ -952,15 +965,13 @@ uint64_t pdo_gfx_take_pipeline_ns(uint32_t *made)
     return t;
 }
 
+static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs);
+static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *p, bool save);
+
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
 {
-    SDL_GPUGraphicsPipelineCreateInfo pi;
-    SDL_GPUVertexBufferDescription vb[2];
-    SDL_GPUVertexAttribute attrs[9];
-    SDL_GPUColorTargetDescription ct;
     SDL_GPUGraphicsPipeline *p;
     SDL_GPUShader *spec_vs = NULL;
-    uint32_t cw = ps->color_write;
     Uint64 t0;
 
     p = find_pipeline(ps);
@@ -974,6 +985,28 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
         if (!spec_vs)
             return NULL;
     }
+    p = make_pipeline(ps, spec_vs);
+    if (!p)
+        return NULL;
+    add_pipeline(ps, p, !warming);
+    if (!warming) {
+        pipeline_ns += SDL_GetTicksNS() - t0;
+        pipelines_made++;
+    }
+    return p;
+}
+
+/* The pipeline for ps, made (not looked up or kept): get_pipeline's, and
+ * the background maker's for programs' own shaders (spec_vs). Reads only
+ * what changes with the quality settings (pipe_gen). */
+static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs)
+{
+    SDL_GPUGraphicsPipelineCreateInfo pi;
+    SDL_GPUVertexBufferDescription vb[2];
+    SDL_GPUVertexAttribute attrs[9];
+    SDL_GPUColorTargetDescription ct;
+    SDL_GPUGraphicsPipeline *p;
+    uint32_t cw = ps->color_write;
 
     /* Slot 1: the previous game frame's vertices, for interpolation. */
     SDL_zero(vb);
@@ -1078,16 +1111,120 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
         SDL_Log("gfx: pipeline creation failed (%s)", SDL_GetError());
         return NULL;
     }
+    return p;
+}
+
+/* Keeps a made pipeline (and the key in pipelines.bin when save). */
+static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *p, bool save)
+{
+    if (npipelines == MAX_PIPELINES) {
+        SDL_ReleaseGPUGraphicsPipeline(dev, p);
+        return;
+    }
     pipelines[npipelines].key = *ps;
     pipelines[npipelines].p = p;
     index_pipeline(npipelines);
     npipelines++;
-    if (!warming) {
-        pipeline_ns += SDL_GetTicksNS() - t0;
-        pipelines_made++;
+    if (save)
         save_pipeline_key(ps);
+}
+
+/* ── Programs' own pipelines, made in the background ─────────────────────
+ * A driver takes a long time over a pipeline with a long vertex shader
+ * (hundreds of milliseconds on an AMD card, 120 on Adreno), and every
+ * program brings several, one per render state it is drawn with. Made where
+ * the frame is recorded, they stalled it (4 fps starting episode 1). So
+ * they are made on a thread of their own (SDL's Vulkan pipeline creation
+ * takes its own locks), handed back at the next frame's recording, and
+ * until then the draw uses the interpreter's pipeline. Made for one set of
+ * quality settings (pipe_gen): one made for an earlier set is dropped. */
+typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs; SDL_GPUGraphicsPipeline *p;
+                 uint32_t gen; bool save; } bg_job;
+static SDL_Mutex *bg_lock;
+static SDL_Condition *bg_wake;
+static SDL_Thread *bg_thread;
+static bg_job *bg_todo, *bg_done;
+static uint32_t bg_ntodo, bg_cap_todo, bg_ndone, bg_cap_done;
+static uint32_t pipe_gen;                 /* the quality settings pipelines are made for */
+static pdo_pipeline_state *bg_asked;      /* asked for and not yet back (render thread) */
+static uint32_t bg_nasked, bg_cap_asked;
+
+static int SDLCALL bg_main(void *unused)
+{
+    (void)unused;
+    SDL_LockMutex(bg_lock);
+    for (;;) {
+        bg_job j;
+        Uint64 t0;
+        while (!bg_ntodo)
+            SDL_WaitCondition(bg_wake, bg_lock);
+        j = bg_todo[0];
+        memmove(bg_todo, bg_todo + 1, --bg_ntodo * sizeof *bg_todo);
+        SDL_UnlockMutex(bg_lock);
+        t0 = SDL_GetTicksNS();
+        j.p = make_pipeline(&j.ps, j.vs);
+        SDL_LockMutex(bg_lock);
+        bg_ns += SDL_GetTicksNS() - t0;
+        bg_done = grow(bg_done, &bg_cap_done, bg_ndone + 1, sizeof *bg_done);
+        bg_done[bg_ndone++] = j;
     }
-    return p;
+    return 0;
+}
+
+/* Asks for ps's pipeline (ps names a program's own shader, vs). */
+static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save)
+{
+    bg_job j;
+
+    for (uint32_t i = 0; i < bg_nasked; i++)
+        if (!memcmp(&bg_asked[i], ps, sizeof *ps))
+            return;
+    if (!bg_thread) {
+        bg_lock = SDL_CreateMutex();
+        bg_wake = SDL_CreateCondition();
+        if (bg_lock && bg_wake)
+            bg_thread = SDL_CreateThread(bg_main, "pipelines", NULL);
+        if (!bg_thread)
+            return;
+    }
+    bg_asked = grow(bg_asked, &bg_cap_asked, bg_nasked + 1, sizeof *bg_asked);
+    bg_asked[bg_nasked++] = *ps;
+    SDL_zero(j);
+    j.ps = *ps;
+    j.vs = vs;
+    j.gen = pipe_gen;
+    j.save = save;
+    SDL_LockMutex(bg_lock);
+    bg_todo = grow(bg_todo, &bg_cap_todo, bg_ntodo + 1, sizeof *bg_todo);
+    bg_todo[bg_ntodo++] = j;
+    SDL_SignalCondition(bg_wake);
+    SDL_UnlockMutex(bg_lock);
+}
+
+/* Keeps what the background made since the last call (render thread). */
+static void bg_collect(void)
+{
+    if (!bg_thread)
+        return;
+    SDL_LockMutex(bg_lock);
+    for (uint32_t i = 0; i < bg_ndone; i++) {
+        bg_job *j = &bg_done[i];
+        for (uint32_t k = 0; k < bg_nasked; k++)
+            if (!memcmp(&bg_asked[k], &j->ps, sizeof j->ps)) {
+                bg_asked[k] = bg_asked[--bg_nasked];
+                break;
+            }
+        if (!j->p)
+            continue;
+        if (j->gen != pipe_gen || find_pipeline(&j->ps)) {
+            SDL_ReleaseGPUGraphicsPipeline(dev, j->p);
+            continue;
+        }
+        add_pipeline(&j->ps, j->p, j->save);
+        bg_made++;
+    }
+    bg_ndone = 0;
+    SDL_UnlockMutex(bg_lock);
 }
 
 static struct { uint32_t key; SDL_GPUSampler *s; } samplers[MAX_SAMPLERS];
@@ -1807,6 +1944,8 @@ static void apply_quality(void)
         SDL_ReleaseGPUGraphicsPipeline(dev, pipelines[i].p);
     npipelines = 0;
     memset(pipe_slot, 0, sizeof pipe_slot);
+    pipe_gen++;                 /* the background's pipelines in the making are for the old settings */
+    bg_nasked = 0;
     SDL_ReleaseGPUTexture(dev, frame_color);
     SDL_ReleaseGPUTexture(dev, frame_depth);
     SDL_ReleaseGPUTexture(dev, frame_ms);
@@ -2857,7 +2996,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
 
     upload_frame(cmd);
     cur_target = NULL;
-    spec_new_pipelines = 0;
+    bg_collect();
     if (bloom)
         for (uint32_t i = F->ncmds; i-- > 0;)
             if (F->cmds[i].kind == CMD_DRAW && is_3d(F, &F->cmds[i])) {
@@ -2924,17 +3063,16 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
             /* The program's own shader when made, unless the draw is
              * paired with another program (only the interpreter runs two).
-             * Its pipelines one a frame: until then, the interpreter's. */
+             * Its pipelines are made in the background (bg_ask): until
+             * one is, the interpreter's. */
             if (gpu == 1 && c->vu.prev_prog[1] == 0) {
                 uint64_t key = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
                 if (key) {
                     ps.vsh_spec[0] = (uint32_t)key;
                     ps.vsh_spec[1] = (uint32_t)(key >> 32);
                     if (!find_pipeline(&ps)) {
-                        if (spec_new_pipelines >= 1)
-                            ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
-                        else
-                            spec_new_pipelines++;
+                        bg_ask(&ps, spec_shader_of(key), true);
+                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
                     }
                 }
                 if (ps.vsh_spec[0] || ps.vsh_spec[1])
