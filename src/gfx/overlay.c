@@ -316,7 +316,7 @@ static void change(int dir)
     case ITEM_INTERP: next_frame_gen(s, dir); break;
     case ITEM_LSMODE: s->lsfg_performance = !s->lsfg_performance; break;
     case ITEM_LSDLL:  if (dir > 0) pick_dll(); else s->lsfg_dll[0] = 0; break;
-    case ITEM_ABOUT:  if (dir > 0) SDL_OpenURL("https://github.com/wootbeer"); break;
+    case ITEM_ABOUT:  break;        /* says who made it (its help), nothing to change */
     case ITEM_CONTROLS: if (dir > 0) { controls = true; selected = 0; } break;
     case ITEM_CLOSE:  if (dir > 0) set_open(false); break;
     case ITEM_QUIT:   if (dir > 0) ask_quit(); break;
@@ -952,7 +952,7 @@ static const char *help_of(int item)
     case ITEM_RATE:   return "60 is default.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_TOUCH:  return "Auto hides them while a controller is connected.";
-    case ITEM_ABOUT:  return "Orta Recomp by wootbeer. OK opens github.com/wootbeer";
+    case ITEM_ABOUT:  return "Orta Recomp by wootbeer github.com/wootbeer";
     case ITEM_TOUCH_SIZE: return "Size of the on-screen controls.";
     case ITEM_TOUCH_ALPHA: return "Opacity of the on-screen controls.";
     case ITEM_3D: {
