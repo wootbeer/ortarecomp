@@ -15,7 +15,7 @@ index b9a02bc..cd357fe 100644
   * Character type of a translated host path. The Win32 file APIs take wide
   * chars; POSIX takes bytes. kernel_path.c and kernel_file.c are split on
 diff --git a/src/kernel/kernel_path.c b/src/kernel/kernel_path.c
-index caf6390..387843f 100644
+index caf6390..9ef7640 100644
 --- a/src/kernel/kernel_path.c
 +++ b/src/kernel/kernel_path.c
 @@ -21,6 +21,13 @@
@@ -220,18 +220,16 @@ index caf6390..387843f 100644
  /* Strip a single trailing '/' (but never the root '/'). */
  static void strip_trailing_slash(char* s)
  {
-@@ -548,6 +711,35 @@ void xbox_path_init(const char* game_dir, const char* save_dir)
+@@ -548,6 +720,27 @@ void xbox_path_init(const char* game_dir, const char* save_dir)
      strip_trailing_slash(s_game_dir);
      strip_trailing_slash(s_save_dir);
  
 +    /* Same layout as the Win32 backend: the save-side directories, the raw
-+     * disk image with its partition table, and sparse images for the other
-+     * partition devices. See the Win32 xbox_path_init for why each exists. */
++     * disk image with its partition table, and images for the other
++     * partition devices (xbox_PartitionImagesPrepare). See the Win32
++     * xbox_path_init for why each exists. */
 +    {
 +        static const char *subs[] = { "TitleData", "UserData", "Cache", "SystemData" };
-+        static const unsigned long long part_sectors[6] = {
-+            0, 0x00465400ull, 0x000FA000ull, 0x00177000ull, 0x00177000ull, 0x00177000ull,
-+        };
 +        char path[MAX_PATH];
 +
 +        mkdir_p(s_save_dir);
@@ -241,22 +239,16 @@ index caf6390..387843f 100644
 +        }
 +        snprintf(path, sizeof(path), "%s/Partition0.img", s_save_dir);
 +        xbox_write_partition_table_posix(path);
-+        for (int p = 1; p <= 5; p++) {
-+            FILE *f;
-+            snprintf(path, sizeof(path), "%s/Partition%d.img", s_save_dir, p);
-+            f = fopen(path, "ab");      /* create if missing, keep contents */
-+            if (!f)
-+                continue;
-+            fclose(f);
-+            if (truncate(path, (off_t)(part_sectors[p] * 512ull)) != 0)
-+                xbox_log(XBOX_LOG_WARN, XBOX_LOG_PATH, "size %s: %s", path, strerror(errno));
++        {
++            void xbox_PartitionImagesPrepare(const char *save_dir);
++            xbox_PartitionImagesPrepare(s_save_dir);
 +        }
 +    }
 +
      s_initialized = TRUE;
      xbox_log(XBOX_LOG_INFO, XBOX_LOG_PATH, "Path init: game=%s, save=%s",
               s_game_dir, s_save_dir);
-@@ -572,6 +764,20 @@ BOOL xbox_translate_path(const char* xbox_path, xbox_host_char* host_path_buf, D
+@@ -572,6 +765,20 @@ BOOL xbox_translate_path(const char* xbox_path, xbox_host_char* host_path_buf, D
              return xbox_translate_path(linked, host_path_buf, buf_size);
      }
  
@@ -277,7 +269,7 @@ index caf6390..387843f 100644
      for (int i = 0; i < PATH_RULE_COUNT; i++) {
          skip = match_prefix(xbox_path, s_rules[i].prefix);
          if (skip) {
-@@ -590,6 +796,10 @@ BOOL xbox_translate_path(const char* xbox_path, xbox_host_char* host_path_buf, D
+@@ -590,6 +797,10 @@ BOOL xbox_translate_path(const char* xbox_path, xbox_host_char* host_path_buf, D
      return TRUE;
  
  translate:
@@ -288,7 +280,7 @@ index caf6390..387843f 100644
      {
          char remainder_posix[MAX_PATH];
          snprintf(remainder_posix, sizeof(remainder_posix), "%s", remainder);
-@@ -616,6 +826,7 @@ translate:
+@@ -616,6 +827,7 @@ translate:
                  host_path_buf[--n] = '\0';
          }
  

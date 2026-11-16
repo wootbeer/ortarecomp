@@ -37,7 +37,7 @@ android {
         targetSdk = 35
         // The same version name as the PC release it matches.
         versionCode = 1
-        versionName = "0.1.11"
+        versionName = "0.1.12"
 
         ndk {
             abiFilters += "arm64-v8a"

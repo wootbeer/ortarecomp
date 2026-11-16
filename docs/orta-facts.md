@@ -342,6 +342,15 @@ gives offset 1, tables read at 0, two volleys each as on the console;
 region 0 gave offset 0, tables at 1, one volley (issue 8: Normal played
 like Easy).
 
+## Hard disk partition images
+
+At each boot Orta reads the partition table (\Device\Harddisk0\partition0,
+512 bytes at 2048) and formats Z: (\Device\Harddisk0\Partition5): 29
+writes of 4 KB from offset 0 to 118,784 (boot sector, a 96 KB cluster
+table, a 16 KB root folder). Nothing else touches the partition devices in
+a session (episodes 1 to 7, Pandora's Box, pd1 and back, saving); its files
+go through the folders. Patch 0043 keeps the images at what is written.
+
 ## Saves and Pandora's Box
 
 PDOSYSTEM.DAT (16 KB) is a 20-byte signature, then the block the game keeps

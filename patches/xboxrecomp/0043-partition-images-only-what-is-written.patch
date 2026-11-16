@@ -1,0 +1,380 @@
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -3079,6 +3079,71 @@
+ }
+ 
+ /* Open a file by delegating to the ported xbox_NtCreateFile kernel HLE. */
++/* Partition devices 1-5 (\Device\Harddisk0\PartitionN), backed by image
++ * files that hold only what was written to them (kernel_path.c,
++ * xbox_PartitionImagesPrepare). Their handles are remembered at the open so
++ * that size queries are answered from the partition table, and reads past an
++ * image's end return zeros, as the unwritten part of a disk does. The first
++ * reads and writes are logged with their place, to show where a title
++ * touches them. */
++unsigned long long xbox_PartitionBytes(int n);     /* kernel_path.c */
++
++#define BRIDGE_PART_MAX 16
++static struct { uint32_t token; int part; } g_part_handles[BRIDGE_PART_MAX];
++
++static int bridge_partition_of_name(const char *name)
++{
++    static const char dev[] = "\\Device\\Harddisk0\\Partition";
++    size_t n = sizeof dev - 1;
++
++    if (!name || _strnicmp(name, dev, n) != 0)
++        return 0;
++    if (name[n] < '1' || name[n] > '5' || name[n + 1] != 0)
++        return 0;
++    return name[n] - '0';
++}
++
++static void bridge_note_partition(uint32_t token, int part)
++{
++    int i;
++    if (!token || !part)
++        return;
++    for (i = 0; i < BRIDGE_PART_MAX; i++)
++        if (!g_part_handles[i].token) {
++            g_part_handles[i].token = token;
++            g_part_handles[i].part = part;
++            return;
++        }
++}
++
++static int bridge_partition_handle(uint32_t token)
++{
++    int i;
++    if (!token)
++        return 0;
++    for (i = 0; i < BRIDGE_PART_MAX; i++)
++        if (g_part_handles[i].token == token)
++            return g_part_handles[i].part;
++    return 0;
++}
++
++static void bridge_forget_partition(uint32_t token)
++{
++    int i;
++    for (i = 0; i < BRIDGE_PART_MAX; i++)
++        if (g_part_handles[i].token == token)
++            g_part_handles[i].token = 0;
++}
++
++static void bridge_partition_io_log(int part, const char *what, long long at, uint32_t len)
++{
++    static int logged;
++    if (logged++ < 64) {
++        fprintf(stderr, "  [PART] Partition%d %s @%lld, %u bytes\n", part, what, at, len);
++        fflush(stderr);
++    }
++}
++
+ static NTSTATUS bridge_create_file_impl(
+     uint32_t handle_va, ACCESS_MASK access, uint32_t obj_attrs_va,
+     uint32_t iostatus_va, ULONG file_attrs, ULONG share,
+@@ -3113,6 +3178,8 @@
+     if (NT_SUCCESS(st)) {
+         bridge_write_handle(handle_va, h);
+         bridge_write_iostatus(iostatus_va, ios.Status, (uint32_t)ios.Information);
++        if (handle_va)
++            bridge_note_partition(BRIDGE_MEM32(handle_va), bridge_partition_of_name(name.Buffer));
+     } else {
+         bridge_write_iostatus(iostatus_va, st, 0);
+     }
+@@ -3564,6 +3631,7 @@
+ static void bridge_forget_async_handle(uint32_t token)
+ {
+     int i;
++    bridge_forget_partition(token);     /* NtClose: a partition handle too */
+     for (i = 0; i < BRIDGE_ASYNC_MAX; i++)
+         if (g_async_handles[i] == token) { g_async_handles[i] = 0; return; }
+ }
+@@ -3615,6 +3683,27 @@
+     g_eax = (uint32_t)xbox_NtReadFile(handle, NULL, NULL, NULL, &ios,
+                 XBOX_TO_NATIVE(buffer_va), length, poff);
+ 
++    /* A partition image ends where its writes did; past that, up to the
++     * partition's size, the disk reads as zeros. */
++    {
++        int part = bridge_partition_handle(STACK_ARG(0));
++        if (part && poff && off.QuadPart >= 0) {
++            unsigned long long at = (unsigned long long)off.QuadPart;
++            unsigned long long size = xbox_PartitionBytes(part);
++            uint32_t want = at >= size ? 0
++                          : (uint32_t)(size - at < length ? size - at : length);
++            uint32_t got = NT_SUCCESS(ios.Status) ? (uint32_t)ios.Information : 0;
++
++            bridge_partition_io_log(part, "read", (long long)at, length);
++            if (want > got && (NT_SUCCESS(ios.Status) || ios.Status == STATUS_END_OF_FILE)) {
++                memset((uint8_t *)XBOX_TO_NATIVE(buffer_va) + got, 0, want - got);
++                ios.Status = STATUS_SUCCESS;
++                ios.Information = want;
++                g_eax = STATUS_SUCCESS;
++            }
++        }
++    }
++
+     /* What a read actually delivered. A decoder that rejects its input cannot
+      * say whether the bytes were wrong or the read was, and the two look
+      * identical from inside the title -- the first bytes settle it. */
+@@ -3689,6 +3778,9 @@
+     }
+     g_eax = (uint32_t)xbox_NtWriteFile(handle, NULL, NULL, NULL, &ios,
+                 XBOX_TO_NATIVE(buffer_va), length, poff);
++    if (bridge_partition_handle(STACK_ARG(0)))
++        bridge_partition_io_log(bridge_partition_handle(STACK_ARG(0)), "write",
++                                poff ? (long long)off.QuadPart : -1, length);
+     bridge_write_iostatus(iostatus, ios.Status, (uint32_t)ios.Information);
+     bridge_complete_file_io(STACK_ARG(1), STACK_ARG(2), STACK_ARG(3),
+                             iostatus);
+@@ -3713,6 +3805,19 @@
+     g_eax = (uint32_t)xbox_NtQueryInformationFile(handle, &ios,
+                 XBOX_TO_NATIVE(info_va), length,
+                 (XBOX_FILE_INFORMATION_CLASS)infoclass);
++    /* A partition image's size is the partition's: AllocationSize and
++     * EndOfFile of FileStandardInformation (5, at 0 and 8) and
++     * FileNetworkOpenInformation (34, at 32 and 40). */
++    if (g_eax == 0 && bridge_partition_handle(STACK_ARG(0))) {
++        unsigned long long size = xbox_PartitionBytes(bridge_partition_handle(STACK_ARG(0)));
++        uint32_t at = infoclass == 5 ? 0 : infoclass == 34 ? 32 : 0xFFFFFFFFu;
++        if (at != 0xFFFFFFFFu && length >= at + 16) {
++            BRIDGE_MEM32(info_va + at)      = (uint32_t)size;
++            BRIDGE_MEM32(info_va + at + 4)  = (uint32_t)(size >> 32);
++            BRIDGE_MEM32(info_va + at + 8)  = (uint32_t)size;
++            BRIDGE_MEM32(info_va + at + 12) = (uint32_t)(size >> 32);
++        }
++    }
+     bridge_write_iostatus(ios_va, ios.Status, (uint32_t)ios.Information);
+ }
+ 
+@@ -4075,7 +4180,9 @@
+             return;
+         }
+         size.QuadPart = 0;
+-        if (h && h != INVALID_HANDLE_VALUE)
++        if (bridge_partition_handle(STACK_ARG(0)))  /* the table's size, not the image's */
++            size.QuadPart = (LONGLONG)xbox_PartitionBytes(bridge_partition_handle(STACK_ARG(0)));
++        else if (h && h != INVALID_HANDLE_VALUE)
+             GetFileSizeEx(h, &size);
+         BRIDGE_MEM32(out_va +  0) = 0;                       /* StartingOffset */
+         BRIDGE_MEM32(out_va +  4) = 0;
+--- a/src/kernel/kernel_path.c
++++ b/src/kernel/kernel_path.c
+@@ -363,38 +363,12 @@
+         }
+         swprintf_s(image, MAX_PATH, L"%s\\%s", s_save_dir, XBOX_DISK_IMAGE_NAME);
+         xbox_write_partition_table(image);
+-        /* The other partition devices, sized to the same geometry the table
+-         * above describes, so a title that asks the device how big it is gets
+-         * an answer consistent with the table it just read. Marked sparse
+-         * first: the cache partitions are 750 MB each and none of that is
+-         * touched until something writes to it. */
++        /* The other partition devices: images holding only what is written
++         * to them, their sizes from the table above (see
++         * xbox_PartitionImagesPrepare, at the end of this file). */
+         {
+-            static const ULONGLONG part_sectors[6] = {
+-                0,             /* 0: whole disk, sized below      */
+-                0x00465400ull, /* 1: E: game and saves            */
+-                0x000FA000ull, /* 2: C: system                    */
+-                0x00177000ull, /* 3: X: cache                     */
+-                0x00177000ull, /* 4: Y: cache                     */
+-                0x00177000ull, /* 5: Z: cache                     */
+-            };
+-            for (int p = 1; p <= 5; p++) {
+-                HANDLE h;
+-                DWORD ret;
+-                LARGE_INTEGER end;
+-
+-                swprintf_s(image, MAX_PATH, L"%s\\Partition%d.img",
+-                           s_save_dir, p);
+-                h = CreateFileW(image, GENERIC_WRITE, FILE_SHARE_READ, NULL,
+-                                OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+-                if (h == INVALID_HANDLE_VALUE)
+-                    continue;
+-                DeviceIoControl(h, FSCTL_SET_SPARSE, NULL, 0, NULL, 0,
+-                                &ret, NULL);
+-                end.QuadPart = (LONGLONG)(part_sectors[p] * 512ull);
+-                if (SetFilePointerEx(h, end, NULL, FILE_BEGIN))
+-                    SetEndOfFile(h);
+-                CloseHandle(h);
+-            }
++            void xbox_PartitionImagesPrepare(const WCHAR *save_dir);
++            xbox_PartitionImagesPrepare(s_save_dir);
+         }
+     }
+ 
+@@ -836,3 +810,173 @@
+ }
+ 
+ #endif /* _WIN32 */
++
++/* ======================================================================== */
++#include <stdlib.h>
++#if !defined(_WIN32)
++#include <fcntl.h>
++#endif
++/* Partition images 1-5: only what the title writes.
++ *
++ * \Device\Harddisk0\Partition1..5 are backed by PartitionN.img in the save
++ * folder. They used to be stretched to the partition's full size (2.2 GB for
++ * E:, 750 MB for each cache) so that the device's size could be read off the
++ * file: sparse, so taking almost no space, but shown at full size by file
++ * managers, and really taking it on a filesystem without sparse files (FAT32
++ * or exFAT, a USB stick). A title writes a few hundred KB at their start --
++ * formatting a cache partition is a boot sector, the cluster table and the
++ * root folder -- and keeps its files in the folders beside them.
++ *
++ * Now the size comes from the partition table (xbox_PartitionBytes, which the
++ * bridge answers size queries from), the image holds only what was written,
++ * and a read past its end returns zeros (the bridge), as the unwritten part of
++ * a disk does. What the title reads is byte for byte what it read before.
++ * Images from before are cut back to their last non-zero byte: everything
++ * past it read as zeros then and reads as zeros now. */
++static const unsigned long long s_partition_bytes[6] = {
++    0,                      /* 0: the whole disk, the partition table's image */
++    0x00465400ull * 512,    /* 1: E: game and saves */
++    0x000FA000ull * 512,    /* 2: C: system */
++    0x00177000ull * 512,    /* 3: X: cache */
++    0x00177000ull * 512,    /* 4: Y: cache */
++    0x00177000ull * 512,    /* 5: Z: cache */
++};
++
++unsigned long long xbox_PartitionBytes(int n)
++{
++    return n >= 1 && n <= 5 ? s_partition_bytes[n] : 0;
++}
++
++#define PART_SCAN_CHUNK (1024u * 1024u)
++
++/* The end of the last non-zero byte in [0, size), scanning back from the end
++ * a chunk at a time; chunk_has_data skips the holes of a sparse file without
++ * reading them. 0 when it is all zeros; size when a read fails (keep it). */
++static unsigned long long part_data_end(void *fh, unsigned long long size,
++        int (*chunk_has_data)(void *fh, unsigned long long lo, unsigned long long hi),
++        int (*read_at)(void *fh, unsigned long long at, unsigned char *buf, unsigned n))
++{
++    unsigned char *buf = malloc(PART_SCAN_CHUNK);
++    unsigned long long hi = size;
++
++    if (!buf)
++        return size;
++    while (hi > 0) {
++        unsigned long long lo = hi > PART_SCAN_CHUNK ? hi - PART_SCAN_CHUNK : 0;
++        if (chunk_has_data(fh, lo, hi)) {
++            unsigned n = (unsigned)(hi - lo);
++            if (!read_at(fh, lo, buf, n)) {
++                free(buf);
++                return size;
++            }
++            while (n > 0 && buf[n - 1] == 0)
++                n--;
++            if (n) {
++                free(buf);
++                return lo + n;
++            }
++        }
++        hi = lo;
++    }
++    free(buf);
++    return 0;
++}
++
++#if defined(_WIN32)
++static int part_has_data_win(void *fh, unsigned long long lo, unsigned long long hi)
++{
++    FILE_ALLOCATED_RANGE_BUFFER q, r;
++    DWORD got = 0;
++
++    q.FileOffset.QuadPart = (LONGLONG)lo;
++    q.Length.QuadPart = (LONGLONG)(hi - lo);
++    if (!DeviceIoControl((HANDLE)fh, FSCTL_QUERY_ALLOCATED_RANGES, &q, sizeof q,
++                         &r, sizeof r, &got, NULL) && GetLastError() != ERROR_MORE_DATA)
++        return 1;                   /* not sparse-aware: read it */
++    return got > 0;
++}
++
++static int part_read_win(void *fh, unsigned long long at, unsigned char *buf, unsigned n)
++{
++    OVERLAPPED ov;
++    DWORD got = 0;
++
++    memset(&ov, 0, sizeof ov);
++    ov.Offset = (DWORD)at;
++    ov.OffsetHigh = (DWORD)(at >> 32);
++    return ReadFile((HANDLE)fh, buf, n, &got, &ov) && got == n;
++}
++
++void xbox_PartitionImagesPrepare(const WCHAR *save_dir)
++{
++    for (int p = 1; p <= 5; p++) {
++        WCHAR image[MAX_PATH];
++        HANDLE h;
++        DWORD ret;
++        LARGE_INTEGER size, end;
++        unsigned long long keep;
++
++        swprintf_s(image, MAX_PATH, L"%s\\Partition%d.img", save_dir, p);
++        h = CreateFileW(image, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ, NULL,
++                        OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
++        if (h == INVALID_HANDLE_VALUE)
++            continue;
++        /* Sparse still, should a title ever write far into it. */
++        DeviceIoControl(h, FSCTL_SET_SPARSE, NULL, 0, NULL, 0, &ret, NULL);
++        if (GetFileSizeEx(h, &size) && size.QuadPart > 0) {
++            keep = part_data_end(h, (unsigned long long)size.QuadPart,
++                                 part_has_data_win, part_read_win);
++            keep = (keep + 511) & ~511ull;
++            if (keep < (unsigned long long)size.QuadPart) {
++                end.QuadPart = (LONGLONG)keep;
++                if (SetFilePointerEx(h, end, NULL, FILE_BEGIN) && SetEndOfFile(h))
++                    fprintf(stderr, "  [PATH] Partition%d.img: %lld bytes -> %llu"
++                                    " (the rest was zeros)\n", p, (long long)size.QuadPart, keep);
++            }
++        }
++        CloseHandle(h);
++    }
++}
++#else
++static int part_has_data_posix(void *fh, unsigned long long lo, unsigned long long hi)
++{
++#ifdef SEEK_DATA
++    off_t d = lseek(*(int *)fh, (off_t)lo, SEEK_DATA);
++    if (d < 0)
++        return errno == ENXIO ? 0 : 1;  /* ENXIO: no data past lo */
++    return (unsigned long long)d < hi;
++#else
++    (void)fh; (void)lo; (void)hi;
++    return 1;
++#endif
++}
++
++static int part_read_posix(void *fh, unsigned long long at, unsigned char *buf, unsigned n)
++{
++    return pread(*(int *)fh, buf, n, (off_t)at) == (ssize_t)n;
++}
++
++void xbox_PartitionImagesPrepare(const char *save_dir)
++{
++    for (int p = 1; p <= 5; p++) {
++        char image[MAX_PATH];
++        struct stat st;
++        int fd;
++        unsigned long long keep;
++
++        snprintf(image, sizeof(image), "%s/Partition%d.img", save_dir, p);
++        fd = open(image, O_RDWR | O_CREAT, 0644);
++        if (fd < 0)
++            continue;
++        if (fstat(fd, &st) == 0 && st.st_size > 0) {
++            keep = part_data_end(&fd, (unsigned long long)st.st_size,
++                                 part_has_data_posix, part_read_posix);
++            keep = (keep + 511) & ~511ull;
++            if (keep < (unsigned long long)st.st_size && ftruncate(fd, (off_t)keep) == 0)
++                fprintf(stderr, "  [PATH] Partition%d.img: %lld bytes -> %llu"
++                                " (the rest was zeros)\n", p, (long long)st.st_size, keep);
++        }
++        close(fd);
++    }
++}
++#endif
