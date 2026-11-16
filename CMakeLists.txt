@@ -79,6 +79,13 @@ add_subdirectory(external/SDL EXCLUDE_FROM_ALL)
 if(ANDROID)
     add_library(OrtaRecomp SHARED)
     set_target_properties(OrtaRecomp PROPERTIES OUTPUT_NAME main)
+    # The on-screen touch controls (descore's touch module, drawn by
+    # android/'s TouchControlsView; no GL here).
+    target_sources(OrtaRecomp PRIVATE
+        src/android/touch_controls.c
+        src/android/descore/touch/descore_touch.c)
+    set_source_files_properties(src/android/descore/touch/descore_touch.c
+        PROPERTIES COMPILE_DEFINITIONS DESCORE_TOUCH_NO_GL)
 else()
     add_executable(OrtaRecomp)
 endif()

@@ -13,8 +13,13 @@ file dialog for the document picker, its `content://` reading for the disc image
    `explicit_bzero`), the crash report's stack (`_Unwind_Backtrace`), the log through logcat and
    `ortarecomp.log`, the setup's disc image picker. To try on the owner's Retroid Pocket 6
    (Snapdragon, Adreno) with its built-in controller.
-2. **Touch controls**: descore's touch module (from snprecomp's `src/android/descore`), its
-   shapes drawn by our renderer's overlay; Back already opens the options.
+2. **Touch controls** (in, to try): descore's touch module (`src/android/descore`, from
+   snprecomp), the layout and the Xbox buttons in `src/android/touch_controls.c`, fed into the
+   first controller in `src/hle/input_hle.c` (Orta and pd1 alike), drawn by `TouchControlsView`
+   over SDL's surface as in snprecomp. A stick (left thumbstick), A/B/X/Y, LT/RT, START and MENU
+   (the options). Options > Gameplay: Touch buttons (Auto hides them while a gamepad is
+   connected, as on the RP6), Touch size, Touch opacity. Labels are the pad's; Orta's actions
+   per button to put on them once known.
 3. **Performance** on the device: frame rate, the guest CPU lock on ARM, Display > Frame rate 30.
 4. **Lossless Scaling** (btgarecomp's Android build runs `lib/lsfg`, which builds on Android as
    it is): the DLL picked through the file dialog and copied into the app's storage.

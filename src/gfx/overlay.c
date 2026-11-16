@@ -28,7 +28,7 @@
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
-       ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
+       ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
        ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_FULLSCREEN, ITEM_EXIT,
        /* Picture (present.frag) */
@@ -53,7 +53,13 @@ static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
+#ifdef __ANDROID__
+/* The on-screen controls' settings (src/android/touch_controls.c). */
+static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_TOUCH, ITEM_TOUCH_SIZE,
+                                      ITEM_TOUCH_ALPHA, ITEM_BACK };
+#else
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
+#endif
 static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
                                          ITEM_BACK };
@@ -296,6 +302,9 @@ static void change(int dir)
     case ITEM_SHADOWS: s->shadow_original = !s->shadow_original; break;
     case ITEM_RATE:   s->fps30 = !s->fps30; break;
     case ITEM_RUMBLE: s->rumble = SDL_clamp((s->rumble + 10 * dir) / 10 * 10, 0, 100); break;
+    case ITEM_TOUCH:  s->touch_buttons = (s->touch_buttons + PDO_TOUCH_COUNT + dir) % PDO_TOUCH_COUNT; break;
+    case ITEM_TOUCH_SIZE: s->touch_size = SDL_clamp(s->touch_size + 10 * dir, 60, 180); break;
+    case ITEM_TOUCH_ALPHA: s->touch_opacity = SDL_clamp(s->touch_opacity + 10 * dir, 30, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
         pdo_mixer_apply_output();
@@ -695,6 +704,12 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_VSYNC:  snprintf(v, n, "%s", s->vsync == PDO_VSYNC_OFF ? "Off" : s->vsync == PDO_VSYNC_FAST ? "Fast" : "On"); break;
     case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Low" : "High"); break;
     case ITEM_RATE:   snprintf(v, n, "%s", s->fps30 ? "30" : "60"); break;
+    case ITEM_TOUCH:
+        snprintf(v, n, "%s", s->touch_buttons == PDO_TOUCH_ALWAYS ? "Always"
+                 : s->touch_buttons == PDO_TOUCH_OFF ? "Off" : "Auto");
+        break;
+    case ITEM_TOUCH_SIZE: snprintf(v, n, "%d%%", s->touch_size); break;
+    case ITEM_TOUCH_ALPHA: snprintf(v, n, "%d%%", s->touch_opacity); break;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);
@@ -774,6 +789,9 @@ static const char *label_of(int item)
     case ITEM_SHADOWS: return "Shadows";
     case ITEM_RATE:   return "Frame rate";
     case ITEM_RUMBLE: return "Vibration";
+    case ITEM_TOUCH:  return "Touch buttons";
+    case ITEM_TOUCH_SIZE: return "Touch size";
+    case ITEM_TOUCH_ALPHA: return "Touch opacity";
     case ITEM_3D:     return "Output";
     case ITEM_HRTF:   return "3D sound";
     case ITEM_VSH:    return "Vertex programs";
@@ -838,6 +856,9 @@ static const char *help_of(int item)
     case ITEM_SHADOWS: return "Low: lighter on the GPU.";
     case ITEM_RATE:   return "60 is default.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
+    case ITEM_TOUCH:  return "Auto hides them while a controller is connected.";
+    case ITEM_TOUCH_SIZE: return "Size of the on-screen controls.";
+    case ITEM_TOUCH_ALPHA: return "Opacity of the on-screen controls.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",
                                                       "5.1 speakers: sound all around." };

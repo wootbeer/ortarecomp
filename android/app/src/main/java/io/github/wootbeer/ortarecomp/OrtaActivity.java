@@ -2,12 +2,15 @@ package io.github.wootbeer.ortarecomp;
 
 import android.app.AlertDialog;
 import android.content.ActivityNotFoundException;
+import android.content.Context;
 import android.content.Intent;
+import android.hardware.input.InputManager;
 import android.os.Bundle;
 import android.util.Log;
 import android.view.InputDevice;
 import android.view.KeyEvent;
 import android.view.View;
+import android.view.ViewGroup;
 
 import org.libsdl.app.SDLActivity;
 
@@ -15,11 +18,14 @@ import org.libsdl.app.SDLActivity;
  * Hosts the native game (libmain.so, built from the repo-root CMakeLists.txt, with SDL linked in)
  * through SDL's SDLActivity. From Sin and Punishment Recompiled's Android build, by the same author.
  */
-public class OrtaActivity extends SDLActivity {
+public class OrtaActivity extends SDLActivity implements InputManager.InputDeviceListener {
     private static final String TAG = "Orta";
 
     /** The game runs once per process; a crash is looked for once, at its start. */
     private static boolean runStarted;
+
+    /** The on-screen controls, over the game's surface (TouchControlsView). */
+    private TouchControlsView touchControls;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -29,6 +35,21 @@ public class OrtaActivity extends SDLActivity {
             lastRunCrashed = LogFiles.lastRunCrashed(this);
         }
         super.onCreate(savedInstanceState);
+
+        // SDL's layout holds the game's surface; the touch controls go over it.
+        if (mLayout != null && !mBrokenLibraries) {
+            touchControls = new TouchControlsView(this);
+            mLayout.addView(touchControls, new ViewGroup.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            touchControls.setMenuListener(this::toggleGameMenu);
+
+            InputManager inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
+            if (inputManager != null) {
+                inputManager.registerInputDeviceListener(this, null);
+            }
+            touchControls.setGamepadConnected(anyGamepadConnected());
+        }
+
         if (lastRunCrashed && !mBrokenLibraries) {
             offerLogAfterCrash();
         }
@@ -72,6 +93,51 @@ public class OrtaActivity extends SDLActivity {
         super.onPause();
     }
 
+    @Override
+    protected void onDestroy() {
+        InputManager inputManager = (InputManager) getSystemService(Context.INPUT_SERVICE);
+        if (inputManager != null && touchControls != null) {
+            inputManager.unregisterInputDeviceListener(this);
+        }
+        super.onDestroy();
+    }
+
+    // The on-screen controls (with Touch buttons on Auto) hide while a gamepad is connected, a
+    // handheld's built-in one included.
+    @Override
+    public void onInputDeviceAdded(int deviceId) {
+        if (touchControls != null) {
+            touchControls.setGamepadConnected(anyGamepadConnected());
+        }
+    }
+
+    @Override
+    public void onInputDeviceRemoved(int deviceId) {
+        if (touchControls != null) {
+            touchControls.setGamepadConnected(anyGamepadConnected());
+        }
+    }
+
+    @Override
+    public void onInputDeviceChanged(int deviceId) {
+    }
+
+    private static boolean isGamepad(InputDevice device) {
+        if (device == null || device.isVirtual()) {
+            return false;
+        }
+        return isGamepadEvent(device.getSources());
+    }
+
+    private static boolean anyGamepadConnected() {
+        for (int id : InputDevice.getDeviceIds()) {
+            if (isGamepad(InputDevice.getDevice(id))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     // SDL hides the system bars once, when the game's window goes fullscreen (mFullscreenModeActive).
     // Hide them again whenever the window gets focus back.
     @Override
@@ -96,15 +162,20 @@ public class OrtaActivity extends SDLActivity {
         if (!mFullscreenModeActive) {
             return;
         }
-        getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN
+        int flags = View.SYSTEM_UI_FLAG_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
                 | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
                 | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
-                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE;
+        getWindow().getDecorView().setSystemUiVisibility(flags);
+        // The window takes the system UI flags of all its views together: the overlay's too.
+        if (touchControls != null) {
+            touchControls.setSystemUiVisibility(flags);
+        }
     }
 
-    /** The options menu (F1 on PC) opens and closes on F1. */
+    /** The options menu (F1 on PC) opens and closes on F1: Back and the MENU button send it. */
     private void toggleGameMenu() {
         onNativeKeyDown(KeyEvent.KEYCODE_F1);
         onNativeKeyUp(KeyEvent.KEYCODE_F1);
