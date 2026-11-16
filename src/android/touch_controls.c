@@ -105,18 +105,23 @@ static void set_button(int button, float x, float y, float w, float h)
 
 /* The stick bottom left with L above it; FIRE, BOOST, BRAKE, MORPH
  * where the pad has A, X, B, Y (FIRE at the bottom) bottom right with
- * R above them; MENU top left with 180 below it, START top right
- * with BERSERK below it. Sizes follow the screen height and the Touch
+ * R above them; MENU top left with BERSERK below it, START top right
+ * with 180 below it. Sizes follow the screen height and the Touch
  * size setting. */
 static void layout(int width, int height)
 {
     float w = (float)width, h = (float)height;
     float scale = descore_touch_scale_value(descore_touch_scale_step());
-    float c = SDL_min(SDL_max(h * 0.12f * scale, descore_touch_min_cell_px()), h * 0.18f);
+    float c = SDL_min(SDL_max(h * 0.12f * scale, descore_touch_min_cell_px()), h * 0.155f);
+    /* At most 0.155 of the height: above it the corners' second buttons meet
+     * L and R (0.04h + 1.75c against 0.96h - 3.97c on the right). */
     float m = h * 0.04f, gap = c * 0.12f;
     float r = c * 1.25f;
     float cx = w - m - c * 1.6f, cy = h - m - c * 1.6f;     /* the face buttons' centre */
     float tw = c * 1.4f, th = c * 0.7f;                      /* the wide buttons */
+    /* BERSERK and 180 a little way below MENU and START, so as not to be
+     * pressed for them (or they for these). */
+    float row2 = m + c * 0.6f + c * 0.45f;
 
     descore_touch_set_screen_size(width, height);
     descore_touch_set_stick(0, m + r * 1.15f, h - m - r * 1.15f, r, on_stick);
@@ -129,9 +134,9 @@ static void layout(int width, int height)
     set_button(BUTTON_LT, m, h - m - r * 2.3f - gap - th, tw, th);
     set_button(BUTTON_RT, w - m - tw, cy - c * 1.55f - gap - th, tw, th);
     set_button(BUTTON_MENU, m, m, tw, c * 0.6f);
-    set_button(BUTTON_UTURN, m, m + c * 0.6f + gap * 2.0f, tw, th);
+    set_button(BUTTON_BLACK, m, row2, tw, th);
     set_button(BUTTON_START, w - m - tw, m, tw, c * 0.6f);
-    set_button(BUTTON_BLACK, w - m - tw, m + c * 0.6f + gap * 2.0f, tw, th);
+    set_button(BUTTON_UTURN, w - m - tw, row2, tw, th);
 }
 
 /* The Size step nearest a size in percent. */

@@ -17,8 +17,8 @@ file dialog for the document picker, its `content://` reading for the disc image
    snprecomp), the layout and the Xbox buttons in `src/android/touch_controls.c`, fed into the
    first controller in `src/hle/input_hle.c` (Orta and pd1 alike), drawn by `TouchControlsView`
    over SDL's surface as in snprecomp. A stick (left thumbstick) and Orta's actions: FIRE (A),
-   BOOST (X), BRAKE (B), MORPH (Y), BERSERK (Black), L and R (turn), 180 (L and R together),
-   START and MENU (the options). Options > Controls > Touch controls: when they show (Auto
+   BOOST (X), BRAKE (B), MORPH (Y), BERSERK (Black, under MENU), L and R (turn), 180 (L and R
+   together, under START), START and MENU (the options). Options > Controls > Touch controls: when they show (Auto
    hides them while a gamepad is connected, as on the RP6), size, opacity.
 3. **Performance** on the device: frame rate, the guest CPU lock on ARM, Display > Frame rate 30.
 4. **Lossless Scaling** (btgarecomp's Android build runs `lib/lsfg`, which builds on Android as
