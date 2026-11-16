@@ -407,8 +407,8 @@ float descore_touch_scale_value(int step) {
 }
 
 void descore_touch_set_opacity(float alpha) {
-    if (alpha < DESCORE_TOUCH_OPACITY_DEFAULT) {
-        alpha = DESCORE_TOUCH_OPACITY_DEFAULT; /* defensive floor -- the primary clamp lives in
+    if (alpha < DESCORE_TOUCH_OPACITY_MIN) {
+        alpha = DESCORE_TOUCH_OPACITY_MIN; /* defensive floor -- the primary clamp lives in
                                                  * each game's own Touch Options setter */
     } else if (alpha > 1.0f) {
         alpha = 1.0f;

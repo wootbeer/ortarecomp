@@ -210,7 +210,7 @@ bool pdo_config_load(pdo_config *cfg)
         else if (strcmp(line, "touch_size") == 0)
             settings.touch_size = clamp_int(SDL_atoi(eq + 1), 90, 130);
         else if (strcmp(line, "touch_opacity") == 0)
-            settings.touch_opacity = clamp_int(SDL_atoi(eq + 1), 30, 100);
+            settings.touch_opacity = clamp_int(SDL_atoi(eq + 1), 10, 100);
         else if (strcmp(line, "depth_reversed") == 0)
             settings.depth_reversed = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "picture_crt") == 0)

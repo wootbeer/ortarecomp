@@ -116,7 +116,8 @@ float descore_touch_scale_value(int step); /* clamped the same way; kDescoreTouc
 /* Touch Options "Opacity" slider -- the default is also the floor, so a player
  * adjusting this can never lose track of the controls entirely. */
 #define DESCORE_TOUCH_OPACITY_DEFAULT 0.30f
-void descore_touch_set_opacity(float alpha); /* clamped to [DESCORE_TOUCH_OPACITY_DEFAULT, 1.0] */
+#define DESCORE_TOUCH_OPACITY_MIN 0.10f   /* Orta Recomp: lower than the default, asked for */
+void descore_touch_set_opacity(float alpha); /* clamped to [DESCORE_TOUCH_OPACITY_MIN, 1.0] */
 float descore_touch_opacity(void);
 
 /* Draws every currently-visible button as a simple flat translucent gray quad (no textures) --

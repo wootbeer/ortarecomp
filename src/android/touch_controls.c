@@ -111,8 +111,11 @@ static void set_button(int button, float x, float y, float w, float h)
 static void layout(int width, int height)
 {
     float w = (float)width, h = (float)height;
-    float scale = (float)pdo_settings_get()->touch_size / 100.0f;    /* 90-130 %, each step seen */
-    float c = SDL_min(SDL_max(h * 0.12f * scale, descore_touch_min_cell_px()), h * 0.156f);
+    /* The size at 100 %: 0.12 of the height, no smaller than a finger
+     * (44 dp), no larger than lets 130 % fit. Touch size is a plain
+     * multiple of it, so 90 % is nine tenths of 100 %. */
+    float base = SDL_min(SDL_max(h * 0.12f, descore_touch_min_cell_px()), h * 0.156f / 1.3f);
+    float c = base * (float)pdo_settings_get()->touch_size / 100.0f;
     /* At most 0.156 of the height (Touch size 130 %): above it the corners' second buttons meet
      * L and R (0.04h + 1.75c against 0.96h - 3.97c on the right). */
     float m = h * 0.04f, gap = c * 0.12f;

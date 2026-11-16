@@ -322,7 +322,7 @@ static void change(int dir)
     case ITEM_RUMBLE: s->rumble = SDL_clamp((s->rumble + 10 * dir) / 10 * 10, 0, 100); break;
     case ITEM_TOUCH:  s->touch_buttons = (s->touch_buttons + PDO_TOUCH_COUNT + dir) % PDO_TOUCH_COUNT; break;
     case ITEM_TOUCH_SIZE: s->touch_size = SDL_clamp(s->touch_size + 10 * dir, 90, 130); break;
-    case ITEM_TOUCH_ALPHA: s->touch_opacity = SDL_clamp(s->touch_opacity + 10 * dir, 30, 100); break;
+    case ITEM_TOUCH_ALPHA: s->touch_opacity = SDL_clamp(s->touch_opacity + 5 * dir, 10, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
         pdo_mixer_apply_output();
@@ -505,14 +505,47 @@ void pdo_overlay_set_rect(float x, float y, float w, float h)
     shown_h = h;
 }
 
-/* A click or tap at (x, y), in the window's points: the line under it is
- * chosen, and a way somewhere (a page, Start, Back) taken; on a value's
- * right half the value goes up, on its left half down. Outside the panel:
- * back, or closed. */
-/* A click, or a tap (touch: SDL makes it a click). Off the panel a click
- * goes back; a tap does nothing, as a finger misses easily. On the chosen
- * line's value a click's left or right half changes it down or up; a tap's
- * half of the whole line does, a bigger target. */
+static float value_of(int item, char *v, size_t n);
+
+/* A tap on a slider's bar (or just past its ends): chooses the line and
+ * moves its value to the tapped place, a step at a time while each step
+ * brings it nearer. False when the tap is elsewhere or not on a slider. */
+static bool slide_to(int item, int line, float col)
+{
+    char v[64];
+    float bx = menu_x0 + menu_w - 16, bw = 9;
+    float t, now;
+
+    if (value_of(item, v, sizeof v) < 0.0f || col < bx - 1.5f || col >= bx + bw + 1.5f)
+        return false;
+    quit_armed = false;
+    selected = line;
+    dirty = true;
+    t = SDL_clamp((col - bx) / bw, 0.0f, 1.0f);
+    for (int k = 0; k < 400; k++) {
+        int dir;
+        float next;
+
+        now = value_of(item, v, sizeof v);
+        dir = t > now ? +1 : -1;
+        change(dir);
+        next = value_of(item, v, sizeof v);
+        if (SDL_fabsf(next - t) >= SDL_fabsf(now - t)) {
+            if (next != now)
+                change(-dir);           /* that step went past: back */
+            break;
+        }
+    }
+    return true;
+}
+
+/* A click or tap at (x, y), in the window's points (SDL makes a tap a
+ * click; touch says it was one): the line under it is chosen, and a way
+ * somewhere (a page, Start, Back) taken. On the chosen line's value a
+ * click's left or right half changes it down or up; a tap's half of the
+ * whole line does, a bigger target, and a tap on a slider's bar sets it
+ * there. Off the panel a click goes back; a tap, easily a miss, does
+ * nothing. */
 static void click(SDL_WindowID id, float x, float y, bool touch)
 {
     SDL_Window *win = SDL_GetWindowFromID(id);
@@ -553,6 +586,8 @@ static void click(SDL_WindowID id, float x, float y, bool touch)
     items = page_items(&n);
     i = (int)SDL_floorf((row - (menu_y0 + 4.0f - 0.4f)) / menu_step);
     if (i < 0 || i >= n)
+        return;
+    if (touch && slide_to(items[i], i, col))
         return;
     if (i != selected) {
         quit_armed = false;
@@ -830,7 +865,7 @@ static float value_of(int item, char *v, size_t n)
                  : s->touch_buttons == PDO_TOUCH_OFF ? "Off" : "Auto");
         break;
     case ITEM_TOUCH_SIZE:  snprintf(v, n, "%d%%", s->touch_size); return (s->touch_size - 90) / 40.0f;
-    case ITEM_TOUCH_ALPHA: snprintf(v, n, "%d%%", s->touch_opacity); return (s->touch_opacity - 30) / 70.0f;
+    case ITEM_TOUCH_ALPHA: snprintf(v, n, "%d%%", s->touch_opacity); return (s->touch_opacity - 10) / 90.0f;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);

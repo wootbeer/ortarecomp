@@ -50,7 +50,7 @@ typedef struct pdo_settings {
     int  rumble;            /* controller vibration strength, 0-100 % (src/hle/input_hle.c) */
     int  touch_buttons;     /* Android: PDO_TOUCH_*, when the on-screen controls show (src/android/) */
     int  touch_size;        /* Android: their size, 90-130 % (touch_controls.c) */
-    int  touch_opacity;     /* Android: their opacity, 30-100 % */
+    int  touch_opacity;     /* Android: their opacity, 10-100 % */
     bool depth_reversed;    /* depth stored as 1 - z (renderer.c, read at start) */
     /* Picture (present.frag), on the finished frame: */
     bool picture_crt;       /* a CRT's darker midtones: x^(2.5/2.2) */
