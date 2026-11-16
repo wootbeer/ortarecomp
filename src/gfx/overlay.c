@@ -34,18 +34,27 @@ enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_
        /* Picture (present.frag) */
        ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT, ITEM_PIC_RESET,
        /* links to the pages, and back */
-       ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_BACK,
+       ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_GO_TOUCH, ITEM_BACK,
        ITEM_COUNT };
 
 /* The menu is pages: a short main list (the game's, or the launcher's
  * before the game starts) of links, and a page per subject. */
-enum { PAGE_MAIN, PAGE_DISPLAY, PAGE_PICTURE, PAGE_SOUND, PAGE_GAMEPLAY, PAGE_ADVANCED, PAGE_COUNT };
-static const char *page_names[PAGE_COUNT] = { "OPTIONS", "DISPLAY", "PICTURE", "SOUND", "GAMEPLAY", "ADVANCED" };
+enum { PAGE_MAIN, PAGE_DISPLAY, PAGE_PICTURE, PAGE_SOUND, PAGE_GAMEPLAY, PAGE_ADVANCED, PAGE_TOUCH, PAGE_COUNT };
+static const char *page_names[PAGE_COUNT] = { "OPTIONS", "DISPLAY", "PICTURE", "SOUND", "GAMEPLAY", "ADVANCED",
+                                              "TOUCH" };
 
+#ifdef __ANDROID__
+/* Touch controls, a page of their own under Controls. */
+static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
+                                 ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_GO_TOUCH, ITEM_CLOSE, ITEM_QUIT };
+static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
+                                     ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_GO_TOUCH, ITEM_EXIT };
+#else
 static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT };
 static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
+#endif
 static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS,
                                     ITEM_FPS, ITEM_BACK };
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
@@ -53,13 +62,9 @@ static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
-#ifdef __ANDROID__
-/* The on-screen controls' settings (src/android/touch_controls.c). */
-static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_TOUCH, ITEM_TOUCH_SIZE,
-                                      ITEM_TOUCH_ALPHA, ITEM_BACK };
-#else
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
-#endif
+/* Android's on-screen controls (src/android/touch_controls.c). */
+static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_BACK };
 static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_ABOUT, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
                                          ITEM_ABOUT, ITEM_BACK };
@@ -79,6 +84,7 @@ static const int *page_items(int *n)
     case PAGE_SOUND:    return PAGE_OF(sound_items);
     case PAGE_GAMEPLAY: return PAGE_OF(gameplay_items);
     case PAGE_ADVANCED: return launcher ? PAGE_OF(advanced_launcher) : PAGE_OF(advanced_game);
+    case PAGE_TOUCH:    return PAGE_OF(touch_items);
     default:            return launcher ? PAGE_OF(launcher_main) : PAGE_OF(game_main);
     }
 #undef PAGE_OF
@@ -231,7 +237,7 @@ static void go_page(int p)
 static void page_back(void)
 {
     static const int link[PAGE_COUNT] = { 0, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
-                                          ITEM_GO_ADVANCED };
+                                          ITEM_GO_ADVANCED, ITEM_GO_TOUCH };
     int from = page;
     page = PAGE_MAIN;
     selected = index_of(link[from]);
@@ -339,6 +345,7 @@ static void change(int dir)
     case ITEM_GO_SOUND:    if (dir > 0) go_page(PAGE_SOUND); break;
     case ITEM_GO_GAMEPLAY: if (dir > 0) go_page(PAGE_GAMEPLAY); break;
     case ITEM_GO_ADVANCED: if (dir > 0) go_page(PAGE_ADVANCED); break;
+    case ITEM_GO_TOUCH:    if (dir > 0) go_page(PAGE_TOUCH); break;
     case ITEM_BACK:        if (dir > 0) page_back(); break;
     }
     dirty = true;
@@ -467,7 +474,7 @@ static bool is_link(int item)
     return item == ITEM_START || item == ITEM_EXIT || item == ITEM_CLOSE || item == ITEM_QUIT || item == ITEM_BACK ||
            item == ITEM_LSDLL || item == ITEM_ABOUT ||
            item == ITEM_PIC_RESET || item == ITEM_PICK || item == ITEM_GPU || item == ITEM_CONTROLS ||
-           (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_ADVANCED);
+           (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_TOUCH);
 }
 static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
 
@@ -849,7 +856,7 @@ static float value_of(int item, char *v, size_t n)
         break;
     }
     case ITEM_GO_DISPLAY: case ITEM_GO_PICTURE: case ITEM_GO_SOUND: case ITEM_GO_GAMEPLAY:
-    case ITEM_GO_ADVANCED: case ITEM_CONTROLS:
+    case ITEM_GO_ADVANCED: case ITEM_GO_TOUCH: case ITEM_CONTROLS:
         snprintf(v, n, ">"); break;
     }
     return -1.0f;
@@ -908,6 +915,7 @@ static const char *label_of(int item)
     case ITEM_GO_SOUND:    return "Sound";
     case ITEM_GO_GAMEPLAY: return "Gameplay";
     case ITEM_GO_ADVANCED: return "Advanced";
+    case ITEM_GO_TOUCH:    return "Touch controls";
     }
     return "";
 }
@@ -1005,6 +1013,7 @@ static const char *help_of(int item)
     case ITEM_GO_SOUND:    return "Volume, stereo or 5.1.";
     case ITEM_GO_GAMEPLAY: return "Pandora's Box, boot logos.";
     case ITEM_GO_ADVANCED: return "Frame generation and more.";
+    case ITEM_GO_TOUCH:    return "On-screen buttons: when, size.";
     }
     return "";
 }
