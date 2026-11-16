@@ -96,9 +96,8 @@ static void set_button(int button, float x, float y, float w, float h)
 }
 
 /* The stick bottom left with LT above it; A, B, X, Y as on the pad (A at
- * the bottom) bottom right with RT above them; MENU and START top centre,
- * clear of the HUD's corners. Sizes follow the screen height and the
- * Touch size setting. */
+ * the bottom) bottom right with RT above them; MENU top left and START top
+ * right. Sizes follow the screen height and the Touch size setting. */
 static void layout(int width, int height)
 {
     float w = (float)width, h = (float)height;
@@ -118,8 +117,8 @@ static void layout(int width, int height)
     set_button(BUTTON_B, cx + c * 0.6f, cy - c * 0.5f, c, c);
     set_button(BUTTON_LT, m, h - m - r * 2.3f - gap - c * 0.7f, c * 1.4f, c * 0.7f);
     set_button(BUTTON_RT, w - m - c * 1.4f, cy - c * 1.55f - gap - c * 0.7f, c * 1.4f, c * 0.7f);
-    set_button(BUTTON_MENU, w * 0.5f - c * 1.4f - gap * 0.5f, m, c * 1.4f, c * 0.6f);
-    set_button(BUTTON_START, w * 0.5f + gap * 0.5f, m, c * 1.4f, c * 0.6f);
+    set_button(BUTTON_MENU, m, m, c * 1.4f, c * 0.6f);
+    set_button(BUTTON_START, w - m - c * 1.4f, m, c * 1.4f, c * 0.6f);
 }
 
 /* The Size step nearest a size in percent. */
@@ -172,6 +171,8 @@ JNIEXPORT void JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
     descore_touch_set_opacity((float)s->touch_opacity / 100.0f);
     layout(width, height);
     descore_touch_set_gamepad_connected(buttons_hidden());
+    SDL_Log("touch: laid out at %dx%d (buttons %s, size %d%%, opacity %d%%)", (int)width, (int)height,
+            buttons_hidden() ? "hidden" : "shown", s->touch_size, s->touch_opacity);
 }
 
 /* One pointer of a touch event (Android's action codes, which descore
@@ -204,6 +205,8 @@ JNIEXPORT void JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
     JNIEnv *env, jclass cls, jboolean connected)
 {
     (void)env; (void)cls;
+    if (gamepad_connected != (bool)connected)
+        SDL_Log("touch: gamepad %s", connected ? "connected" : "gone");
     gamepad_connected = connected;
     if (initialized) {
         if (buttons_hidden())
@@ -264,5 +267,28 @@ JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
                 || s->touch_opacity != SDL_GetAtomicInt(&setting_alpha);
 
     (void)env; (void)cls;
+    {   /* what turns them off and on, for the log (a few dozen at most) */
+        static int was = -1, logged;
+        if ((int)active != was && logged++ < 40)
+            SDL_Log("touch: controls %s (game read its controller %d ms ago, options %s)", active ? "on" : "off",
+                    read ? (int)((Uint32)SDL_GetTicks() - read) : -1, pdo_overlay_open() ? "open" : "closed");
+        was = active;
+    }
     return (active ? 1 : 0) | (changed ? 2 : 0);
+}
+
+/* From the view: something about its drawing surface, for the log. */
+JNIEXPORT void JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nativeLog(
+    JNIEnv *env, jclass cls, jstring what)
+{
+    static int logged;
+    const char *s;
+
+    (void)cls;
+    if (logged++ >= 40)
+        return;
+    s = (*env)->GetStringUTFChars(env, what, NULL);
+    SDL_Log("touch: %s", s ? s : "?");
+    if (s)
+        (*env)->ReleaseStringUTFChars(env, what, s);
 }

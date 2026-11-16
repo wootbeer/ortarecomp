@@ -125,17 +125,20 @@ public class TouchControlsView extends SurfaceView implements SurfaceHolder.Call
 
     @Override
     public void surfaceCreated(SurfaceHolder holder) {
+        nativeLog("overlay surface created");
         surfaceReady = true;
         redraw();
     }
 
     @Override
     public void surfaceChanged(SurfaceHolder holder, int format, int width, int height) {
+        nativeLog("overlay surface changed to " + width + "x" + height);
         redraw();
     }
 
     @Override
     public void surfaceDestroyed(SurfaceHolder holder) {
+        nativeLog("overlay surface destroyed");
         surfaceReady = false;
     }
 
@@ -146,6 +149,7 @@ public class TouchControlsView extends SurfaceView implements SurfaceHolder.Call
         }
         Canvas canvas = getHolder().lockCanvas();
         if (canvas == null) {
+            nativeLog("overlay: no canvas to draw on");
             return;
         }
         try {
@@ -232,4 +236,5 @@ public class TouchControlsView extends SurfaceView implements SurfaceHolder.Call
     private static native int nativeGetShapes(float[] out);
     private static native String nativeButtonLabel(int button);
     private static native int nativePoll();
+    private static native void nativeLog(String what);
 }
