@@ -261,7 +261,11 @@ JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
 {
     const pdo_settings *s = pdo_settings_get();
     Uint32 read = SDL_GetAtomicU32(&last_read_ms);
-    bool active = read && (Uint32)SDL_GetTicks() - read < 3000 && !pdo_overlay_open();
+    /* Signed: the time stored has its low bit set (0 is "never"), so a
+     * read in this same millisecond can be 1 ms ahead; unsigned, that
+     * came out as 49 days ago and the controls blinked off (the RP6). */
+    Sint32 ago = (Sint32)((Uint32)SDL_GetTicks() - read);
+    bool active = read && ago < 3000 && !pdo_overlay_open();
     bool changed = s->touch_buttons != SDL_GetAtomicInt(&setting_mode)
                 || s->touch_size != SDL_GetAtomicInt(&setting_size)
                 || s->touch_opacity != SDL_GetAtomicInt(&setting_alpha);
@@ -271,7 +275,7 @@ JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
         static int was = -1, logged;
         if ((int)active != was && logged++ < 40)
             SDL_Log("touch: controls %s (game read its controller %d ms ago, options %s)", active ? "on" : "off",
-                    read ? (int)((Uint32)SDL_GetTicks() - read) : -1, pdo_overlay_open() ? "open" : "closed");
+                    read ? (int)ago : -1, pdo_overlay_open() ? "open" : "closed");
         was = active;
     }
     return (active ? 1 : 0) | (changed ? 2 : 0);
