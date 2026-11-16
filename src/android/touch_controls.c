@@ -150,8 +150,14 @@ static int scale_step_for(int percent)
     return best;
 }
 
+/* The Touch controls page is open: the controls are shown as set (Auto
+ * too, with a gamepad), though they take no touches. */
+static SDL_AtomicInt previewing;
+
 static bool buttons_hidden(void)
 {
+    if (SDL_GetAtomicInt(&previewing) && SDL_GetAtomicInt(&setting_mode) != PDO_TOUCH_OFF)
+        return false;
     switch (SDL_GetAtomicInt(&setting_mode)) {
     case PDO_TOUCH_ALWAYS: return false;
     case PDO_TOUCH_OFF:    return true;
@@ -273,7 +279,9 @@ JNIEXPORT jstring JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_n
 /* Bit 0: touch is for the controls now (the game read its controller in
  * the last three seconds and no options are open: between scenes, while
  * it loads, it stops reading for a moment, and the controls flickered off
- * and on at half a second). Bit 1: the settings changed, lay out again. */
+ * and on at half a second). Bit 1: the settings changed, lay out again.
+ * Bit 2: show them without taking touches (the Touch controls page is
+ * open, so their size and opacity are seen as they change). */
 JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nativePoll(
     JNIEnv *env, jclass cls)
 {
@@ -287,6 +295,7 @@ JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
     bool changed = s->touch_buttons != SDL_GetAtomicInt(&setting_mode)
                 || s->touch_size != SDL_GetAtomicInt(&setting_size)
                 || s->touch_opacity != SDL_GetAtomicInt(&setting_alpha);
+    bool preview = pdo_overlay_on_touch_page();
 
     (void)env; (void)cls;
     {   /* what turns them off and on, for the log (a few dozen at most) */
@@ -296,7 +305,13 @@ JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nati
                     read ? (int)ago : -1, pdo_overlay_open() ? "open" : "closed");
         was = active;
     }
-    return (active ? 1 : 0) | (changed ? 2 : 0);
+    if (preview != (bool)SDL_GetAtomicInt(&previewing)) {
+        SDL_SetAtomicInt(&previewing, preview);
+        if (initialized)
+            descore_touch_set_gamepad_connected(buttons_hidden());
+        SDL_Log("touch: preview %s", preview ? "on (Touch controls page)" : "off");
+    }
+    return (active ? 1 : 0) | (changed ? 2 : 0) | (preview ? 4 : 0);
 }
 
 /* From the view: something about its drawing surface, for the log. */

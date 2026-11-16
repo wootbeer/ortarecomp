@@ -44,6 +44,8 @@ public class TouchControlsView extends SurfaceView implements SurfaceHolder.Call
     private MenuListener menuListener;
 
     private boolean active;
+    /** Drawn without taking touches: the options' Touch controls page is open. */
+    private boolean preview;
     private boolean gamepadConnected;
     private boolean laidOut;
     private boolean surfaceReady;
@@ -55,14 +57,16 @@ public class TouchControlsView extends SurfaceView implements SurfaceHolder.Call
         public void run() {
             int state = nativePoll();
             boolean nowActive = (state & 1) != 0;
+            boolean nowPreview = (state & 4) != 0;
             if ((state & 2) != 0) {
                 relayout();
             }
-            if (nowActive != active) {
-                active = nowActive;
-                if (!active) {
+            if (nowActive != active || nowPreview != preview) {
+                if (active && !nowActive) {
                     nativeReleaseAll(); // a menu opened under a finger: nothing stays held
                 }
+                active = nowActive;
+                preview = nowPreview;
                 redraw();
             }
             handler.postDelayed(this, POLL_MS);
@@ -154,7 +158,7 @@ public class TouchControlsView extends SurfaceView implements SurfaceHolder.Call
         }
         try {
             canvas.drawColor(0, PorterDuff.Mode.CLEAR);
-            if (active && laidOut) {
+            if ((active || preview) && laidOut) {
                 drawControls(canvas);
             }
         } finally {

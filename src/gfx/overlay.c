@@ -126,6 +126,11 @@ bool pdo_overlay_open(void)
     return open_;
 }
 
+bool pdo_overlay_on_touch_page(void)
+{
+    return (open_ || launcher) && page == PAGE_TOUCH;
+}
+
 void pdo_launcher_begin(const char *files, bool ok)
 {
     launcher = open_ = dirty = true;
