@@ -3781,6 +3781,7 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         fitv.x = SDL_floorf((sw - fitv.w) / 2);
         fitv.y = SDL_floorf((sh - fitv.h) / 2);
         fitv.max_depth = 1.0f;
+        pdo_overlay_set_rect(fitv.x, fitv.y, fitv.w, fitv.h);    /* the menu's clicks and taps */
         SDL_zero(vp);
         if (shown_movie && st->movie_fit != PDO_MOVIE_ORIGINAL) {
             memcpy(mr, shown_movie_rect, sizeof mr);

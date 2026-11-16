@@ -461,6 +461,82 @@ static bool capture_event(const SDL_Event *ev)
     return true;
 }
 
+static bool is_link(int item);
+static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
+
+/* Clicks and taps (src/gfx/overlay.h, pdo_overlay_set_rect): where the
+ * layer is in the window, the size of a character cell on it, and where
+ * draw_menu last put the panel and its lines, in cells. */
+static float shown_x, shown_y, shown_w, shown_h;
+static float cell_w = 16.0f, cell_h = 16.0f;    /* SCALE * CHAR, narrower in widescreen */
+static float menu_x0, menu_y0, menu_w, menu_h, menu_step;
+
+void pdo_overlay_set_rect(float x, float y, float w, float h)
+{
+    shown_x = x;
+    shown_y = y;
+    shown_w = w;
+    shown_h = h;
+}
+
+/* A click or tap at (x, y), in the window's points: the line under it is
+ * chosen, and a way somewhere (a page, Start, Back) taken; on a value's
+ * right half the value goes up, on its left half down. Outside the panel:
+ * back, or closed. */
+static void click(SDL_WindowID id, float x, float y)
+{
+    SDL_Window *win = SDL_GetWindowFromID(id);
+    float d = win ? SDL_GetWindowPixelDensity(win) : 1.0f;
+    float col, row;
+    int n, i;
+    const int *items;
+
+    if (shown_w <= 0 || shown_h <= 0)
+        return;
+    x = (x * d - shown_x) / shown_w * PDO_OVERLAY_W;
+    y = (y * d - shown_y) / shown_h * PDO_OVERLAY_H;
+    col = x / cell_w;
+    row = y / cell_h;
+    if (controls) {
+        const float w = 38, x0 = (cols - w) / 2, y0 = 0.75f;
+        for (i = 0; i < CTL_COUNT; i++) {
+            float ry = y0 + 5 + i * 1.0f + (i >= PDO_IN_COUNT ? 0.75f : 0);
+            if (col >= x0 && col < x0 + w && row >= ry - 0.0625f && row < ry + 1.0625f)
+                break;
+        }
+        if (i == CTL_COUNT) {
+            act(ACT_BACK);
+        } else if (i == selected) {
+            act(ACT_OK);
+        } else {
+            selected = i;
+            dirty = true;
+        }
+        return;
+    }
+    if (col < menu_x0 || col >= menu_x0 + menu_w || row < menu_y0 || row >= menu_y0 + menu_h) {
+        act(ACT_BACK);
+        return;
+    }
+    items = page_items(&n);
+    i = (int)SDL_floorf((row - (menu_y0 + 4.0f - 0.4f)) / menu_step);
+    if (i < 0 || i >= n)
+        return;
+    if (i != selected) {
+        quit_armed = false;
+        selected = i;
+        dirty = true;
+        if (!is_link(items[i]) && items[i] != ITEM_QUIT)
+            return;                 /* chosen; a second tap, or one on its value, changes it */
+    }
+    if (is_link(items[i]) || items[i] == ITEM_QUIT)
+        act(ACT_OK);
+    else if (col >= menu_x0 + menu_w - 16)
+        change(col < menu_x0 + menu_w - 8 ? -1 : +1);
+    else
+        change(+1);
+}
+
 bool pdo_overlay_event(const SDL_Event *ev)
 {
     if (open_ && capture)
@@ -477,6 +553,13 @@ bool pdo_overlay_event(const SDL_Event *ev)
         act(k == SDLK_UP ? ACT_UP : k == SDLK_DOWN ? ACT_DOWN : k == SDLK_LEFT ? ACT_LEFT
             : k == SDLK_RIGHT ? ACT_RIGHT : k == SDLK_RETURN || k == SDLK_SPACE ? ACT_OK
             : k == SDLK_ESCAPE || k == SDLK_BACKSPACE ? ACT_BACK : ACT_NONE);
+        return true;
+    }
+    if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP) {
+        if (!open_)
+            return false;
+        if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev->button.button == SDL_BUTTON_LEFT)
+            click(ev->button.windowID, ev->button.x, ev->button.y);
         return true;
     }
     if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
@@ -555,7 +638,6 @@ bool pdo_overlay_blocks_input(bool any_pressed)
 #define COL_OFF      96, 104, 120, 255
 #define COL_TRACK    52, 60, 80, 255
 
-static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
 
 static void color(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
@@ -932,6 +1014,11 @@ static void draw_menu(void)
     char v[40];
 
     frame(x0, y0, w, h, page_names[page]);
+    menu_x0 = x0;
+    menu_y0 = y0;
+    menu_w = w;
+    menu_h = h;
+    menu_step = step;
     for (int i = 0; i < n; i++) {
         int item = items[i];
         float y = y0 + 4.0f + i * step;
@@ -1016,6 +1103,8 @@ SDL_Surface *pdo_overlay_image(bool *changed)
             squeeze = sq;
             SDL_SetRenderScale(painter, SCALE * sq, SCALE);
             cols = PDO_OVERLAY_W / (SCALE * sq * CHAR);
+            cell_w = SCALE * sq * CHAR;
+            cell_h = SCALE * CHAR;
             dirty = true;
         }
     }

@@ -409,6 +409,7 @@ static bool run_launcher(pdo_config *cfg, pdo_game_check *check, bool *have_game
                                 PDO_OVERLAY_H * k };
                 SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
                 SDL_RenderTexture(ren, tex, NULL, &r);
+                pdo_overlay_set_rect(r.x, r.y, r.w, r.h);       /* its clicks and taps */
             }
             SDL_RenderPresent(ren);
         }
