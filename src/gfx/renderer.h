@@ -21,6 +21,9 @@
 #include <stdint.h>
 
 bool pdo_gfx_init(int width, int height);
+/* A pipeline with GPU vertex programs (or, fixed_function, GPU fixed-function
+ * vertices) failed to build on this GPU: those vertices go to the CPU. */
+bool pdo_gfx_vertex_shader_failed(bool fixed_function);
 
 /* Threads: the game runs on a thread of its own and the main thread, which
  * owns the window, does all the drawing. On the main thread, before the

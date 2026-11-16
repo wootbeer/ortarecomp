@@ -29,4 +29,14 @@ file dialog for the document picker, its `content://` reading for the disc image
    `RelaunchActivity` (its own process, `:relaunch`) and ends the game's; that waits for it to
    be gone and starts `OrtaActivity` with `--boot --program NAME --launch-data FILE`
    (`getArguments`).
-6. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.
+6. **Other GPUs** (Mali, Samsung's; snprecomp's lessons): SDL's Vulkan device asks for depth
+   clamping, anisotropy, clip distances and indirect first instance, and turns down a GPU
+   lacking any (older Mali drivers lack depth clamping). The last two are never asked for
+   (unused); a GPU that refuses the first two gets a device without them (depth clipped
+   instead, no anisotropic filtering; `PDO_GPU_BASIC=1` shows that on any GPU). A pipeline
+   that fails to build is remembered, not tried at each draw (Adreno 619 failed its shaders
+   at every try in snprecomp); if one with GPU vertex programs or fixed-function vertices
+   fails, those vertices go to the CPU. No GPU at all: a message instead of a black screen
+   with sound. Already so: DXT decoded on the CPU, depth format and MSAA checked, the crash
+   handler catches a driver's abort.
+7. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.

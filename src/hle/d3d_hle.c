@@ -278,7 +278,15 @@ void sub_002B3510(void)
     if (pp)     /* D3DPRESENT_PARAMETERS: BackBufferFormat +8, MultiSampleType +16, Flags +36 */
         SDL_Log("d3d: back buffer format 0x%x, multisample 0x%x, flags 0x%x", MEM32(pp + 8), MEM32(pp + 16),
                 MEM32(pp + 36));
-    pdo_gfx_init(w, h);
+    if (!pdo_gfx_init(w, h)) {
+        /* No picture can come: say so rather than leave a black screen
+         * with sound (the log has SDL's reasons, "gfx:" lines). */
+        char msg[512];
+        snprintf(msg, sizeof msg, "The graphics could not start on this device's GPU, so the game cannot "
+                 "show anything (%s).\n\nOrta Recomp needs Vulkan 1.1. The log has the details.", SDL_GetError());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Orta Recomp", msg, NULL);
+        exit(1);
+    }
     sub_002B3510_gen();
     note_backbuffers();
 }
@@ -2106,7 +2114,7 @@ static void vsh_gpu_job(const pdo_vsh_program *p, uint32_t base, uint32_t stride
  * program can (it does not write constants) and has been handed over. */
 static bool use_gpu_vsh(pdo_vsh_program *p)
 {
-    if (!pdo_settings_get()->gpu_vertex || p->writes_constants)
+    if (!pdo_settings_get()->gpu_vertex || pdo_gfx_vertex_shader_failed(false) || p->writes_constants)
         return false;
     if (p->gpu_program < 0) {
         static uint32_t code[8 * PDO_VSH_MAX_INSNS];
@@ -2463,6 +2471,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             }
         }
     } else if (type != 1 && hud_k == 1.0f && pdo_settings_get()->gpu_fixed &&
+               !pdo_gfx_vertex_shader_failed(true) &&
                fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
         fvf_on_gpu = true;
         pre = (gpu_f.u.layout0[2] & PDO_FVF_PRE) != 0;

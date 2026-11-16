@@ -305,6 +305,95 @@ static void *grow(void *p, uint32_t *cap, uint32_t need, size_t elem)
     return SDL_realloc(p, (size_t)*cap * elem);
 }
 
+/* What the GPU can do. SDL's Vulkan device asks for depth clamping and
+ * anisotropic filtering and turns down a GPU without them (some Mali
+ * drivers lack depth clamping): such a GPU gets a device without them
+ * (create_device), its pipelines clip depth instead of clamping it, and
+ * its samplers do without anisotropy. */
+static bool gpu_depth_clamp = true, gpu_anisotropy = true;
+/* A pipeline with vsh.vert or fvf.vert failed to build: vertices of that
+ * kind go to the CPU from then on (pdo_gfx_vertex_shader_failed). */
+static bool gpu_vsh_failed, gpu_fvf_failed;
+
+static SDL_GPUGraphicsPipeline *create_pipeline(SDL_GPUGraphicsPipelineCreateInfo *pi)
+{
+    if (!gpu_depth_clamp)
+        pi->rasterizer_state.enable_depth_clip = true;
+    return SDL_CreateGPUGraphicsPipeline(dev, pi);
+}
+
+/* The device: first with what SDL asks for except clip distances and
+ * indirect draws' first instance, which nothing here uses (and some
+ * phones lack); then, if no GPU takes that, without depth clamping and
+ * anisotropy too. */
+static SDL_GPUDevice *create_device(void)
+{
+    /* PDO_GPU_BASIC=1: straight to the second, to see on any GPU what a
+     * phone without those features gets. */
+    const char *basic = SDL_getenv("PDO_GPU_BASIC");
+
+    for (int attempt = basic && *basic == '1'; attempt < 2; attempt++) {
+        SDL_PropertiesID pr = SDL_CreateProperties();
+        SDL_GPUDevice *d;
+
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, false);
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
+        if (attempt) {
+            SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, false);
+            SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, false);
+        }
+        d = SDL_CreateGPUDeviceWithProperties(pr);
+        SDL_DestroyProperties(pr);
+        if (d) {
+            if (attempt) {
+                gpu_depth_clamp = gpu_anisotropy = false;
+                SDL_Log("gfx: this GPU lacks depth clamping or anisotropic filtering: the device is made without both");
+            }
+            return d;
+        }
+        SDL_Log("gfx: no GPU device%s (%s)", attempt ? " without depth clamping and anisotropy either" : "",
+                SDL_GetError());
+    }
+    return NULL;
+}
+
+/* Pipelines that failed to build, not tried again at every draw (a driver
+ * that cannot link a shader fails each time, and slowly). */
+static pdo_pipeline_state *failed_ps;
+static uint32_t nfailed, cap_failed;
+
+static bool pipeline_failed(const pdo_pipeline_state *ps)
+{
+    for (uint32_t i = 0; i < nfailed; i++)
+        if (!memcmp(&failed_ps[i], ps, sizeof *ps))
+            return true;
+    return false;
+}
+
+static void note_failed(const pdo_pipeline_state *ps, bool spec)
+{
+    if (pipeline_failed(ps))
+        return;
+    failed_ps = grow(failed_ps, &cap_failed, nfailed + 1, sizeof *failed_ps);
+    failed_ps[nfailed++] = *ps;
+    if (nfailed <= 16)
+        SDL_Log("gfx: a pipeline failed to build (%s; %u so far): its draws are %s", 
+                spec ? "a vertex program's own shader" : ps->gpu_vsh == 1 ? "vertex programs on the GPU"
+                : ps->gpu_vsh == 2 ? "fixed-function vertices on the GPU" : "vertices from the CPU", nfailed,
+                spec ? "left to the interpreter" : ps->gpu_vsh ? "drawn from the CPU from now on" : "skipped");
+    if (!spec && ps->gpu_vsh == 1)
+        gpu_vsh_failed = true;
+    else if (!spec && ps->gpu_vsh == 2)
+        gpu_fvf_failed = true;
+}
+
+bool pdo_gfx_vertex_shader_failed(bool fixed_function)
+{
+    return fixed_function ? gpu_fvf_failed : gpu_vsh_failed;
+}
+
 /* Forget a frame's commands and what they recorded. */
 static void reset_frame(frame_data *f)
 {
@@ -1008,6 +1097,8 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
     p = find_pipeline(ps);
     if (p)
         return p;
+    if (pipeline_failed(ps))
+        return NULL;
     if (npipelines == MAX_PIPELINES)
         return pipelines[0].p;
     t0 = SDL_GetTicksNS();
@@ -1017,8 +1108,10 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
             return NULL;
     }
     p = make_pipeline(ps, spec_vs);
-    if (!p)
+    if (!p) {
+        note_failed(ps, spec_vs != NULL);
         return NULL;
+    }
     add_pipeline(ps, p, !warming);
     if (!warming) {
         pipeline_ns += SDL_GetTicksNS() - t0;
@@ -1137,7 +1230,7 @@ static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_
     pi.target_info.has_depth_stencil_target = true;
     pi.multisample_state.sample_count = ps->single_sample ? SDL_GPU_SAMPLECOUNT_1 : sample_count;
 
-    p = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+    p = create_pipeline(&pi);
     if (!p) {
         SDL_Log("gfx: pipeline creation failed (%s)", SDL_GetError());
         return NULL;
@@ -1321,8 +1414,11 @@ static void bg_collect(void)
                 bg_asked[k] = bg_asked[--bg_nasked];
                 break;
             }
-        if (!j->p)
+        if (!j->p) {
+            if (j->gen == pipe_gen)
+                note_failed(&j->ps, true);
             continue;
+        }
         if (j->gen != pipe_gen || find_pipeline(&j->ps)) {
             SDL_ReleaseGPUGraphicsPipeline(dev, j->p);
             continue;
@@ -1352,7 +1448,7 @@ static SDL_GPUSampler *get_sampler(const pdo_tex_ref *t)
      * textures the game filters smoothly; point-filtered ones (menus, text)
      * stay as they are. Its level is part of the key: a change takes effect
      * with the next sampler looked up. */
-    int aniso = t->min_filter >= 2 ? pdo_settings_get()->anisotropy : 1;
+    int aniso = t->min_filter >= 2 && gpu_anisotropy ? pdo_settings_get()->anisotropy : 1;
     uint32_t alevel = aniso >= 16 ? 4 : aniso >= 8 ? 3 : aniso >= 4 ? 2 : aniso >= 2 ? 1 : 0;
     uint32_t key = (uint32_t)t->min_filter | (uint32_t)t->mag_filter << 8 |
                    (uint32_t)t->address_u << 16 | (uint32_t)(t->address_v & 7) << 24 | alevel << 27 |
@@ -2029,7 +2125,7 @@ static void make_seed_pipeline(void)
     pi.target_info.depth_stencil_format = depth_format;
     pi.target_info.has_depth_stencil_target = true;
     pi.multisample_state.sample_count = sample_count;
-    seed_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+    seed_pipeline = create_pipeline(&pi);
     if (!seed_pipeline)
         SDL_Log("gfx: cannot create the multisample seed pass (%s)", SDL_GetError());
 }
@@ -2131,14 +2227,14 @@ static bool init_present(void)
     pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     pi.target_info.color_target_descriptions = &ct;
     pi.target_info.num_color_targets = 1;
-    present_pipeline = pvs && pfs ? SDL_CreateGPUGraphicsPipeline(dev, &pi) : NULL;
+    present_pipeline = pvs && pfs ? create_pipeline(&pi) : NULL;
     SDL_ReleaseGPUShader(dev, pfs);
     screen_fs = make_shader(screen_frag_spv, sizeof screen_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
     screen_vs = pvs;
     if (have_swapchain && screen_fs) {
         ct.format = SDL_GetGPUSwapchainTextureFormat(dev, window);
         pi.fragment_shader = screen_fs;
-        screen_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        screen_pipeline = create_pipeline(&pi);
         ct.blend_state.enable_blend = true;
         ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
         ct.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -2146,7 +2242,7 @@ static bool init_present(void)
         ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
         ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
-        overlay_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        overlay_pipeline = create_pipeline(&pi);
         /* max(caption, picture): white words show, their black goes */
         ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
@@ -2154,7 +2250,7 @@ static bool init_present(void)
         ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_MAX;
-        caption_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        caption_pipeline = create_pipeline(&pi);
         if (!screen_pipeline || !overlay_pipeline)
             SDL_Log("gfx: cannot create the window pass (%s)", SDL_GetError());
     }
@@ -2309,7 +2405,7 @@ static bool init_here(int width, int height)
         dev = pdo_lsfg_create_device();
 #endif
     if (!dev)
-        dev = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, NULL);
+        dev = create_device();
     if (!dev) {
         SDL_Log("gfx: no GPU device (%s)", SDL_GetError());
         return false;
@@ -2658,7 +2754,7 @@ static SDL_GPUGraphicsPipeline *bloom_pipeline(int samples_log2, bool add)
     pi.target_info.color_target_descriptions = &ct;
     pi.target_info.num_color_targets = 1;
     pi.multisample_state.sample_count = (SDL_GPUSampleCount)samples_log2;
-    return SDL_CreateGPUGraphicsPipeline(dev, &pi);
+    return create_pipeline(&pi);
 }
 
 /* One full-screen draw of the bloom shader into dst. */
@@ -3180,7 +3276,8 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     ps.vsh_spec[0] = (uint32_t)key;
                     ps.vsh_spec[1] = (uint32_t)(key >> 32);
                     if (!find_pipeline(&ps)) {
-                        bg_ask(&ps, spec_shader_of(key), true);
+                        if (!pipeline_failed(&ps))
+                            bg_ask(&ps, spec_shader_of(key), true);
                         ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
                     }
                 }
