@@ -1145,6 +1145,85 @@ static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_
     return p;
 }
 
+/* ── The driver's own pipeline cache (Vulkan) ────────────────────────────
+ * pipelines.bin lists which pipelines to make at start; making one is
+ * still a full compile by the driver (120 ms on Adreno, up to a second or
+ * more on an AMD card with a program's own shader), at every start. A
+ * Vulkan pipeline cache keeps the driver's compiled result:
+ * pipelines.vkcache in the data folder, handed to SDL's device before any
+ * pipeline is made (patches/SDL/0002), saved again a few seconds after
+ * new pipelines stop coming, on a thread of its own. The driver checks the
+ * file's header and ignores one from another GPU or driver version. */
+bool PDO_SetGPUVulkanPipelineCache(SDL_GPUDevice *device, const void *data, size_t size);
+size_t PDO_GetGPUVulkanPipelineCacheData(SDL_GPUDevice *device, void *data, size_t size);
+
+static bool vkcache_on;
+static uint32_t vkcache_adds, vkcache_saved_adds;  /* pipelines kept, and at the last save */
+static Uint64 vkcache_last_add_ns;
+static SDL_AtomicInt vkcache_saving;
+
+static void vkcache_file(char *path, size_t n)
+{
+    snprintf(path, n, "%spipelines.vkcache", pdo_data_dir());
+}
+
+static void vkcache_load(void)
+{
+    char path[PDO_PATH_MAX];
+    size_t size = 0;
+    void *data;
+
+    if (vkcache_on || !dev || SDL_strcmp(SDL_GetGPUDeviceDriver(dev), "vulkan") != 0)
+        return;
+    vkcache_file(path, sizeof path);
+    data = SDL_LoadFile(path, &size);
+    vkcache_on = PDO_SetGPUVulkanPipelineCache(dev, data, data ? size : 0);
+    if (vkcache_on)
+        SDL_Log("gfx: driver pipeline cache: %s (%zu KB)", data ? "loaded" : "new", size / 1024);
+    SDL_free(data);
+}
+
+static int SDLCALL vkcache_save_main(void *unused)
+{
+    char path[PDO_PATH_MAX], tmp[PDO_PATH_MAX + 8];
+    size_t n;
+    void *buf;
+
+    (void)unused;
+    n = PDO_GetGPUVulkanPipelineCacheData(dev, NULL, 0);
+    buf = n ? SDL_malloc(n) : NULL;
+    if (buf) {
+        n = PDO_GetGPUVulkanPipelineCacheData(dev, buf, n);
+        vkcache_file(path, sizeof path);
+        snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        if (n && SDL_SaveFile(tmp, buf, n) && SDL_RenamePath(tmp, path))
+            SDL_Log("gfx: driver pipeline cache saved (%zu KB)", n / 1024);
+        else
+            SDL_RemovePath(tmp);
+        SDL_free(buf);
+    }
+    SDL_SetAtomicInt(&vkcache_saving, 0);
+    return 0;
+}
+
+/* Render thread, once a frame: saves when pipelines were added and none
+ * for three seconds. */
+static void vkcache_maybe_save(void)
+{
+    SDL_Thread *t;
+
+    if (!vkcache_on || vkcache_adds == vkcache_saved_adds
+            || SDL_GetTicksNS() - vkcache_last_add_ns < 3 * SDL_NS_PER_SECOND
+            || !SDL_CompareAndSwapAtomicInt(&vkcache_saving, 0, 1))
+        return;
+    vkcache_saved_adds = vkcache_adds;
+    t = SDL_CreateThread(vkcache_save_main, "vkcache", NULL);
+    if (t)
+        SDL_DetachThread(t);
+    else
+        SDL_SetAtomicInt(&vkcache_saving, 0);
+}
+
 /* Keeps a made pipeline (and the key in pipelines.bin when save). */
 static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *p, bool save)
 {
@@ -1156,6 +1235,8 @@ static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *
     pipelines[npipelines].p = p;
     index_pipeline(npipelines);
     npipelines++;
+    vkcache_adds++;
+    vkcache_last_add_ns = SDL_GetTicksNS();
     if (save)
         save_pipeline_key(ps);
 }
@@ -2242,6 +2323,7 @@ static bool init_here(int width, int height)
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "driver"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "?"));
     }
+    vkcache_load();             /* before any pipeline is made */
 
     window_thread = SDL_GetCurrentThreadID();
     {   /* Where the window was last time (pdo_gfx_pump_events), if it fits
@@ -3023,6 +3105,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
     upload_frame(cmd);
     cur_target = NULL;
     bg_collect();
+    vkcache_maybe_save();
     if (bloom)
         for (uint32_t i = F->ncmds; i-- > 0;)
             if (F->cmds[i].kind == CMD_DRAW && is_3d(F, &F->cmds[i])) {

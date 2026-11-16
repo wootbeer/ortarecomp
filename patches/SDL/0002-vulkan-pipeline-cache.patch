@@ -1,0 +1,111 @@
+--- a/src/gpu/vulkan/SDL_gpu_vulkan.c
++++ b/src/gpu/vulkan/SDL_gpu_vulkan.c
+@@ -1121,6 +1121,7 @@
+     VkPhysicalDeviceProperties2KHR physicalDeviceProperties;
+     VkPhysicalDeviceDriverPropertiesKHR physicalDeviceDriverProperties;
+     VkDevice logicalDevice;
++    VkPipelineCache pipelineCache; /* Orta Recomp (patches/SDL/0002): PDO_SetGPUVulkanPipelineCache */
+     Uint8 integratedMemoryNotification;
+     Uint8 outOfDeviceLocalMemoryWarning;
+     Uint8 outofBARMemoryWarning;
+@@ -5075,6 +5076,9 @@
+     SDL_DestroyMutex(renderer->descriptorSetLayoutFetchLock);
+     SDL_DestroyMutex(renderer->windowLock);
+ 
++    if (renderer->pipelineCache != VK_NULL_HANDLE) {
++        renderer->vkDestroyPipelineCache(renderer->logicalDevice, renderer->pipelineCache, NULL);
++    }
+     renderer->vkDestroyDevice(renderer->logicalDevice, NULL);
+     renderer->vkDestroyInstance(renderer->instance, NULL);
+ 
+@@ -6339,6 +6343,69 @@
+     return renderPass;
+ }
+ 
++/* Orta Recomp (patches/SDL/0002, local only): a Vulkan pipeline cache for
++ * the device, so that a pipeline made once is not compiled from scratch at
++ * the next start. The caller hands in what it saved (data may be NULL; the
++ * driver ignores data from another GPU or driver) before making pipelines,
++ * and reads the cache back to save it. Callers check that the device's
++ * driver is "vulkan" first. The cache is internally synchronized, so
++ * pipelines may be made on several threads meanwhile. */
++extern SDL_DECLSPEC bool SDLCALL PDO_SetGPUVulkanPipelineCache(SDL_GPUDevice *device, const void *data, size_t size);
++extern SDL_DECLSPEC size_t SDLCALL PDO_GetGPUVulkanPipelineCacheData(SDL_GPUDevice *device, void *data, size_t size);
++
++bool PDO_SetGPUVulkanPipelineCache(SDL_GPUDevice *device, const void *data, size_t size)
++{
++    VulkanRenderer *renderer;
++    VkPipelineCacheCreateInfo info;
++    VkPipelineCache cache = VK_NULL_HANDLE;
++    VkResult result;
++
++    if (!device || !device->driverData) {
++        return false;
++    }
++    renderer = (VulkanRenderer *)device->driverData;
++    SDL_zero(info);
++    info.sType = VK_STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO;
++    info.initialDataSize = data ? size : 0;
++    info.pInitialData = data ? data : NULL;
++    result = renderer->vkCreatePipelineCache(renderer->logicalDevice, &info, NULL, &cache);
++    if (result != VK_SUCCESS && info.initialDataSize) {
++        /* data the driver would not take: start empty */
++        info.initialDataSize = 0;
++        info.pInitialData = NULL;
++        result = renderer->vkCreatePipelineCache(renderer->logicalDevice, &info, NULL, &cache);
++    }
++    if (result != VK_SUCCESS) {
++        return false;
++    }
++    if (renderer->pipelineCache != VK_NULL_HANDLE) {
++        renderer->vkDestroyPipelineCache(renderer->logicalDevice, renderer->pipelineCache, NULL);
++    }
++    renderer->pipelineCache = cache;
++    return true;
++}
++
++size_t PDO_GetGPUVulkanPipelineCacheData(SDL_GPUDevice *device, void *data, size_t size)
++{
++    VulkanRenderer *renderer;
++    size_t n = size;
++
++    if (!device || !device->driverData) {
++        return 0;
++    }
++    renderer = (VulkanRenderer *)device->driverData;
++    if (renderer->pipelineCache == VK_NULL_HANDLE) {
++        return 0;
++    }
++    if (!data) {
++        n = 0;
++    }
++    if (renderer->vkGetPipelineCacheData(renderer->logicalDevice, renderer->pipelineCache, &n, data) < 0) {
++        return 0;
++    }
++    return n;
++}
++
+ static SDL_GPUGraphicsPipeline *VULKAN_CreateGraphicsPipeline(
+     SDL_GPURenderer *driverData,
+     const SDL_GPUGraphicsPipelineCreateInfo *createinfo)
+@@ -6623,10 +6690,9 @@
+     vkPipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
+     vkPipelineCreateInfo.basePipelineIndex = 0;
+ 
+-    // TODO: enable pipeline caching
+     vulkanResult = renderer->vkCreateGraphicsPipelines(
+         renderer->logicalDevice,
+-        VK_NULL_HANDLE,
++        renderer->pipelineCache,
+         1,
+         &vkPipelineCreateInfo,
+         NULL,
+@@ -6761,7 +6827,7 @@
+ 
+     vulkanResult = renderer->vkCreateComputePipelines(
+         renderer->logicalDevice,
+-        (VkPipelineCache)VK_NULL_HANDLE,
++        renderer->pipelineCache,
+         1,
+         &vkShaderCreateInfo,
+         NULL,
