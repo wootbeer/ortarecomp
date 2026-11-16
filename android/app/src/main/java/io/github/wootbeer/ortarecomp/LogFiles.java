@@ -40,12 +40,35 @@ final class LogFiles {
     private LogFiles() {
     }
 
-    /** At the start of a run: whether the last one ended without quitting. */
+    /** What the game's crash handler writes first (src/guest/crash_report.c). */
+    private static final String CRASH_REPORT = "=== CRASH:";
+    /** It is near the end of the log: only so much of it is read. */
+    private static final int CRASH_SEARCH_BYTES = 256 * 1024;
+
+    /**
+     * At the start of a run, before the game rotates its logs: whether the last one crashed. The
+     * marker alone only says it did not quit from the front: Android Studio's Run and Stop kill
+     * the app there, and so can the system, and neither is the game's fault. A crash leaves the
+     * game's own crash report at the end of its log too.
+     */
     static boolean lastRunCrashed(Context context) {
         File marker = new File(context.getFilesDir(), RUNNING_MARKER);
-        boolean crashed = marker.exists();
+        boolean ended = marker.exists();
         marker.delete();
-        return crashed;
+        return ended && logHasCrashReport(new File(context.getFilesDir(), LOG));
+    }
+
+    private static boolean logHasCrashReport(File log) {
+        try (RandomAccessFile f = new RandomAccessFile(log, "r")) {
+            long length = f.length();
+            int n = (int) Math.min(length, CRASH_SEARCH_BYTES);
+            byte[] tail = new byte[n];
+            f.seek(length - n);
+            f.readFully(tail);
+            return new String(tail, StandardCharsets.ISO_8859_1).contains(CRASH_REPORT);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     /** The game is in the foreground: a crash from here on leaves the marker behind. */
