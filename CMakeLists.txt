@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(OrtaRecomp VERSION 0.1.10 LANGUAGES C CXX)
+project(OrtaRecomp VERSION 0.1.11 LANGUAGES C CXX)
 
 # Orta Recomp: a static recompilation of Panzer Dragoon Orta (Xbox).
 #
@@ -189,6 +189,7 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         src/guest/guest_manual.c
         src/guest/video_hooks.c
         src/guest/widescreen.c
+        src/guest/difficulty.c
         src/guest/unlocks.c
         src/guest/intro_skip.c
         src/guest/launch_guard.c)

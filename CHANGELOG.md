@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.1.11 (beta)
+
+### Fixed
+
+- Difficulty: Normal played like Easy, and every difficulty was a step
+  easier than on a USA console (issue 8). The game sets its difficulty
+  from the console's region, and the port answered with no region at all;
+  it now answers North America, as a USA console does. In episode 2 the
+  wall plants (Golegs) take two Base Wing volleys on Normal again, not one.
+
 ## v0.1.10 (beta)
 
 ### Fixed

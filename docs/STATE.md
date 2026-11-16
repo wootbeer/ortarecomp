@@ -1,6 +1,6 @@
 # Current state
 
-v0.1.10 (beta, Windows and Linux/Steam Deck; Android in progress, `android/`): Panzer Dragoon Orta plays
+v0.1.11 (beta, Windows and Linux/Steam Deck; Android in progress, `android/`): Panzer Dragoon Orta plays
 through all ten episodes and the ending, with music, movies, saves, bosses
 and Pandora's Box, the original Panzer Dragoon included. Changes are
 listed in `CHANGELOG.md`.
@@ -10,7 +10,7 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
 ## How it fits together
 
 - `tools/recomp.py`: the USA `default.xbe` -> `gen/` through xboxrecomp
-  v0.13.1 and patches 0001-0041 (`patches/xboxrecomp/`), with seeds for
+  v0.13.1 and patches 0001-0042 (`patches/xboxrecomp/`), with seeds for
   functions the sweep misses (`tools/pdo_seeds.json`; every failed indirect
   call seen in play is seeded). 42 lifter jumps still go to stubs, all from
   data decoded as code.

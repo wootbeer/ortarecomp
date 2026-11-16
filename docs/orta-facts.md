@@ -324,6 +324,24 @@ the same values). 0x00033960 records the sticks for demos (4096 entries at
 screen position in pixels at +0xB8/+0xBC, recomputed every frame (writing it
 does not move the reticle); the state it comes from is not found yet.
 
+## Difficulty
+
+The chosen difficulty is at 0x00342778 (from the save's 0x00424E70 by
+0x00034120; 1 by default) and an offset at 0x00342788. Every
+difficulty-dependent value (52 places: `difficulty - offset`, then
+`cmovg` against 0) is a table entry at max(difficulty - offset, 0); tables
+of three floats, e.g. 0x00363918 (18, 25, 30), 0x00385888 (3000, 2200,
+1500). At boot 0x00011820 sets the offset from XGetGameRegion
+(0x0022D0A3: ExQueryNonVolatileSetting 0x104, kept at 0x0034278C): 0 for
+Japan (2), 1 for any other region, untouched for 0. 0x00033190 and
+0x000335E0 also write it. xboxrecomp answered 0 for setting 0x104 until
+patch 0042 (1, North America; XBOX_GAME_REGION=n to compare);
+src/guest/difficulty.c logs all three when they change. Checked on
+Normal (difficulty 1), episode 2's Golegs at Base Wing level 1: region 1
+gives offset 1, tables read at 0, two volleys each as on the console;
+region 0 gave offset 0, tables at 1, one volley (issue 8: Normal played
+like Easy).
+
 ## Saves and Pandora's Box
 
 PDOSYSTEM.DAT (16 KB) is a 20-byte signature, then the block the game keeps

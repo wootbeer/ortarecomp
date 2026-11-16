@@ -370,6 +370,7 @@ void sub_002BAFC0(void)
     uint64_t n;
 
     pdo_widescreen_frame();     /* the aspect setting changed between 16:9 and 21:9 */
+    pdo_difficulty_frame();     /* logs Orta's difficulty when it changes */
     hud_bars_before = hud_bars_frame;
     hud_bars_frame = false;
     hud_backdrop_run = hud_backdrop_frame ? hud_backdrop_run + 1 : 0;
