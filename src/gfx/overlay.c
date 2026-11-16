@@ -28,7 +28,7 @@
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
-       ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
+       ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_ABOUT, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
        ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_FULLSCREEN, ITEM_EXIT,
        /* Picture (present.frag) */
@@ -60,9 +60,9 @@ static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_
 #else
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
 #endif
-static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_BACK };
+static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_ABOUT, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
-                                         ITEM_BACK };
+                                         ITEM_ABOUT, ITEM_BACK };
 
 static bool launcher;               /* pdo_launcher_begin .. end */
 static int launcher_choice;         /* PDO_LAUNCH_* picked, 0 none yet */
@@ -316,6 +316,7 @@ static void change(int dir)
     case ITEM_INTERP: next_frame_gen(s, dir); break;
     case ITEM_LSMODE: s->lsfg_performance = !s->lsfg_performance; break;
     case ITEM_LSDLL:  if (dir > 0) pick_dll(); else s->lsfg_dll[0] = 0; break;
+    case ITEM_ABOUT:  if (dir > 0) SDL_OpenURL("https://github.com/wootbeer"); break;
     case ITEM_CONTROLS: if (dir > 0) { controls = true; selected = 0; } break;
     case ITEM_CLOSE:  if (dir > 0) set_open(false); break;
     case ITEM_QUIT:   if (dir > 0) ask_quit(); break;
@@ -461,7 +462,13 @@ static bool capture_event(const SDL_Event *ev)
     return true;
 }
 
-static bool is_link(int item);
+static bool is_link(int item)
+{
+    return item == ITEM_START || item == ITEM_EXIT || item == ITEM_CLOSE || item == ITEM_QUIT || item == ITEM_BACK ||
+           item == ITEM_LSDLL || item == ITEM_ABOUT ||
+           item == ITEM_PIC_RESET || item == ITEM_PICK || item == ITEM_GPU || item == ITEM_CONTROLS ||
+           (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_ADVANCED);
+}
 static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
 
 /* Clicks and taps (src/gfx/overlay.h, pdo_overlay_set_rect): where the
@@ -786,6 +793,11 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_VSYNC:  snprintf(v, n, "%s", s->vsync == PDO_VSYNC_OFF ? "Off" : s->vsync == PDO_VSYNC_FAST ? "Fast" : "On"); break;
     case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Low" : "High"); break;
     case ITEM_RATE:   snprintf(v, n, "%s", s->fps30 ? "30" : "60"); break;
+    case ITEM_ABOUT: {
+        const char *ver = SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING);
+        snprintf(v, n, "v%s", ver ? ver : "?");
+        break;
+    }
     case ITEM_TOUCH:
         snprintf(v, n, "%s", s->touch_buttons == PDO_TOUCH_ALWAYS ? "Always"
                  : s->touch_buttons == PDO_TOUCH_OFF ? "Off" : "Auto");
@@ -872,6 +884,7 @@ static const char *label_of(int item)
     case ITEM_RATE:   return "Frame rate";
     case ITEM_RUMBLE: return "Vibration";
     case ITEM_TOUCH:  return "Touch buttons";
+    case ITEM_ABOUT:  return "About";
     case ITEM_TOUCH_SIZE: return "Touch size";
     case ITEM_TOUCH_ALPHA: return "Touch opacity";
     case ITEM_3D:     return "Output";
@@ -939,6 +952,7 @@ static const char *help_of(int item)
     case ITEM_RATE:   return "60 is default.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
     case ITEM_TOUCH:  return "Auto hides them while a controller is connected.";
+    case ITEM_ABOUT:  return "Orta Recomp by wootbeer. OK opens github.com/wootbeer";
     case ITEM_TOUCH_SIZE: return "Size of the on-screen controls.";
     case ITEM_TOUCH_ALPHA: return "Opacity of the on-screen controls.";
     case ITEM_3D: {
@@ -995,13 +1009,6 @@ static const char *help_of(int item)
     return "";
 }
 
-static bool is_link(int item)
-{
-    return item == ITEM_START || item == ITEM_EXIT || item == ITEM_CLOSE || item == ITEM_QUIT || item == ITEM_BACK ||
-           item == ITEM_LSDLL ||
-           item == ITEM_PIC_RESET || item == ITEM_PICK || item == ITEM_GPU || item == ITEM_CONTROLS ||
-           (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_ADVANCED);
-}
 
 static void draw_menu(void)
 {
