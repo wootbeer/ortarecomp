@@ -45,21 +45,28 @@ static const char *page_names[PAGE_COUNT] = { "OPTIONS", "DISPLAY", "PICTURE", "
 
 #ifdef __ANDROID__
 /* Touch controls, a page of their own under Controls. */
-static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
+static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_GO_TOUCH, ITEM_CLOSE, ITEM_QUIT };
-static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
+static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_GO_TOUCH, ITEM_EXIT };
 #else
-static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
+static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT };
-static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
+static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
 #endif
+/* Picture is a page under Display (page_back returns there). */
 static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS,
-                                    ITEM_FPS, ITEM_BACK };
+                                    ITEM_PIC_BLOOM, ITEM_FPS, ITEM_GO_PICTURE, ITEM_BACK };
+#ifdef __ANDROID__
+/* Always fullscreen there: no Fullscreen line. */
+static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT,
+                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_FPS, ITEM_GO_PICTURE, ITEM_BACK };
+#else
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
-static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
+                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_FPS, ITEM_GO_PICTURE, ITEM_BACK };
+#endif
+static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
@@ -226,7 +233,7 @@ static void next_aa(pdo_settings *s, int dir)
 
 static int index_of(int item);
 
-/* To a page, on its first line; back to the main list, on that page's link. */
+/* To a page, on its first line; back to the main list (Picture: to Display), on that page's link. */
 static void go_page(int p)
 {
     page = p;
@@ -239,7 +246,7 @@ static void page_back(void)
     static const int link[PAGE_COUNT] = { 0, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
                                           ITEM_GO_ADVANCED, ITEM_GO_TOUCH };
     int from = page;
-    page = PAGE_MAIN;
+    page = from == PAGE_PICTURE ? PAGE_DISPLAY : PAGE_MAIN;
     selected = index_of(link[from]);
     dirty = true;
 }
