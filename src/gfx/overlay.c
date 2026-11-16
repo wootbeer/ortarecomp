@@ -321,7 +321,7 @@ static void change(int dir)
     case ITEM_RATE:   s->fps30 = !s->fps30; break;
     case ITEM_RUMBLE: s->rumble = SDL_clamp((s->rumble + 10 * dir) / 10 * 10, 0, 100); break;
     case ITEM_TOUCH:  s->touch_buttons = (s->touch_buttons + PDO_TOUCH_COUNT + dir) % PDO_TOUCH_COUNT; break;
-    case ITEM_TOUCH_SIZE: s->touch_size = SDL_clamp(s->touch_size + 10 * dir, 60, 180); break;
+    case ITEM_TOUCH_SIZE: s->touch_size = SDL_clamp(s->touch_size + 10 * dir, 90, 130); break;
     case ITEM_TOUCH_ALPHA: s->touch_opacity = SDL_clamp(s->touch_opacity + 10 * dir, 30, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
@@ -509,7 +509,11 @@ void pdo_overlay_set_rect(float x, float y, float w, float h)
  * chosen, and a way somewhere (a page, Start, Back) taken; on a value's
  * right half the value goes up, on its left half down. Outside the panel:
  * back, or closed. */
-static void click(SDL_WindowID id, float x, float y)
+/* A click, or a tap (touch: SDL makes it a click). Off the panel a click
+ * goes back; a tap does nothing, as a finger misses easily. On the chosen
+ * line's value a click's left or right half changes it down or up; a tap's
+ * half of the whole line does, a bigger target. */
+static void click(SDL_WindowID id, float x, float y, bool touch)
 {
     SDL_Window *win = SDL_GetWindowFromID(id);
     float d = win ? SDL_GetWindowPixelDensity(win) : 1.0f;
@@ -531,7 +535,8 @@ static void click(SDL_WindowID id, float x, float y)
                 break;
         }
         if (i == CTL_COUNT) {
-            act(ACT_BACK);
+            if (!touch)
+                act(ACT_BACK);
         } else if (i == selected) {
             act(ACT_OK);
         } else {
@@ -541,7 +546,8 @@ static void click(SDL_WindowID id, float x, float y)
         return;
     }
     if (col < menu_x0 || col >= menu_x0 + menu_w || row < menu_y0 || row >= menu_y0 + menu_h) {
-        act(ACT_BACK);
+        if (!touch)
+            act(ACT_BACK);
         return;
     }
     items = page_items(&n);
@@ -557,6 +563,8 @@ static void click(SDL_WindowID id, float x, float y)
     }
     if (is_link(items[i]) || items[i] == ITEM_QUIT)
         act(ACT_OK);
+    else if (touch)
+        change(col < menu_x0 + menu_w / 2 ? -1 : +1);
     else if (col >= menu_x0 + menu_w - 16)
         change(col < menu_x0 + menu_w - 8 ? -1 : +1);
     else
@@ -585,7 +593,7 @@ bool pdo_overlay_event(const SDL_Event *ev)
         if (!open_)
             return false;
         if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev->button.button == SDL_BUTTON_LEFT)
-            click(ev->button.windowID, ev->button.x, ev->button.y);
+            click(ev->button.windowID, ev->button.x, ev->button.y, ev->button.which == SDL_TOUCH_MOUSEID);
         return true;
     }
     if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
@@ -821,8 +829,8 @@ static float value_of(int item, char *v, size_t n)
         snprintf(v, n, "%s", s->touch_buttons == PDO_TOUCH_ALWAYS ? "Always"
                  : s->touch_buttons == PDO_TOUCH_OFF ? "Off" : "Auto");
         break;
-    case ITEM_TOUCH_SIZE: snprintf(v, n, "%d%%", s->touch_size); break;
-    case ITEM_TOUCH_ALPHA: snprintf(v, n, "%d%%", s->touch_opacity); break;
+    case ITEM_TOUCH_SIZE:  snprintf(v, n, "%d%%", s->touch_size); return (s->touch_size - 90) / 40.0f;
+    case ITEM_TOUCH_ALPHA: snprintf(v, n, "%d%%", s->touch_opacity); return (s->touch_opacity - 30) / 70.0f;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);

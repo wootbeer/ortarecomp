@@ -208,7 +208,7 @@ bool pdo_config_load(pdo_config *cfg)
             settings.touch_buttons = strcmp(eq + 1, "always") == 0 ? PDO_TOUCH_ALWAYS
                                    : strcmp(eq + 1, "off") == 0 ? PDO_TOUCH_OFF : PDO_TOUCH_AUTO;
         else if (strcmp(line, "touch_size") == 0)
-            settings.touch_size = clamp_int(SDL_atoi(eq + 1), 60, 180);
+            settings.touch_size = clamp_int(SDL_atoi(eq + 1), 90, 130);
         else if (strcmp(line, "touch_opacity") == 0)
             settings.touch_opacity = clamp_int(SDL_atoi(eq + 1), 30, 100);
         else if (strcmp(line, "depth_reversed") == 0)
