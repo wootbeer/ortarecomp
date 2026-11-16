@@ -57,14 +57,14 @@ static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_D
 #endif
 /* Picture is a page under Display (page_back returns there). */
 static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS,
-                                    ITEM_PIC_BLOOM, ITEM_FPS, ITEM_GO_PICTURE, ITEM_BACK };
+                                    ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
 #ifdef __ANDROID__
 /* Always fullscreen there: no Fullscreen line. */
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_FPS, ITEM_GO_PICTURE, ITEM_BACK };
+                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
 #else
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_FPS, ITEM_GO_PICTURE, ITEM_BACK };
+                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
 #endif
 static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
@@ -72,8 +72,8 @@ static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
 /* Android's on-screen controls (src/android/touch_controls.c). */
 static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_BACK };
-static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_ABOUT, ITEM_BACK };
-static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
+static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU,
                                          ITEM_ABOUT, ITEM_BACK };
 
 static bool launcher;               /* pdo_launcher_begin .. end */
