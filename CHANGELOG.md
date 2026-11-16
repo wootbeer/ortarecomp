@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.1.12 (beta)
+
+### Changed
+
+- The `Partition*.img` files in the save folder now hold only what the
+  game writes to them, about 120 KB in all, instead of showing as several
+  GB (issue 3). They were placeholders for the Xbox hard disk's
+  partitions, stretched to the partitions' full sizes: almost empty on most
+  drives, but shown at full size by file managers, and really taking that
+  space on a drive without sparse files (a USB stick formatted FAT32 or
+  exFAT). The game sees the same disk as before. Existing files are
+  trimmed at the next start, keeping everything written to them.
+
 ## v0.1.11 (beta)
 
 ### Fixed
