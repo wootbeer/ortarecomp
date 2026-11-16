@@ -336,9 +336,11 @@ of three floats, e.g. 0x00363918 (18, 25, 30), 0x00385888 (3000, 2200,
 Japan (2), 1 for any other region, untouched for 0. 0x00033190 and
 0x000335E0 also write it. xboxrecomp answered 0 for setting 0x104 until
 patch 0042 (1, North America; XBOX_GAME_REGION=n to compare);
-src/guest/difficulty.c logs all three when they change. Issue 8 reports
-Normal playing like Easy (Golegs, episode 2: one Base Wing volley here, two
-on the console).
+src/guest/difficulty.c logs all three when they change. Checked on
+Normal (difficulty 1), episode 2's Golegs at Base Wing level 1: region 1
+gives offset 1, tables read at 0, two volleys each as on the console;
+region 0 gave offset 0, tables at 1, one volley (issue 8: Normal played
+like Easy).
 
 ## Saves and Pandora's Box
 
