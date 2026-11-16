@@ -24,17 +24,22 @@
 #include "config.h"
 #include "gfx/overlay.h"
 
-/* Buttons, in descore's order; a held button sends its own index as its key. */
+/* Buttons, in descore's order; a held button sends its own index as its key
+ * (U-TURN sends L's and R's: the game turns round on both at once). Labels
+ * are Orta's actions: A fires (held: lock-on), X glides forward and B back
+ * (boost, brake), Y changes form, Black is berserk, L and R turn. */
 enum {
-    BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y, BUTTON_LT, BUTTON_RT, BUTTON_START,
+    BUTTON_A, BUTTON_B, BUTTON_X, BUTTON_Y, BUTTON_LT, BUTTON_RT, BUTTON_BLACK, BUTTON_START,
+    BUTTON_UTURN,               /* L and R together */
     BUTTON_MENU,                /* a tap button: the options (Java sends F1) */
     BUTTON_COUNT
 };
-static const char *const labels[BUTTON_COUNT] = { "A", "B", "X", "Y", "LT", "RT", "START", "MENU" };
+static const char *const labels[BUTTON_COUNT] = { "FIRE", "BRAKE", "BOOST", "MORPH", "L", "R",
+                                                  "BERSERK", "START", "180", "MENU" };
 
-/* XINPUT_GAMEPAD: bAnalogButtons[] index of A, B, X, Y and the triggers;
- * wButtons bit of Start. */
-static const int analog_of[BUTTON_START] = { 0, 1, 2, 3, 6, 7 };
+/* XINPUT_GAMEPAD: bAnalogButtons[] index of A, B, X, Y, the triggers and
+ * Black; wButtons bit of Start. */
+static const int analog_of[BUTTON_START] = { 0, 1, 2, 3, 6, 7, 4 };
 #define XB_START 0x0010
 
 static SDL_AtomicInt held;              /* a bit per button */
@@ -65,7 +70,7 @@ static void on_key(unsigned char key, int down)
 {
     int old;
 
-    if (key >= BUTTON_MENU)
+    if (key > BUTTON_START)
         return;
     do
         old = SDL_GetAtomicInt(&held);
@@ -89,15 +94,20 @@ static void on_stick(int index, float x, float y)
 static void set_button(int button, float x, float y, float w, float h)
 {
     unsigned char key = (unsigned char)button;
+    static const unsigned char both[2] = { BUTTON_LT, BUTTON_RT };
     if (button == BUTTON_MENU)
         descore_touch_set_button(button, x, y, w, h, NULL, 0, false);
+    else if (button == BUTTON_UTURN)
+        descore_touch_set_button(button, x, y, w, h, both, 2, false);
     else
         descore_touch_set_button(button, x, y, w, h, &key, 1, false);
 }
 
-/* The stick bottom left with LT above it; A, B, X, Y as on the pad (A at
- * the bottom) bottom right with RT above them; MENU top left and START top
- * right. Sizes follow the screen height and the Touch size setting. */
+/* The stick bottom left with L above it; FIRE, BOOST, BRAKE, MORPH
+ * where the pad has A, X, B, Y (FIRE at the bottom) bottom right with
+ * R above them; MENU top left with 180 below it, START top right
+ * with BERSERK below it. Sizes follow the screen height and the Touch
+ * size setting. */
 static void layout(int width, int height)
 {
     float w = (float)width, h = (float)height;
@@ -106,6 +116,7 @@ static void layout(int width, int height)
     float m = h * 0.04f, gap = c * 0.12f;
     float r = c * 1.25f;
     float cx = w - m - c * 1.6f, cy = h - m - c * 1.6f;     /* the face buttons' centre */
+    float tw = c * 1.4f, th = c * 0.7f;                      /* the wide buttons */
 
     descore_touch_set_screen_size(width, height);
     descore_touch_set_stick(0, m + r * 1.15f, h - m - r * 1.15f, r, on_stick);
@@ -115,10 +126,12 @@ static void layout(int width, int height)
     set_button(BUTTON_Y, cx - c * 0.5f, cy - c * 1.55f, c, c);
     set_button(BUTTON_X, cx - c * 1.6f, cy - c * 0.5f, c, c);
     set_button(BUTTON_B, cx + c * 0.6f, cy - c * 0.5f, c, c);
-    set_button(BUTTON_LT, m, h - m - r * 2.3f - gap - c * 0.7f, c * 1.4f, c * 0.7f);
-    set_button(BUTTON_RT, w - m - c * 1.4f, cy - c * 1.55f - gap - c * 0.7f, c * 1.4f, c * 0.7f);
-    set_button(BUTTON_MENU, m, m, c * 1.4f, c * 0.6f);
-    set_button(BUTTON_START, w - m - c * 1.4f, m, c * 1.4f, c * 0.6f);
+    set_button(BUTTON_LT, m, h - m - r * 2.3f - gap - th, tw, th);
+    set_button(BUTTON_RT, w - m - tw, cy - c * 1.55f - gap - th, tw, th);
+    set_button(BUTTON_MENU, m, m, tw, c * 0.6f);
+    set_button(BUTTON_UTURN, m, m + c * 0.6f + gap * 2.0f, tw, th);
+    set_button(BUTTON_START, w - m - tw, m, tw, c * 0.6f);
+    set_button(BUTTON_BLACK, w - m - tw, m + c * 0.6f + gap * 2.0f, tw, th);
 }
 
 /* The Size step nearest a size in percent. */
