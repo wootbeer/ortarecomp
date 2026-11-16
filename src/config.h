@@ -84,6 +84,8 @@ float pdo_widescreen_ratio(void);
 bool pdo_widescreen_needs_restart(void);
 /* Game thread, once a frame: applies a change between 16:9 and 21:9. */
 void pdo_widescreen_frame(void);
+/* Logs Orta's difficulty when it changes (src/guest/difficulty.c). */
+void pdo_difficulty_frame(void);
 
 /* The current settings: defaults until pdo_config_load reads the file. */
 pdo_settings *pdo_settings_get(void);
