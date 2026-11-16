@@ -1015,9 +1015,11 @@ static void draw_menu(void)
     int n;
     const int *items = page_items(&n);
     /* rows two cells apart, closer on long pages so the panel (its title,
-     * rows and help line) stays inside the layer's 30 */
-    const float w = 34, x0 = (cols - w) / 2, step = SDL_min(2.0f, 19.5f / (float)n);
-    const float h = 4.0f + n * step + 6.0f, y0 = SDL_max((30 - h) / 2, 0.5f);
+     * rows and help line) stays inside the layer's 30 with 0.75 to spare
+     * above and below: at 0.5 the longest pages' bottom edge, a pixel
+     * outside the panel, fell off the layer */
+    const float w = 34, x0 = (cols - w) / 2, step = SDL_min(2.0f, 18.5f / (float)n);
+    const float h = 4.0f + n * step + 6.0f, y0 = SDL_max((30 - h) / 2, 0.75f);
     char v[40];
 
     frame(x0, y0, w, h, page_names[page]);
@@ -1033,8 +1035,8 @@ static void draw_menu(void)
         bool sel = i == selected, off = (item == ITEM_START && !launcher_files_ok) || item_inactive(item);
 
         if (item == ITEM_BACK || item == ITEM_CLOSE || item == ITEM_EXIT) {
-            COLOR(COL_TRACK);
-            fill(x0 + 1, y - 0.6f, w - 2, 0.125f);       /* a rule before the way out */
+            COLOR(COL_TRACK);       /* a rule before the way out, in the gap above it */
+            fill(x0 + 1, y - SDL_min(0.6f, (step - 1.0f) * 0.5f + 0.0625f), w - 2, 0.125f);
         }
         if (sel) {
             COLOR(COL_SEL);

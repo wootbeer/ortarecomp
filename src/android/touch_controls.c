@@ -250,14 +250,15 @@ JNIEXPORT jstring JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_n
 }
 
 /* Bit 0: touch is for the controls now (the game read its controller in
- * the last half second and no options are open). Bit 1: the settings
- * changed, lay out again. */
+ * the last three seconds and no options are open: between scenes, while
+ * it loads, it stops reading for a moment, and the controls flickered off
+ * and on at half a second). Bit 1: the settings changed, lay out again. */
 JNIEXPORT jint JNICALL Java_io_github_wootbeer_ortarecomp_TouchControlsView_nativePoll(
     JNIEnv *env, jclass cls)
 {
     const pdo_settings *s = pdo_settings_get();
     Uint32 read = SDL_GetAtomicU32(&last_read_ms);
-    bool active = read && (Uint32)SDL_GetTicks() - read < 500 && !pdo_overlay_open();
+    bool active = read && (Uint32)SDL_GetTicks() - read < 3000 && !pdo_overlay_open();
     bool changed = s->touch_buttons != SDL_GetAtomicInt(&setting_mode)
                 || s->touch_size != SDL_GetAtomicInt(&setting_size)
                 || s->touch_opacity != SDL_GetAtomicInt(&setting_alpha);
