@@ -49,6 +49,7 @@ android {
                 arguments += listOf("-DPDO_RELEASE=ON", "-DANDROID_STL=c++_shared")
                 if (desktopDir != null) {
                     arguments += "-DPDO_GEN_DIR=$desktopDir/gen"
+                    arguments += "-DPD1_GEN_DIR=$desktopDir/gen-pd1"
                 }
                 // libmain.so, the game with SDL linked in; nothing else the root project defines.
                 targets += listOf("OrtaRecomp")

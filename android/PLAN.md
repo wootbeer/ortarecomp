@@ -8,7 +8,7 @@ file dialog for the document picker, its `content://` reading for the disc image
 
 ## Steps
 
-1. **Builds and boots** (now): the Android CMake path (`libmain.so`, SDL static, pd1 off),
+1. **Builds and boots** (now): the Android CMake path (`libmain.so`, SDL static),
    xboxrecomp on Android's C library (patches 0039: no OpenSSL; 0040: no `pthread_cancel` or
    `explicit_bzero`), the crash report's stack (`_Unwind_Backtrace`), the log through logcat and
    `ortarecomp.log`, the setup's disc image picker. To try on the owner's Retroid Pocket 6
@@ -23,7 +23,10 @@ file dialog for the document picker, its `content://` reading for the disc image
 3. **Performance** on the device: frame rate, the guest CPU lock on ARM, Display > Frame rate 30.
 4. **Lossless Scaling** (btgarecomp's Android build runs `lib/lsfg`, which builds on Android as
    it is): the DLL picked through the file dialog and copied into the app's storage.
-5. **pd1** (Pandora's Box > PANZER DRAGOON): an in-process program switch
-   (`docs/two-programs.md`, "Switch in-process"), since an app cannot restart itself as a
-   process the way the PC builds do.
+5. **pd1** (Pandora's Box > PANZER DRAGOON; in, to try): linked in (`PD1_GEN_DIR` is the
+   desktop checkout's `gen-pd1/`). Switching programs starts the app again as the PC builds
+   restart theirs: `src/guest/relaunch.c` calls `OrtaActivity.restartWith`, which starts
+   `RelaunchActivity` (its own process, `:relaunch`) and ends the game's; that waits for it to
+   be gone and starts `OrtaActivity` with `--boot --program NAME --launch-data FILE`
+   (`getArguments`).
 6. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.

@@ -14,14 +14,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 option(PDO_RELEASE "A release build: no console window on Windows (tools/package.py)" OFF)
-# Android (android/, Android Studio): not yet -- switching programs restarts
-# the process, which an app cannot do; the Box's PANZER DRAGOON then goes
-# back to the main menu (src/guest/launch_guard.c).
-if(ANDROID)
-    set(PDO_WITH_PD1_DEFAULT OFF)
-else()
-    set(PDO_WITH_PD1_DEFAULT ON)
-endif()
+# On Android too: switching programs starts the app again in a new process
+# (src/guest/relaunch.c, RelaunchActivity), as the PC builds restart theirs.
+set(PDO_WITH_PD1_DEFAULT ON)
 option(PDO_WITH_PD1 "Link in pd1.xbe's recompiled code when gen-pd1/ exists" ${PDO_WITH_PD1_DEFAULT})
 # Diagnosis of code that behaves differently under MSVC: drop its huge-
 # function optimisation (see pdo_generated_options), or give pd1's generated

@@ -21,6 +21,25 @@ import org.libsdl.app.SDLActivity;
 public class OrtaActivity extends SDLActivity implements InputManager.InputDeviceListener {
     private static final String TAG = "Orta";
 
+    /**
+     * The game's arguments: none from the launcher's icon; from RelaunchActivity, the program
+     * another one started (--boot --program NAME --launch-data FILE).
+     */
+    @Override
+    protected String[] getArguments() {
+        Intent intent = getIntent();
+        String[] args = intent != null ? intent.getStringArrayExtra(RelaunchActivity.EXTRA_ARGS) : null;
+        return args != null ? args : new String[0];
+    }
+
+    /** Called by the game (src/guest/relaunch.c): start again on another program. */
+    @SuppressWarnings("unused")
+    public static void restartWith(String[] args) {
+        if (mSingleton != null) {
+            RelaunchActivity.restart(mSingleton, args);
+        }
+    }
+
     /** The game runs once per process; a crash is looked for once, at its start. */
     private static boolean runStarted;
 

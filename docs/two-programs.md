@@ -127,7 +127,9 @@ Facts about pd1 itself are in `docs/orta-facts.md`.
    `pd1.xbe` this build has, saves the 4 KB page to `launch_data.bin` in the
    data folder and starts OrtaRecomp again with `--boot --program NAME
    --launch-data FILE` (Linux: `execv` of /proc/self/exe, the same process;
-   Windows: CreateProcess, then exit); the new run appends to the log and
+   Windows: CreateProcess, then exit; Android: `RelaunchActivity` in a
+   process of its own starts the activity again once the game's process
+   has ended); the new run appends to the log and
    puts the page back (`pdo_relaunch_load`) where XGetLaunchInfo reads it.
    Pandora's Box's PANZER DRAGOON leaves Orta at 0x000120D0 with
    `d:\pd1.xbe`; pd1's title EXIT asks for `\Device\CdRom0;default.xbe`

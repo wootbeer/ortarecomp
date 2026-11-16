@@ -43,6 +43,17 @@
             <meta-data android:name="android.app.shortcuts" android:resource="@xml/shortcuts" />
         </activity>
 
+        <!-- Starts the game again on the other program on the disc (Pandora's Box's PANZER
+             DRAGOON, and back), in a process of its own: the game runs once per process. -->
+        <activity
+            android:name=".RelaunchActivity"
+            android:process=":relaunch"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar.Fullscreen"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:screenOrientation="sensorLandscape"
+            android:exported="false" />
+
         <!-- The Share log shortcut: the share sheet with the game's logs, without starting the game. -->
         <activity
             android:name=".ShareLogActivity"
