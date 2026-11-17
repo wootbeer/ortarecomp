@@ -184,6 +184,7 @@ static void set_open(bool on)
     else {
         swallow = true;
         pdo_settings_save();
+        pdo_settings_log();
     }
 }
 

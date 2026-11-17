@@ -98,6 +98,8 @@ void pdo_difficulty_frame(void);
 pdo_settings *pdo_settings_get(void);
 /* Write the settings, keeping the game folder the file already holds. */
 bool pdo_settings_save(void);
+/* The settings into the log, when they differ from the last time. */
+void pdo_settings_log(void);
 
 /* Where settings, saves and imported game files live. With a portable.txt
  * next to the executable this is the executable's folder; otherwise the

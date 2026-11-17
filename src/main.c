@@ -473,15 +473,7 @@ int main(int argc, char **argv)
     }
 
     pdo_config_load(&cfg);
-    {
-        const pdo_settings *s = pdo_settings_get();
-        SDL_Log("settings: %gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, fixed function on %s, "
-                "aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa, s->anisotropy, s->bloom,
-                s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
-                s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
-                s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
-                s->fps30 ? 30 : 60, s->save_slot);
-    }
+    pdo_settings_log();
 #ifdef __ANDROID__
     pdo_android_gpu_driver_load();      /* before any Vulkan window: SDL loads Vulkan from it */
 #endif

@@ -329,6 +329,26 @@ bool pdo_config_save(const pdo_config *cfg)
     return SDL_SaveFile(path, text, (size_t)n);
 }
 
+/* The settings in the log: at the start, and again when the menu closes
+ * with any of them changed (a log's start alone left changes made in
+ * play out of it). */
+void pdo_settings_log(void)
+{
+    static char last[512];
+    char line[512];
+    const pdo_settings *s = pdo_settings_get();
+    snprintf(line, sizeof line, "%gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, "
+             "fixed function on %s, aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
+             s->anisotropy, s->bloom, s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
+             s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
+             s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
+             s->fps30 ? 30 : 60, s->save_slot);
+    if (strcmp(line, last)) {
+        SDL_Log("settings%s: %s", last[0] ? " changed" : "", line);
+        SDL_strlcpy(last, line, sizeof last);
+    }
+}
+
 bool pdo_settings_save(void)
 {
     /* The file's game folder, not this run's: --game-dir is not saved. The
