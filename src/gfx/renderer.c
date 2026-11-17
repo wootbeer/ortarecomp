@@ -3355,7 +3355,9 @@ static uint32_t prof_frames;
 static uint32_t prof_place, prof_draws;         /* this frame's pass count, draws in the pass */
 static uint32_t prof_d3, prof_d2, prof_dfull, prof_dblend;
 /* debug.ortarecomp.gpu_profile 2: also leave out the screen-space draws,
- * 3: the 3D ones (what they cost: the profile with and without). */
+ * 3: the 3D ones (what they cost: the profile with and without); 4: every
+ * draw cut to one pixel (scissor), what is left being the vertices and
+ * the draws themselves. */
 static int prof_skip;
 static SDL_GPUCommandBuffer *prof_cmd_out;      /* replay's last command buffer, for its caller */
 static bool prof_frame;                          /* this replay is profiled (draw_frame_main) */
@@ -3516,7 +3518,7 @@ static void prof_start(void)
 #endif
         int v = e ? SDL_atoi(e) : 0;
         prof_on = v >= 1;
-        prof_skip = v >= 2 ? v - 1 : 0;
+        prof_skip = v >= 2 ? v - 1 : 0;     /* 1 screen-space out, 2 3D out, 3 one pixel */
     }
     if (!prof_on)
         return;
@@ -3527,7 +3529,8 @@ static void prof_start(void)
         return;
     }
     SDL_Log("gfx: GPU profile on: each pass submitted on its own and timed (gpuprof: lines every 5 s)%s",
-            prof_skip == 1 ? "; screen-space draws left out" : prof_skip == 2 ? "; 3D draws left out" : "");
+            prof_skip == 1 ? "; screen-space draws left out" : prof_skip == 2 ? "; 3D draws left out"
+            : prof_skip == 3 ? "; every draw cut to one pixel" : "");
 }
 
 static void replay(SDL_GPUCommandBuffer *cmd)
@@ -3607,7 +3610,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         if (prof_frame) {
             bool d3 = is_3d(F, c);
             float r[4];
-            if (prof_skip && d3 == (prof_skip == 2))
+            if ((prof_skip == 1 || prof_skip == 2) && d3 == (prof_skip == 2))
                 continue;
             prof_d3 += d3;
             prof_d2 += !d3;
@@ -3704,6 +3707,10 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         }
         SDL_BindGPUFragmentSamplers(pass, 0, tsb, 4);
         SDL_PushGPUFragmentUniformData(cmd, 0, &c->draw.ff, sizeof c->draw.ff);
+        if (prof_frame && prof_skip == 3) {
+            SDL_Rect one = { 0, 0, 1, 1 };
+            SDL_SetGPUScissor(pass, &one);
+        }
         if (c->draw.ps.stencil_enable)
             SDL_SetGPUStencilReference(pass, c->draw.stencil_ref);
         if (gpu) {
