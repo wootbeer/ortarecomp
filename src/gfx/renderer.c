@@ -894,7 +894,9 @@ static SDL_Thread *bg_thread;               /* the first of the background maker
  * (draws wait for the interpreters' ones: those first): Turnip compiling
  * several of those large shaders at once ran the RP6 out of memory (it
  * aborted in the driver). */
-#define BG_MAX_THREADS 2       /* 4 ran Turnip out of memory on the RP6 even with one large one */
+#define BG_MAX_THREADS 3       /* 4 ran Turnip out of memory on the RP6 (with the fragment
+                                  interpreter's pipelines, since not made with a custom driver) */
+#define BG_MAX_HEAVY 2         /* programs' own at once: 1 left ten slow seconds at a fresh start */
 static uint32_t bg_programs_busy;             /* programs' pipelines being made (under bg_lock) */
 /* Pipelines a draw needs and nothing has made yet: made in the background
  * too, ahead of the rest, the draw left out until then, rather than made
@@ -1545,7 +1547,7 @@ static int SDLCALL bg_main(void *unused)
         Uint64 t0;
         uint32_t k;
         for (;;) {      /* in order (urgent ones are first), a program's only if none is being made */
-            for (k = 0; k < bg_ntodo && bg_todo[k].heavy && bg_programs_busy; k++)
+            for (k = 0; k < bg_ntodo && bg_todo[k].heavy && bg_programs_busy >= BG_MAX_HEAVY; k++)
                 ;
             if (k < bg_ntodo)
                 break;
@@ -1566,9 +1568,11 @@ static int SDLCALL bg_main(void *unused)
             SDL_BroadcastCondition(bg_wake);    /* the next program's may start */
         }
         bg_ns += SDL_GetTicksNS() - t0;
-        if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 32)
-            SDL_Log("gfx: a %s pipeline took %.0f ms to make%s (%u more waiting)",
+        if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 300)
+            SDL_Log("gfx: a %s pipeline%s took %.0f ms to make%s (%u more waiting)",
                     j.urgent ? "needed" : j.heavy ? "program's" : "fragment setup's",
+                    j.ps.gpu_vsh == 1 && !j.ps.vsh_spec[0] && !j.ps.vsh_spec[1] ? " (vertex interpreter)"
+                    : !j.ps.fs_spec[0] && !j.ps.fs_spec[1] ? " (fragment interpreter)" : "",
                     (double)(SDL_GetTicksNS() - t0) / 1e6,
                     j.p ? "" : ", and failed", bg_ntodo);
         bg_done = grow(bg_done, &bg_cap_done, bg_ndone + 1, sizeof *bg_done);
