@@ -19,6 +19,9 @@
 #include "lsfg/lsfg.hpp"
 
 #include <SDL3/SDL_vulkan.h>
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -97,15 +100,34 @@ void from_transfer(VkCommandBuffer cmd, VkImage image, VkImageLayout layout, VkA
             VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT);
 }
 
+/* The flow scale: the size the motion is worked out at, against the
+ * picture's. Lossless Scaling's own suggestion (1 up to 1080 lines);
+ * PDO_LSFG_FLOW, or on Android the property debug.ortarecomp.lsfg_flow,
+ * 0.25 to 1, sets it (to find what a phone's GPU can take). */
+float flow_scale(uint32_t h)
+{
+    const char *e = SDL_getenv("PDO_LSFG_FLOW");
+#ifdef __ANDROID__
+    static char prop[PROP_VALUE_MAX];
+    prop[0] = 0;
+    __system_property_get("debug.ortarecomp.lsfg_flow", prop);
+    if (!e || !*e)
+        e = prop;
+#endif
+    float f = e && *e ? float(SDL_atof(e)) : 0.0f;
+    return f > 0.0f ? std::clamp(f, 0.25f, 1.0f) : lsfg::default_flow_scale(h);
+}
+
 /* The generator for the picture's size and the settings; none (the frame
  * shown alone) when the multiplier is 1 or it cannot be made. */
 void make_generator(uint32_t w, uint32_t h)
 {
     uint32_t want = uint32_t(std::clamp(S.multiplier, 1, 8) - 1);
+    float flow = flow_scale(h);
 
     if (S.generator) {
         const lsfg::Settings &have = S.generator->settings();
-        if (have.generated_frames == want && have.performance == S.performance &&
+        if (have.generated_frames == want && have.performance == S.performance && have.flow_scale == flow &&
             S.generator->extent().width == w && S.generator->extent().height == h)
             return;
         /* Its objects may be in work the GPU has not done yet. */
@@ -122,7 +144,7 @@ void make_generator(uint32_t w, uint32_t h)
     std::string error;
     ls.generated_frames = want;
     ls.performance = S.performance;
-    ls.flow_scale = lsfg::default_flow_scale(h);
+    ls.flow_scale = flow;
     S.generator = lsfg::FrameGenerator::create(S.physical, S.device, S.shaders, ls, { w, h }, error);
     if (!S.generator) {
         S.generator_failed = true;
@@ -132,8 +154,8 @@ void make_generator(uint32_t w, uint32_t h)
     }
     S.last_frame = 0;
     S.interval = 0.0;
-    SDL_Log("lsfg: generating %u frame%s per game frame at %ux%u (%s mode)", want, want == 1 ? "" : "s", w, h,
-            S.performance ? "performance" : "quality");
+    SDL_Log("lsfg: generating %u frame%s per game frame at %ux%u (%s mode, flow scale %.2f)", want,
+            want == 1 ? "" : "s", w, h, S.performance ? "performance" : "quality", flow);
     set_status("");
 }
 
