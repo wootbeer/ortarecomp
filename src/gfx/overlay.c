@@ -59,13 +59,16 @@ static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_D
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
 #endif
 /* Picture is a page under Display (page_back returns there). */
+#ifdef __ANDROID__
+/* Always fullscreen there: no Fullscreen line; and always in step with the
+ * screen (apply_vsync, renderer.c): no VSync line. */
+static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_RATE, ITEM_SHADOWS,
+                                    ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
+static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT,
+                                        ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
+#else
 static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS,
                                     ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
-#ifdef __ANDROID__
-/* Always fullscreen there: no Fullscreen line. */
-static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
-#else
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
                                         ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
 #endif

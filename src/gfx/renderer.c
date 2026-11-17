@@ -2371,6 +2371,12 @@ static void apply_vsync(void)
 {
     static int applied = -1;
     int want = pdo_settings_get()->vsync;
+#ifdef __ANDROID__
+    /* A phone's compositor shows a frame per refresh at most: Fast or Off
+     * only made frames never seen (interpolating, 400-650 a second on the
+     * RP6's 120 Hz screen, its GPU and battery spent on them). */
+    want = 0;
+#endif
     static const SDL_GPUPresentMode modes[] = { SDL_GPU_PRESENTMODE_VSYNC, SDL_GPU_PRESENTMODE_MAILBOX,
                                                 SDL_GPU_PRESENTMODE_IMMEDIATE };
     static const char *names[] = { "on", "fast (mailbox)", "off (immediate)" };
@@ -5628,8 +5634,22 @@ static void match_frames(frame_data *prev, frame_data *cur)
                          * frame, capture of a boost's end). Each frame's
                          * run is as the game drew it, and the outputs
                          * blend. */
-                        c->vu.prev_prog[0] = pc->vu.info[0];
-                        c->vu.prev_prog[1] = pc->vu.info[1];
+                        if (fs_wait) {
+                            /* Only the vertex interpreter runs two programs,
+                             * and with a custom driver its pipelines are
+                             * not made (Turnip ran the RP6 out of memory
+                             * over them, interpolating at 120 Hz): this
+                             * frame's alone, not blended (a boost's end,
+                             * one frame). */
+                            c->vu.interp[0] = -1;
+                            c->vu.interp[1] = 0;
+                            memcpy(c->vu.prev_scale, c->vu.scale, sizeof c->vu.prev_scale);
+                            memcpy(c->vu.prev_offset, c->vu.offset, sizeof c->vu.prev_offset);
+                            c->unpaired = true;
+                        } else {
+                            c->vu.prev_prog[0] = pc->vu.info[0];
+                            c->vu.prev_prog[1] = pc->vu.info[1];
+                        }
                     }
                     taken[pk[i + order[k]].cmd] = 1;
                     c->pair_prev = pk[i + order[k]].cmd;
