@@ -849,10 +849,11 @@ typedef struct { int32_t base; uint32_t count; uint64_t key; int state; } spec_p
 #define SPEC_PROG_SLOTS 4096u
 static spec_prog spec_progs[SPEC_PROG_SLOTS];   /* by base; state 0 empty, 1 asked, 2 ready, -1 none */
 static uint32_t spec_draws, interp_draws;       /* GPU program draws each way, for the log */
+static uint32_t fs_spec_draws, fs_interp_draws; /* draws by their setup's own shader or ff.frag's interpreter */
 static uint32_t bg_made;                        /* their pipelines made in the background (bg_ask) */
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 /* Programs' own pipelines made in the background (bg_main, below). */
-typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs; SDL_GPUGraphicsPipeline *p;
+typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs, *fs; SDL_GPUGraphicsPipeline *p;
                  uint32_t gen; bool save; } bg_job;
 static SDL_Mutex *bg_lock;
 static SDL_Condition *bg_wake;
@@ -900,6 +901,70 @@ static SDL_GPUShader *spec_shader_of(uint64_t key)
     spec_shaders[nspec_shaders].s = sh;
     nspec_shaders++;
     return sh;
+}
+
+/* Fragment setups' shaders (vsh_spec.h pdo_fs_spec_*), by key: ready (s),
+ * being made (state 0), or not to be had (-1). Render thread. */
+#define FS_SLOTS 4096
+static struct { uint64_t key; SDL_GPUShader *s; int state; } fs_cache[FS_SLOTS];
+static uint32_t fs_cached;
+
+/* The shader of a fragment setup's key: made from its SPIR-V when made or
+ * on disk (saved pipelines ask before the setup is met), else NULL. */
+static SDL_GPUShader *fs_shader_of(uint64_t key, const int32_t *blob)
+{
+    uint32_t h = (uint32_t)(key ^ key >> 32) % FS_SLOTS;
+    const uint32_t *spv;
+    size_t bytes;
+    int st;
+
+    for (uint32_t n = 0; n < FS_SLOTS; n++, h = (h + 1) % FS_SLOTS) {
+        if (fs_cache[h].key == key) {
+            if (fs_cache[h].state != 0 || !blob)
+                return fs_cache[h].s;
+            break;
+        }
+        if (!fs_cache[h].key) {
+            if (fs_cached >= FS_SLOTS * 3 / 4)
+                return NULL;            /* full: the interpreter for the rest */
+            fs_cache[h].key = key;
+            fs_cache[h].state = 0;
+            fs_cached++;
+            break;
+        }
+    }
+    if (blob) {
+        st = pdo_fs_spec_get(key, blob, &spv, &bytes);
+        if (st == 0)
+            return NULL;
+    } else {
+        st = pdo_vsh_spec_find(key, &spv, &bytes) ? 1 : 0;
+        if (!st)
+            return NULL;
+    }
+    if (st == 1) {
+        fs_cache[h].s = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1, 0);
+        if (!fs_cache[h].s)
+            SDL_Log("gfx: fragment setup %016llx: no shader (%s)", (unsigned long long)key, SDL_GetError());
+    }
+    fs_cache[h].state = fs_cache[h].s ? 1 : -1;
+    return fs_cache[h].s;
+}
+
+/* A draw's fragment setup: its key when its shader is ready (else 0, and
+ * asked for the first time). */
+static uint64_t fs_key_of(const pdo_ff_uniforms *u, bool combiners, SDL_GPUShader **sh)
+{
+    int32_t blob[PDO_FS_SPEC_WORDS];
+    uint64_t key;
+
+    *sh = NULL;
+    if (!pdo_fs_spec_enabled())
+        return 0;
+    pdo_fs_spec_blob(u, combiners, blob);
+    key = pdo_fs_spec_key(blob);
+    *sh = fs_shader_of(key, blob);
+    return *sh ? key : 0;
 }
 
 /* The key of the program at base (count instructions, its code in progs)
@@ -1004,7 +1069,7 @@ bool pdo_gfx_depth_reversed(void)
 }
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps);
-static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save);
+static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save);
 
 static void warm_pipelines(void)
 {
@@ -1025,11 +1090,17 @@ static void warm_pipelines(void)
              o += sizeof(pdo_pipeline_state)) {
             pdo_pipeline_state ps;
             memcpy(&ps, data + o, sizeof ps);
-            if (ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1])) {
-                /* a program's own shader: in the background, as in play */
-                SDL_GPUShader *sv = spec_shader_of((uint64_t)ps.vsh_spec[1] << 32 | ps.vsh_spec[0]);
-                if (sv)
-                    bg_ask(&ps, sv, false);
+            if ((ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1])) || ps.fs_spec[0] || ps.fs_spec[1]) {
+                /* a program's or a setup's own shader: in the background, as in play */
+                SDL_GPUShader *sv = NULL, *sf = NULL;
+                bool vk = ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1]);
+                bool fk = ps.fs_spec[0] || ps.fs_spec[1];
+                if (vk)
+                    sv = spec_shader_of((uint64_t)ps.vsh_spec[1] << 32 | ps.vsh_spec[0]);
+                if (fk)
+                    sf = fs_shader_of((uint64_t)ps.fs_spec[1] << 32 | ps.fs_spec[0], NULL);
+                if ((!vk || sv) && (!fk || sf))
+                    bg_ask(&ps, sv, sf, false);
                 continue;
             }
             get_pipeline(&ps);
@@ -1070,6 +1141,20 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
     *own = spec_draws;
     *interpreted = interp_draws;
     spec_draws = interp_draws = 0;
+    {
+        static Uint64 last;
+        Uint64 now = SDL_GetTicksNS();
+        if (fs_spec_draws + fs_interp_draws && now - last > 4500000000ull) {
+            uint32_t made, failed, pending;
+            double ms;
+            pdo_vsh_spec_counts(&made, &failed, &pending, &ms);
+            SDL_Log("gfx: draws by their fragment setup's own shader %u, by the interpreter %u "
+                    "(shaders made %u, failed %u, to come %u)", fs_spec_draws, fs_interp_draws, made, failed,
+                    pending);
+            last = now;
+        }
+        fs_spec_draws = fs_interp_draws = 0;
+    }
     *bg_pipelines = bg_made;
     *bg_ms = (double)bg_ns / 1e6;
     bg_made = 0;
@@ -1098,13 +1183,14 @@ uint64_t pdo_gfx_take_pipeline_ns(uint32_t *made)
     return t;
 }
 
-static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs);
+static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs,
+                                             SDL_GPUShader *spec_fs);
 static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *p, bool save);
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
 {
     SDL_GPUGraphicsPipeline *p;
-    SDL_GPUShader *spec_vs = NULL;
+    SDL_GPUShader *spec_vs = NULL, *spec_fs = NULL;
     Uint64 t0;
 
     p = find_pipeline(ps);
@@ -1120,9 +1206,14 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
         if (!spec_vs)
             return NULL;
     }
-    p = make_pipeline(ps, spec_vs);
+    if (ps->fs_spec[0] || ps->fs_spec[1]) {
+        spec_fs = fs_shader_of((uint64_t)ps->fs_spec[1] << 32 | ps->fs_spec[0], NULL);
+        if (!spec_fs)
+            return NULL;
+    }
+    p = make_pipeline(ps, spec_vs, spec_fs);
     if (!p) {
-        note_failed(ps, spec_vs != NULL);
+        note_failed(ps, spec_vs != NULL || spec_fs != NULL);
         return NULL;
     }
     add_pipeline(ps, p, !warming);
@@ -1136,7 +1227,8 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
 /* The pipeline for ps, made (not looked up or kept): get_pipeline's, and
  * the background maker's for programs' own shaders (spec_vs). Reads only
  * what changes with the quality settings (pipe_gen). */
-static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs)
+static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs,
+                                             SDL_GPUShader *spec_fs)
 {
     SDL_GPUGraphicsPipelineCreateInfo pi;
     SDL_GPUVertexBufferDescription vb[2];
@@ -1192,7 +1284,7 @@ static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_
 
     SDL_zero(pi);
     pi.vertex_shader = ps->gpu_vsh == 1 ? (spec_vs ? spec_vs : vsh_vs) : ps->gpu_vsh == 2 ? fvf_vs : vs;
-    pi.fragment_shader = ps->combiners && fs_ps ? fs_ps : fs;
+    pi.fragment_shader = spec_fs ? spec_fs : ps->combiners && fs_ps ? fs_ps : fs;
     if (!ps->gpu_vsh) {         /* vsh.vert reads its streams from storage buffers */
         pi.vertex_input_state.vertex_buffer_descriptions = vb;
         pi.vertex_input_state.num_vertex_buffers = 2;
@@ -1371,7 +1463,7 @@ static int SDLCALL bg_main(void *unused)
         SDL_UnlockMutex(bg_lock);
         t0 = SDL_GetTicksNS();
         SDL_SetAtomicU32(&bg_busy_since_ms, (Uint32)(t0 / 1000000) | 1u);
-        j.p = make_pipeline(&j.ps, j.vs);
+        j.p = make_pipeline(&j.ps, j.vs, j.fs);
         SDL_SetAtomicU32(&bg_busy_since_ms, 0);
         SDL_LockMutex(bg_lock);
         bg_ns += SDL_GetTicksNS() - t0;
@@ -1385,7 +1477,7 @@ static int SDLCALL bg_main(void *unused)
 }
 
 /* Asks for ps's pipeline (ps names a program's own shader, vs). */
-static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save)
+static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save)
 {
     bg_job j;
 
@@ -1405,6 +1497,7 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save)
     SDL_zero(j);
     j.ps = *ps;
     j.vs = vs;
+    j.fs = fs;
     j.gen = pipe_gen;
     j.save = save;
     SDL_LockMutex(bg_lock);
@@ -3521,29 +3614,52 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             ps.gpu_vsh = gpu;
             ps.combiners = (c->draw.ff.ps_final[2] & 0xFF) != 0;
             ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+            ps.fs_spec[0] = ps.fs_spec[1] = 0;
             /* The program's own shader when made, unless the draw is
-             * paired with another program (only the interpreter runs two).
-             * Its pipelines are made in the background (bg_ask): until
-             * one is, the interpreter's. */
-            if (gpu == 1 && c->vu.prev_prog[1] == 0) {
-                uint64_t key = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
-                if (key) {
-                    ps.vsh_spec[0] = (uint32_t)key;
-                    ps.vsh_spec[1] = (uint32_t)(key >> 32);
-                    if (!find_pipeline(&ps)) {
-                        if (!pipeline_failed(&ps))
-                            bg_ask(&ps, spec_shader_of(key), true);
-                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
-                    }
+             * paired with another program (only the interpreter runs two),
+             * and the fragment setup's own shader when made. Pipelines
+             * with them are made in the background (bg_ask): until one
+             * is, the interpreters'. */
+            {
+                uint64_t vkey = 0, fkey;
+                SDL_GPUShader *svs = NULL, *sfs;
+                if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                    vkey = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
+                    if (vkey)
+                        svs = spec_shader_of(vkey);
+                    if (!svs)
+                        vkey = 0;
                 }
-                if (ps.vsh_spec[0] || ps.vsh_spec[1])
-                    spec_draws++;
+                fkey = fs_key_of(&c->draw.ff, ps.combiners, &sfs);
+                ps.vsh_spec[0] = (uint32_t)vkey;
+                ps.vsh_spec[1] = (uint32_t)(vkey >> 32);
+                ps.fs_spec[0] = (uint32_t)fkey;
+                ps.fs_spec[1] = (uint32_t)(fkey >> 32);
+                if ((vkey || fkey) && !find_pipeline(&ps)) {
+                    if (!pipeline_failed(&ps))
+                        bg_ask(&ps, svs, sfs, true);
+                    /* meanwhile: the program's shader alone if its pipeline is there */
+                    ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                    if (vkey && fkey && !find_pipeline(&ps))
+                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                    else if (!fkey)
+                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                }
+                if (gpu == 1) {
+                    if (ps.vsh_spec[0] || ps.vsh_spec[1])
+                        spec_draws++;
+                    else
+                        interp_draws++;
+                }
+                if (ps.fs_spec[0] || ps.fs_spec[1])
+                    fs_spec_draws++;
                 else
-                    interp_draws++;
+                    fs_interp_draws++;
             }
             p = get_pipeline(&ps);
-            if (!p && (ps.vsh_spec[0] || ps.vsh_spec[1])) {
+            if (!p && (ps.vsh_spec[0] || ps.vsh_spec[1] || ps.fs_spec[0] || ps.fs_spec[1])) {
                 ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                ps.fs_spec[0] = ps.fs_spec[1] = 0;
                 p = get_pipeline(&ps);
             }
         }

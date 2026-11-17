@@ -118,6 +118,9 @@ typedef struct pdo_pipeline_state {
     /* renderer only: with gpu_vsh 1, the program's own shader (its
      * gfx/vsh_spec.h key, low and high halves); 0 the interpreter */
     uint32_t vsh_spec[2];
+    /* renderer only: the draw's fragment setup's own shader (gfx/vsh_spec.h
+     * pdo_fs_spec_key, low and high halves); 0 ff.frag's interpreter */
+    uint32_t fs_spec[2];
 } pdo_pipeline_state;
 
 typedef struct pdo_draw {

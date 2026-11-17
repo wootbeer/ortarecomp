@@ -10,8 +10,9 @@ OUT = os.path.join(ROOT, "src", "gfx", "shaders_spv.h")
 # Extra builds of a shader with preprocessor definitions: name -> [(identifier, [defines])].
 VARIANTS = {"ff.frag": [("ff_ps_frag", ["PIXEL_SHADER"])]}
 # Shaders also embedded as source, for building at run time: name -> identifier
-# (vsh.vert: src/gfx/vsh_spec.c adds each program's own run_spec).
-SOURCES = {"vsh.vert": "vsh_vert_src"}
+# (vsh.vert: src/gfx/vsh_spec.c adds each program's own run_spec; ff.frag: one draw setup
+# as constants).
+SOURCES = {"vsh.vert": "vsh_vert_src", "ff.frag": "ff_frag_src"}
 
 def compile_one(path, defines):
     with tempfile.TemporaryDirectory() as tmp:
