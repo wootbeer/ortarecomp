@@ -3359,6 +3359,20 @@ static uint32_t prof_d3, prof_d2, prof_dfull, prof_dblend;
  * draw cut to one pixel (scissor), what is left being the vertices and
  * the draws themselves. */
 static int prof_skip;
+
+/* The profile's setting: PDO_GPU_PROFILE, else (Android) the property. */
+static int prof_setting(void)
+{
+    const char *e = SDL_getenv("PDO_GPU_PROFILE");
+#ifdef __ANDROID__
+    static char prop[PROP_VALUE_MAX];
+    prop[0] = 0;
+    __system_property_get("debug.ortarecomp.gpu_profile", prop);
+    if (!e || !*e)
+        e = prop;
+#endif
+    return e ? SDL_atoi(e) : 0;
+}
 static SDL_GPUCommandBuffer *prof_cmd_out;      /* replay's last command buffer, for its caller */
 static bool prof_frame;                          /* this replay is profiled (draw_frame_main) */
 
@@ -3502,6 +3516,14 @@ static void prof_report(void)
         prof_nacc = 0;
         prof_frames = 0;
         prof_window = now;
+        {   /* the mode (1-4) can change while the game runs: adb shell setprop ... */
+            int v = prof_setting(), skip = v >= 2 ? v - 1 : 0;
+            if (v >= 1 && skip != prof_skip) {
+                prof_skip = skip;
+                SDL_Log("gpuprof: now %s", !skip ? "everything drawn" : skip == 1 ? "screen-space draws left out"
+                        : skip == 2 ? "3D draws left out" : "every draw cut to one pixel");
+            }
+        }
     }
     SDL_UnlockMutex(prof_lock);
 }
@@ -3509,14 +3531,7 @@ static void prof_report(void)
 static void prof_start(void)
 {
     {
-        const char *e = SDL_getenv("PDO_GPU_PROFILE");
-#ifdef __ANDROID__
-        static char prop[PROP_VALUE_MAX];
-        __system_property_get("debug.ortarecomp.gpu_profile", prop);
-        if (!e || !*e)
-            e = prop;
-#endif
-        int v = e ? SDL_atoi(e) : 0;
+        int v = prof_setting();
         prof_on = v >= 1;
         prof_skip = v >= 2 ? v - 1 : 0;     /* 1 screen-space out, 2 3D out, 3 one pixel */
     }
