@@ -97,6 +97,7 @@ static bool frame_stale;
  * difference to the frame rate, and storing the samples is exact.
  * PDO_MSAA_RESOLVE_ONLY=1 (Android: debug.ortarecomp.msaa_resolve_only). */
 static bool msaa_resolve_only;
+static void prof_start(void);         /* the GPU profile, if asked for */
 static volatile bool paused;        /* the overlay menu holds the game */
 /* The overlay's holds, for the vblank clock (d3d_hle.c) to stop with the
  * game: when the current one began (ms, | 1 so never 0; 0: none), and the
@@ -2446,6 +2447,7 @@ static bool init_here(int width, int height)
         if (msaa_resolve_only)
             SDL_Log("gfx: multisampling resolves each pass and keeps no samples (tiled GPU)");
     }
+    prof_start();
     vkcache_load();             /* before any pipeline is made */
 
     window_thread = SDL_GetCurrentThreadID();
@@ -3224,6 +3226,196 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
     }
 }
 
+/* ── GPU profile ──────────────────────────────────────────────────────────
+ * PDO_GPU_PROFILE=1 (Android: adb shell setprop debug.ortarecomp.gpu_profile
+ * 1): each render pass of a frame goes to the GPU on its own with a fence,
+ * a thread notes when each fence signals, and every 5 s the log has the
+ * GPU time of each pass by its place in the frame, with its target's size,
+ * samples and draws. Submitting a pass at a time costs a little itself:
+ * for finding where the time goes, not for playing. */
+typedef struct prof_seg {
+    SDL_GPUFence *fence;
+    Uint64 submitted;
+    uint32_t key;           /* place in frame << 24 | kind */
+    uint32_t w, h, samples, draws;
+} prof_seg;
+#define PROF_KEYS 32
+static bool prof_on;
+static SDL_Mutex *prof_lock;
+static SDL_Condition *prof_cond;
+static prof_seg prof_q[256];
+static uint32_t prof_head, prof_tail;           /* the thread takes at head */
+static struct { uint32_t key, w, h, samples; double ms, draws; uint32_t n; } prof_acc[PROF_KEYS];
+static int prof_nacc;
+static Uint64 prof_last_end, prof_window;
+static uint32_t prof_frames;
+static uint32_t prof_place, prof_draws;         /* this frame's pass count, draws in the pass */
+static SDL_GPUCommandBuffer *prof_cmd_out;      /* replay's last command buffer, for its caller */
+static bool prof_frame;                          /* this replay is profiled (draw_frame_main) */
+
+static bool debug_flag(const char *env, const char *prop_name)
+{
+    const char *e = SDL_getenv(env);
+#ifdef __ANDROID__
+    static char prop[PROP_VALUE_MAX];
+    prop[0] = 0;
+    __system_property_get(prop_name, prop);
+    if (!e || !*e)
+        e = prop;
+#else
+    (void)prop_name;
+#endif
+    return e && *e == '1';
+}
+
+static int SDLCALL prof_main(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        prof_seg sg;
+        SDL_LockMutex(prof_lock);
+        while (prof_head == prof_tail)
+            SDL_WaitCondition(prof_cond, prof_lock);
+        sg = prof_q[prof_head % SDL_arraysize(prof_q)];
+        SDL_UnlockMutex(prof_lock);
+        SDL_WaitForGPUFences(dev, true, &sg.fence, 1);
+        Uint64 end = SDL_GetTicksNS();
+        SDL_ReleaseGPUFence(dev, sg.fence);
+        Uint64 start = sg.submitted > prof_last_end ? sg.submitted : prof_last_end;
+        prof_last_end = end;
+        SDL_LockMutex(prof_lock);
+        prof_head++;
+        {
+            int i;
+            for (i = 0; i < prof_nacc; i++)
+                if (prof_acc[i].key == sg.key && prof_acc[i].w == sg.w && prof_acc[i].h == sg.h)
+                    break;
+            if (i == prof_nacc && prof_nacc < PROF_KEYS) {
+                prof_nacc++;
+                SDL_zero(prof_acc[i]);
+                prof_acc[i].key = sg.key;
+                prof_acc[i].w = sg.w;
+                prof_acc[i].h = sg.h;
+                prof_acc[i].samples = sg.samples;
+            }
+            if (i < prof_nacc) {
+                prof_acc[i].ms += (double)(end > start ? end - start : 0) / 1e6;
+                prof_acc[i].draws += sg.draws;
+                prof_acc[i].n++;
+            }
+        }
+        SDL_UnlockMutex(prof_lock);
+    }
+    return 0;
+}
+
+static void prof_push(prof_seg *sg);
+
+/* The work recorded since the last cut goes to the GPU now, as segment
+ * kind (0 a pass, 1 a copy, 2 the frame's presentation); recording goes
+ * on in a new command buffer. */
+static void prof_cut(SDL_GPUCommandBuffer **cmdp, int kind)
+{
+    prof_seg sg;
+    Uint32 w, h;
+    SDL_GPUTexture *ms = cur_target ? cur_target->ms : frame_ms;
+
+    if (!prof_on || !prof_frame || !*cmdp)
+        return;
+    cur_size(&w, &h);
+    SDL_zero(sg);
+    sg.key = prof_place++ << 24 | (uint32_t)kind;
+    sg.w = kind >= 2 ? 0 : w;
+    sg.h = kind >= 2 ? 0 : h;
+    sg.samples = ms ? (uint32_t)nsamples : 1;
+    sg.draws = prof_draws;
+    prof_draws = 0;
+    sg.fence = SDL_SubmitGPUCommandBufferAndAcquireFence(*cmdp);
+    sg.submitted = SDL_GetTicksNS();
+    *cmdp = SDL_AcquireGPUCommandBuffer(dev);
+    prof_push(&sg);
+}
+
+/* The frame's own submit (the window pass, after the profile's cuts):
+ * timed too, so that its work is not put on the next frame's first pass.
+ * Takes the fence. */
+static void prof_window_fence(SDL_GPUFence *fence, Uint64 submitted)
+{
+    prof_seg sg;
+
+    SDL_zero(sg);
+    sg.key = prof_place++ << 24 | 3u;
+    sg.fence = fence;
+    sg.submitted = submitted;
+    prof_push(&sg);
+}
+
+static void prof_push(prof_seg *sg_in)
+{
+    prof_seg sg = *sg_in;
+
+    if (!sg.fence)
+        return;
+    SDL_LockMutex(prof_lock);
+    if (prof_tail - prof_head < SDL_arraysize(prof_q))
+        prof_q[prof_tail++ % SDL_arraysize(prof_q)] = sg;
+    else
+        SDL_ReleaseGPUFence(dev, sg.fence);
+    SDL_SignalCondition(prof_cond);
+    SDL_UnlockMutex(prof_lock);
+}
+
+/* Once a frame: the averages every 5 s. */
+static void prof_report(void)
+{
+    Uint64 now = SDL_GetTicksNS();
+
+    if (!prof_on)
+        return;
+    prof_frames++;
+    prof_place = 0;
+    if (!prof_window)
+        prof_window = now;
+    if (now - prof_window < 5000000000ull)
+        return;
+    SDL_LockMutex(prof_lock);
+    {
+        double total = 0;
+        for (int i = 0; i < prof_nacc; i++)
+            total += prof_acc[i].ms;
+        SDL_Log("gpuprof: %u frames, %.2f ms a frame in all (#0 is texture uploads plus any wait before "
+                "the frame; the window pass waits for the display's image):", prof_frames, total / prof_frames);
+        for (int i = 0; i < prof_nacc; i++) {
+            uint32_t kind = prof_acc[i].key & 0xFF;
+            if (!prof_acc[i].n)
+                continue;
+            SDL_Log("gpuprof:   #%u %s %ux%u%s: %.2f ms a frame (%.2f each, in %u of the frames), %.0f draws",
+                    prof_acc[i].key >> 24, kind == 4 ? "uploads and wait before" : kind == 3 ? "window" : kind == 2 ? "presentation" : kind == 1 ? "copy" : "pass",
+                    prof_acc[i].w, prof_acc[i].h, prof_acc[i].samples > 1 ? " multisampled" : "",
+                    prof_acc[i].ms / prof_frames, prof_acc[i].ms / prof_acc[i].n, prof_acc[i].n,
+                    prof_acc[i].draws / prof_acc[i].n);
+        }
+        prof_nacc = 0;
+        prof_frames = 0;
+        prof_window = now;
+    }
+    SDL_UnlockMutex(prof_lock);
+}
+
+static void prof_start(void)
+{
+    prof_on = debug_flag("PDO_GPU_PROFILE", "debug.ortarecomp.gpu_profile");
+    if (!prof_on)
+        return;
+    prof_lock = SDL_CreateMutex();
+    prof_cond = SDL_CreateCondition();
+    if (!prof_lock || !prof_cond || !SDL_CreateThread(prof_main, "gpuprof", NULL)) {
+        prof_on = false;
+        return;
+    }
+    SDL_Log("gfx: GPU profile on: each pass submitted on its own and timed (gpuprof: lines every 5 s)");
+}
+
 static void replay(SDL_GPUCommandBuffer *cmd)
 {
     SDL_GPURenderPass *pass = NULL;
@@ -3231,6 +3423,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
     uint32_t bloom_at = UINT32_MAX;     /* the command after the frame's last 3D draw */
 
     upload_frame(cmd);
+    prof_cut(&cmd, 4);      /* the uploads, and any wait the queue had before this frame */
     cur_target = NULL;
     bg_collect();
     vkcache_maybe_save();
@@ -3264,23 +3457,30 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             log_command(i, c, tex);
 
         if (c->kind == CMD_CLEAR) {
-            if (pass)
+            if (pass) {
                 SDL_EndGPURenderPass(pass);
+                prof_cut(&cmd, 0);
+            }
             pass = begin_pass(cmd, c);
             continue;
         }
         if (c->kind == CMD_TARGET) {
-            if (pass)
+            if (pass) {
                 SDL_EndGPURenderPass(pass);
+                prof_cut(&cmd, 0);
+            }
             pass = NULL;
             cur_target = target_of(&c->surf, &c->surf2);
             continue;
         }
         if (c->kind == CMD_COPY) {
-            if (pass)
+            if (pass) {
                 SDL_EndGPURenderPass(pass);
+                prof_cut(&cmd, 0);
+            }
             pass = NULL;
             copy_rect(cmd, c);
+            prof_cut(&cmd, 1);
             continue;
         }
         gpu = 0;
@@ -3376,17 +3576,22 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 SDL_PushGPUVertexUniformData(cmd, 0, &F->fvf_us[c->fvf], sizeof F->fvf_us[0]);
             }
             SDL_DrawGPUIndexedPrimitives(pass, c->vsh_index_count, 1, c->vsh_first_index, 0, 0);
+            prof_draws++;
         } else {
             float b[4] = { P ? blend : 1.0f, P && c->prev_vbase >= 0 ? 1.0f : 0.0f,
                            0.0f, depth_rev ? 1.0f : 0.0f };   /* CPU-made: not tinted; w: reversed depth */
             SDL_PushGPUVertexUniformData(cmd, 0, b, sizeof b);
             SDL_DrawGPUIndexedPrimitives(pass, c->index_count, 1, c->first_index, -(Sint32)c->vbase, 0);
+            prof_draws++;
         }
     }
-    if (pass)
+    if (pass) {
         SDL_EndGPURenderPass(pass);
+        prof_cut(&cmd, 0);
+    }
     if (bloom_at == F->ncmds && replay_limit >= F->ncmds)     /* the last 3D draw was the frame's last command */
         bloom_pass(cmd, bloom);
+    prof_cmd_out = cmd;
 }
 
 /* Read the frame target back and write it as a BMP. Slow; debugging only. */
@@ -5723,8 +5928,13 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
     }
     {
         Uint64 r0 = SDL_GetTicksNS();
+        prof_frame = prof_on;
         replay(cmd);
+        if (prof_frame)
+            cmd = prof_cmd_out;     /* the profile submitted the passes before */
         present_pass(cmd);
+        prof_cut(&cmd, 2);
+        prof_frame = false;
         main_record_ns += SDL_GetTicksNS() - r0;
     }
     /* Frame generation: the window pass into ls_tex, taken in and the
@@ -5758,7 +5968,12 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
         /* Frame generation's scene-cut test reads what the GPU just did. */
         if (ls_drawn && fence)
             SDL_WaitForGPUFences(dev, true, &fence, 1);
-        gpu_note(fence, s1);
+        if (prof_on) {
+            prof_window_fence(fence, s1);   /* the profile times it, and releases it */
+            prof_report();
+        } else {
+            gpu_note(fence, s1);
+        }
     }
     if (ls_drawn) {
         /* The frame counter counts what reached the screen. */
