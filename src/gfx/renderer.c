@@ -883,10 +883,21 @@ static uint32_t bg_made;                        /* their pipelines made in the b
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 /* Programs' own pipelines made in the background (bg_main, below). */
 typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs, *fs; SDL_GPUGraphicsPipeline *p;
-                 uint32_t gen; bool save; } bg_job;
+                 uint32_t gen; bool save, urgent; } bg_job;
 static SDL_Mutex *bg_lock;
 static SDL_Condition *bg_wake;
-static SDL_Thread *bg_thread;
+static SDL_Thread *bg_thread;               /* the first of the background makers */
+/* Several makers: under Turnip one pipeline took 20 s, and the rest waited
+ * behind it. One while the CPU has few cores. */
+#define BG_MAX_THREADS 4
+/* Pipelines a draw needs and nothing has made yet: made in the background
+ * too, ahead of the rest, the draw left out until then, rather than made
+ * on this thread while the screen waits (a boost's end under Turnip froze
+ * it 5 s). On from the start on Android; elsewhere once a pipeline made
+ * here took over 50 ms. PDO_SYNC_PIPELINES=1 keeps them here, 0 makes them
+ * in the background on any GPU. */
+static bool pipelines_async;
+static uint32_t async_skipped;
 static bg_job *bg_todo, *bg_done;
 static uint32_t bg_ntodo, bg_cap_todo, bg_ndone, bg_cap_done;
 static uint32_t pipe_gen;                 /* the quality settings pipelines are made for */
@@ -1099,6 +1110,7 @@ bool pdo_gfx_depth_reversed(void)
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps);
 static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save);
+static void bg_ask_urgent(const pdo_pipeline_state *ps);
 
 static void warm_pipelines(void)
 {
@@ -1132,11 +1144,14 @@ static void warm_pipelines(void)
                     bg_ask(&ps, sv, sf, false);
                 continue;
             }
-            get_pipeline(&ps);
+            if (pipelines_async)
+                bg_ask(&ps, NULL, NULL, false);     /* the game starts meanwhile */
+            else
+                get_pipeline(&ps);
         }
         warming = false;
-        SDL_Log("gfx: made %d saved pipelines in %.0f ms", npipelines - before,
-                (double)(SDL_GetTicksNS() - t0) / 1e6);
+        SDL_Log("gfx: made %d saved pipelines in %.0f ms%s", npipelines - before,
+                (double)(SDL_GetTicksNS() - t0) / 1e6, pipelines_async ? "; the rest in the background" : "");
     } else {
         SDL_Log("gfx: %s is from another build; starting it again", path);
         SDL_RemovePath(path);
@@ -1179,9 +1194,9 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
             pdo_vsh_spec_counts(&made, &failed, &pending, &ms);
             SDL_Log("gfx: draws by their fragment setup's own shader %u, by the interpreter %u "
                     "(shaders made %u, failed %u, to come %u); program draws from the CPU's vertices while "
-                    "their pipeline is made %u", fs_spec_draws, fs_interp_draws, made, failed, pending,
-                    cpu_stand_in_draws);
-            cpu_stand_in_draws = 0;
+                    "their pipeline is made %u; draws left out until theirs is made %u", fs_spec_draws,
+                    fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped);
+            cpu_stand_in_draws = async_skipped = 0;
             last = now;
         }
         fs_spec_draws = fs_interp_draws = 0;
@@ -1249,8 +1264,14 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
     }
     add_pipeline(ps, p, !warming);
     if (!warming) {
-        pipeline_ns += SDL_GetTicksNS() - t0;
+        Uint64 dt = SDL_GetTicksNS() - t0;
+        pipeline_ns += dt;
         pipelines_made++;
+        if (dt > 50000000ull && !pipelines_async && !SDL_getenv("PDO_SYNC_PIPELINES")) {
+            pipelines_async = true;
+            SDL_Log("gfx: a pipeline took %.0f ms to make here: the ones draws need are made in the "
+                    "background from now on, the draw left out until then", (double)dt / 1e6);
+        }
     }
     return p;
 }
@@ -1499,8 +1520,9 @@ static int SDLCALL bg_main(void *unused)
         SDL_LockMutex(bg_lock);
         bg_ns += SDL_GetTicksNS() - t0;
         if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 32)
-            SDL_Log("gfx: a program's pipeline took %.0f ms to make%s (%u more waiting)",
-                    (double)(SDL_GetTicksNS() - t0) / 1e6, j.p ? "" : ", and failed", bg_ntodo);
+            SDL_Log("gfx: a %s pipeline took %.0f ms to make%s (%u more waiting)",
+                    j.urgent ? "needed" : "program's", (double)(SDL_GetTicksNS() - t0) / 1e6,
+                    j.p ? "" : ", and failed", bg_ntodo);
         bg_done = grow(bg_done, &bg_cap_done, bg_ndone + 1, sizeof *bg_done);
         bg_done[bg_ndone++] = j;
     }
@@ -1516,12 +1538,16 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShade
         if (!memcmp(&bg_asked[i], ps, sizeof *ps))
             return;
     if (!bg_thread) {
+        int n = SDL_GetNumLogicalCPUCores() >= 6 ? BG_MAX_THREADS : 1;
         bg_lock = SDL_CreateMutex();
         bg_wake = SDL_CreateCondition();
         if (bg_lock && bg_wake)
             bg_thread = SDL_CreateThread(bg_main, "pipelines", NULL);
         if (!bg_thread)
             return;
+        for (int i = 1; i < n; i++)
+            if (!SDL_CreateThread(bg_main, "pipelines", NULL))
+                break;
     }
     bg_asked = grow(bg_asked, &bg_cap_asked, bg_nasked + 1, sizeof *bg_asked);
     bg_asked[bg_nasked++] = *ps;
@@ -1531,11 +1557,24 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShade
     j.fs = fs;
     j.gen = pipe_gen;
     j.save = save;
+    j.urgent = !vs && !fs;
     SDL_LockMutex(bg_lock);
     bg_todo = grow(bg_todo, &bg_cap_todo, bg_ntodo + 1, sizeof *bg_todo);
-    bg_todo[bg_ntodo++] = j;
+    if (j.urgent) {         /* a draw waits for it: ahead of the programs' own */
+        memmove(bg_todo + 1, bg_todo, bg_ntodo * sizeof *bg_todo);
+        bg_todo[0] = j;
+        bg_ntodo++;
+    } else {
+        bg_todo[bg_ntodo++] = j;
+    }
     SDL_SignalCondition(bg_wake);
     SDL_UnlockMutex(bg_lock);
+}
+
+/* A pipeline of the interpreters' (no shader of its own) a draw needs. */
+static void bg_ask_urgent(const pdo_pipeline_state *ps)
+{
+    bg_ask(ps, NULL, NULL, true);
 }
 
 /* Keeps what the background made since the last call (render thread). */
@@ -2619,6 +2658,14 @@ static bool init_here(int width, int height)
             SDL_Log("gfx: multisampling resolves each pass and keeps no samples (tiled GPU)");
     }
     prof_start();
+    {
+        const char *e = SDL_getenv("PDO_SYNC_PIPELINES");
+#ifdef __ANDROID__
+        pipelines_async = true;
+#endif
+        if (e && *e)
+            pipelines_async = *e == '0';    /* 0: in the background anywhere, 1: here */
+    }
     vkcache_load();             /* before any pipeline is made */
 
     window_thread = SDL_GetCurrentThreadID();
@@ -3766,6 +3813,16 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     fs_spec_draws++;
                 else
                     fs_interp_draws++;
+            }
+            if (pipelines_async && !find_pipeline(&ps)) {
+                ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                if (!find_pipeline(&ps)) {
+                    if (!pipeline_failed(&ps))
+                        bg_ask_urgent(&ps);
+                    async_skipped++;
+                    continue;               /* left out until its pipeline is made */
+                }
             }
             p = get_pipeline(&ps);
             if (!p && (ps.vsh_spec[0] || ps.vsh_spec[1] || ps.fs_spec[0] || ps.fs_spec[1])) {
