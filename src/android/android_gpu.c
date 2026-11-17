@@ -61,6 +61,13 @@ static bool call_activity(const char *method, const char *arg, char *out, size_t
     return ok;
 }
 
+static bool custom;     /* a custom driver is in use */
+
+bool pdo_android_gpu_driver_custom(void)
+{
+    return custom;
+}
+
 void pdo_android_gpu_driver_load(void)
 {
     pdo_settings *s = pdo_settings_get();
@@ -114,6 +121,7 @@ void pdo_android_gpu_driver_load(void)
         return;
     }
     PDO_SetAndroidVulkanLibrary(h);
+    custom = true;
     gpu_driver_guard_end(guard);        /* opened; the device and the first frames are next */
     SDL_Log("gfx: GPU driver %s (%s) loaded in place of the system's", s->gpu_driver, lib);
 }

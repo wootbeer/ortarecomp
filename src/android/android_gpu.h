@@ -8,6 +8,8 @@
  * (patches/SDL/0003). Falls back to the system's when it cannot, or when
  * the last start with it did not come through (its guard). */
 void pdo_android_gpu_driver_load(void);
+/* A custom driver was loaded (pdo_android_gpu_driver_load). */
+bool pdo_android_gpu_driver_custom(void);
 /* The GPU device is about to be made with it: the guard again, until... */
 void pdo_android_gpu_driver_device(void);
 /* ...frames are on the screen: the driver works, the guard goes. */

@@ -998,17 +998,41 @@ static SDL_GPUShader *fs_shader_of(uint64_t key, const int32_t *blob)
 
 /* A draw's fragment setup: its key when its shader is ready (else 0, and
  * asked for the first time). */
+/* fs_key_of: the setup's shader is still being made (it will come). */
+static bool fs_pending;
+
+/* A setup's shader: 1 made, -1 failed, 0 being made or not asked for. */
+static int fs_shader_state(uint64_t key)
+{
+    uint32_t h = (uint32_t)(key ^ key >> 32) % FS_SLOTS;
+    for (uint32_t n = 0; n < FS_SLOTS && fs_cache[h].key; n++, h = (h + 1) % FS_SLOTS)
+        if (fs_cache[h].key == key)
+            return fs_cache[h].state;
+    return -1;                  /* not kept (the cache is full): it will not come */
+}
+
+/* Pipelines of the fragment interpreter (ff.frag as it is) are not made
+ * for a draw whose setup has, or will soon have, its own shader: the draw
+ * waits for its own pipeline instead. Turnip took up to 20 s and hundreds
+ * of MB over each of them (it ran the RP6 out of memory twice with only two
+ * being made), for a pipeline used for the half second its own takes. On
+ * with a custom driver; PDO_FS_WAIT=1/0 (or debug.ortarecomp.fs_wait) to
+ * choose. */
+static bool fs_wait;
+
 static uint64_t fs_key_of(const pdo_ff_uniforms *u, bool combiners, SDL_GPUShader **sh)
 {
     int32_t blob[PDO_FS_SPEC_WORDS];
     uint64_t key;
 
     *sh = NULL;
+    fs_pending = false;
     if (!pdo_fs_spec_enabled())
         return 0;
     pdo_fs_spec_blob(u, combiners, blob);
     key = pdo_fs_spec_key(blob);
     *sh = fs_shader_of(key, blob);
+    fs_pending = !*sh && fs_shader_state(key) == 0;
     return *sh ? key : 0;
 }
 
@@ -1509,6 +1533,7 @@ static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *
 static int SDLCALL bg_main(void *unused)
 {
     (void)unused;
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);  /* the game's and the render thread's cores first */
     SDL_LockMutex(bg_lock);
     for (;;) {
         bg_job j;
@@ -2685,6 +2710,20 @@ static bool init_here(int width, int height)
         if (e && *e)
             pipelines_async = *e == '0';    /* 0: in the background anywhere, 1: here */
     }
+    {
+        const char *e = SDL_getenv("PDO_FS_WAIT");
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        __system_property_get("debug.ortarecomp.fs_wait", prop);
+        if (!e || !*e)
+            e = prop;
+        fs_wait = pdo_android_gpu_driver_custom();
+#endif
+        if (e && *e)
+            fs_wait = *e == '1';
+        if (fs_wait)
+            SDL_Log("gfx: draws wait for their fragment setup's own pipeline (no interpreter's in between)");
+    }
     vkcache_load();             /* before any pipeline is made */
 
     window_thread = SDL_GetCurrentThreadID();
@@ -3772,6 +3811,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             pass = begin_pass(cmd, NULL);
         {
             pdo_pipeline_state ps = c->draw.ps;
+            bool own_fs = false;    /* its setup has or will have its own shader (fs_wait) */
             ps.single_sample = cur_target && cur_target->depth_only;
             ps.gpu_vsh = gpu;
             ps.combiners = (c->draw.ff.ps_final[2] & 0xFF) != 0;
@@ -3793,6 +3833,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                         vkey = 0;
                 }
                 fkey = fs_key_of(&c->draw.ff, ps.combiners, &sfs);
+                own_fs = fkey || fs_pending;
                 ps.vsh_spec[0] = (uint32_t)vkey;
                 ps.vsh_spec[1] = (uint32_t)(vkey >> 32);
                 ps.fs_spec[0] = (uint32_t)fkey;
@@ -3800,6 +3841,8 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 if ((vkey || fkey) && !find_pipeline(&ps)) {
                     if (!pipeline_failed(&ps))
                         bg_ask(&ps, svs, sfs, true);
+                    else if (fkey && !vkey)
+                        own_fs = false;     /* its own will not come: the interpreter's */
                     /* meanwhile: the program's shader alone if its pipeline is there */
                     ps.fs_spec[0] = ps.fs_spec[1] = 0;
                     if (vkey && fkey && !find_pipeline(&ps))
@@ -3816,8 +3859,13 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                             /* its own pipeline is not made yet: the CPU's vertices meanwhile */
                             gpu = 0;
                             ps.gpu_vsh = 0;
-                            if ((ps.fs_spec[0] || ps.fs_spec[1]) && !find_pipeline(&ps))
+                            if ((ps.fs_spec[0] || ps.fs_spec[1]) && !find_pipeline(&ps)) {
+                                if (fs_wait && !pipeline_failed(&ps))
+                                    bg_ask(&ps, NULL, sfs, true);   /* the one this draw waits for */
+                                else
+                                    own_fs = false;
                                 ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                            }
                             cpu_stand_in_draws++;
                         }
                     }
@@ -3832,6 +3880,10 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     fs_spec_draws++;
                 else
                     fs_interp_draws++;
+            }
+            if (fs_wait && own_fs && !ps.fs_spec[0] && !ps.fs_spec[1] && !find_pipeline(&ps)) {
+                async_skipped++;
+                continue;                   /* until its own setup's pipeline is made */
             }
             if (pipelines_async && !find_pipeline(&ps)) {
                 ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
