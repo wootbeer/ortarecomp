@@ -3238,6 +3238,7 @@ typedef struct prof_seg {
     Uint64 submitted;
     uint32_t key;           /* place in frame << 24 | kind */
     uint32_t w, h, samples, draws;
+    uint32_t d3, d2, dfull, dblend;     /* of the draws: 3D, screen-space, those over half the screen, blended */
 } prof_seg;
 #define PROF_KEYS 32
 static bool prof_on;
@@ -3245,28 +3246,17 @@ static SDL_Mutex *prof_lock;
 static SDL_Condition *prof_cond;
 static prof_seg prof_q[256];
 static uint32_t prof_head, prof_tail;           /* the thread takes at head */
-static struct { uint32_t key, w, h, samples; double ms, draws; uint32_t n; } prof_acc[PROF_KEYS];
+static struct { uint32_t key, w, h, samples; double ms, draws, d3, d2, dfull, dblend; uint32_t n; } prof_acc[PROF_KEYS];
 static int prof_nacc;
 static Uint64 prof_last_end, prof_window;
 static uint32_t prof_frames;
 static uint32_t prof_place, prof_draws;         /* this frame's pass count, draws in the pass */
+static uint32_t prof_d3, prof_d2, prof_dfull, prof_dblend;
+/* debug.ortarecomp.gpu_profile 2: also leave out the screen-space draws,
+ * 3: the 3D ones (what they cost: the profile with and without). */
+static int prof_skip;
 static SDL_GPUCommandBuffer *prof_cmd_out;      /* replay's last command buffer, for its caller */
 static bool prof_frame;                          /* this replay is profiled (draw_frame_main) */
-
-static bool debug_flag(const char *env, const char *prop_name)
-{
-    const char *e = SDL_getenv(env);
-#ifdef __ANDROID__
-    static char prop[PROP_VALUE_MAX];
-    prop[0] = 0;
-    __system_property_get(prop_name, prop);
-    if (!e || !*e)
-        e = prop;
-#else
-    (void)prop_name;
-#endif
-    return e && *e == '1';
-}
 
 static int SDLCALL prof_main(void *unused)
 {
@@ -3301,6 +3291,10 @@ static int SDLCALL prof_main(void *unused)
             if (i < prof_nacc) {
                 prof_acc[i].ms += (double)(end > start ? end - start : 0) / 1e6;
                 prof_acc[i].draws += sg.draws;
+                prof_acc[i].d3 += sg.d3;
+                prof_acc[i].d2 += sg.d2;
+                prof_acc[i].dfull += sg.dfull;
+                prof_acc[i].dblend += sg.dblend;
                 prof_acc[i].n++;
             }
         }
@@ -3329,7 +3323,11 @@ static void prof_cut(SDL_GPUCommandBuffer **cmdp, int kind)
     sg.h = kind >= 2 ? 0 : h;
     sg.samples = ms ? (uint32_t)nsamples : 1;
     sg.draws = prof_draws;
-    prof_draws = 0;
+    sg.d3 = prof_d3;
+    sg.d2 = prof_d2;
+    sg.dfull = prof_dfull;
+    sg.dblend = prof_dblend;
+    prof_draws = prof_d3 = prof_d2 = prof_dfull = prof_dblend = 0;
     sg.fence = SDL_SubmitGPUCommandBufferAndAcquireFence(*cmdp);
     sg.submitted = SDL_GetTicksNS();
     *cmdp = SDL_AcquireGPUCommandBuffer(dev);
@@ -3389,11 +3387,13 @@ static void prof_report(void)
             uint32_t kind = prof_acc[i].key & 0xFF;
             if (!prof_acc[i].n)
                 continue;
-            SDL_Log("gpuprof:   #%u %s %ux%u%s: %.2f ms a frame (%.2f each, in %u of the frames), %.0f draws",
+            SDL_Log("gpuprof:   #%u %s %ux%u%s: %.2f ms a frame (%.2f each, in %u of the frames), %.0f draws "
+                    "(3D %.0f, screen-space %.0f of them %.1f over half the screen; blended %.0f)",
                     prof_acc[i].key >> 24, kind == 4 ? "uploads and wait before" : kind == 3 ? "window" : kind == 2 ? "presentation" : kind == 1 ? "copy" : "pass",
                     prof_acc[i].w, prof_acc[i].h, prof_acc[i].samples > 1 ? " multisampled" : "",
                     prof_acc[i].ms / prof_frames, prof_acc[i].ms / prof_acc[i].n, prof_acc[i].n,
-                    prof_acc[i].draws / prof_acc[i].n);
+                    prof_acc[i].draws / prof_acc[i].n, prof_acc[i].d3 / prof_acc[i].n, prof_acc[i].d2 / prof_acc[i].n,
+                    prof_acc[i].dfull / prof_acc[i].n, prof_acc[i].dblend / prof_acc[i].n);
         }
         prof_nacc = 0;
         prof_frames = 0;
@@ -3404,7 +3404,18 @@ static void prof_report(void)
 
 static void prof_start(void)
 {
-    prof_on = debug_flag("PDO_GPU_PROFILE", "debug.ortarecomp.gpu_profile");
+    {
+        const char *e = SDL_getenv("PDO_GPU_PROFILE");
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        __system_property_get("debug.ortarecomp.gpu_profile", prop);
+        if (!e || !*e)
+            e = prop;
+#endif
+        int v = e ? SDL_atoi(e) : 0;
+        prof_on = v >= 1;
+        prof_skip = v >= 2 ? v - 1 : 0;
+    }
     if (!prof_on)
         return;
     prof_lock = SDL_CreateMutex();
@@ -3413,7 +3424,8 @@ static void prof_start(void)
         prof_on = false;
         return;
     }
-    SDL_Log("gfx: GPU profile on: each pass submitted on its own and timed (gpuprof: lines every 5 s)");
+    SDL_Log("gfx: GPU profile on: each pass submitted on its own and timed (gpuprof: lines every 5 s)%s",
+            prof_skip == 1 ? "; screen-space draws left out" : prof_skip == 2 ? "; 3D draws left out" : "");
 }
 
 static void replay(SDL_GPUCommandBuffer *cmd)
@@ -3490,6 +3502,17 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             gpu = 2;
         if ((c->vsh || c->fvf >= 0) && !gpu && !c->has_cpu)
             continue;           /* no vertices to draw it with */
+        if (prof_frame) {
+            bool d3 = is_3d(F, c);
+            float r[4];
+            if (prof_skip && d3 == (prof_skip == 2))
+                continue;
+            prof_d3 += d3;
+            prof_d2 += !d3;
+            prof_dblend += c->draw.ps.blend_enable != 0;
+            if (!d3 && screen_rect(F, c, r) && (r[2] - r[0]) * (r[3] - r[1]) >= 0.5f * (float)frame_w * (float)frame_h)
+                prof_dfull++;
+        }
         if (!pass)
             pass = begin_pass(cmd, NULL);
         {
