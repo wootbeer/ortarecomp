@@ -883,13 +883,18 @@ static uint32_t bg_made;                        /* their pipelines made in the b
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 /* Programs' own pipelines made in the background (bg_main, below). */
 typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs, *fs; SDL_GPUGraphicsPipeline *p;
-                 uint32_t gen; bool save, urgent; } bg_job;
+                 uint32_t gen; bool save, urgent, heavy; } bg_job;
 static SDL_Mutex *bg_lock;
 static SDL_Condition *bg_wake;
 static SDL_Thread *bg_thread;               /* the first of the background makers */
 /* Several makers: under Turnip one pipeline took 20 s, and the rest waited
- * behind it. One while the CPU has few cores. */
+ * behind it. One while the CPU has few cores. Only one makes a pipeline
+ * with a program's own vertex shader at a time, the others the rest
+ * (draws wait for the interpreters' ones: those first): Turnip compiling
+ * several of those large shaders at once ran the RP6 out of memory (it
+ * aborted in the driver). */
 #define BG_MAX_THREADS 4
+static uint32_t bg_programs_busy;             /* programs' pipelines being made (under bg_lock) */
 /* Pipelines a draw needs and nothing has made yet: made in the background
  * too, ahead of the rest, the draw left out until then, rather than made
  * on this thread while the screen waits (a boost's end under Turnip froze
@@ -1508,20 +1513,33 @@ static int SDLCALL bg_main(void *unused)
     for (;;) {
         bg_job j;
         Uint64 t0;
-        while (!bg_ntodo)
+        uint32_t k;
+        for (;;) {      /* in order (urgent ones are first), a program's only if none is being made */
+            for (k = 0; k < bg_ntodo && bg_todo[k].heavy && bg_programs_busy; k++)
+                ;
+            if (k < bg_ntodo)
+                break;
             SDL_WaitCondition(bg_wake, bg_lock);
-        j = bg_todo[0];
-        memmove(bg_todo, bg_todo + 1, --bg_ntodo * sizeof *bg_todo);
+        }
+        j = bg_todo[k];
+        memmove(bg_todo + k, bg_todo + k + 1, (--bg_ntodo - k) * sizeof *bg_todo);
+        if (j.heavy)
+            bg_programs_busy++;
         SDL_UnlockMutex(bg_lock);
         t0 = SDL_GetTicksNS();
         SDL_SetAtomicU32(&bg_busy_since_ms, (Uint32)(t0 / 1000000) | 1u);
         j.p = make_pipeline(&j.ps, j.vs, j.fs);
         SDL_SetAtomicU32(&bg_busy_since_ms, 0);
         SDL_LockMutex(bg_lock);
+        if (j.heavy) {
+            bg_programs_busy--;
+            SDL_BroadcastCondition(bg_wake);    /* the next program's may start */
+        }
         bg_ns += SDL_GetTicksNS() - t0;
         if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 32)
             SDL_Log("gfx: a %s pipeline took %.0f ms to make%s (%u more waiting)",
-                    j.urgent ? "needed" : "program's", (double)(SDL_GetTicksNS() - t0) / 1e6,
+                    j.urgent ? "needed" : j.heavy ? "program's" : "fragment setup's",
+                    (double)(SDL_GetTicksNS() - t0) / 1e6,
                     j.p ? "" : ", and failed", bg_ntodo);
         bg_done = grow(bg_done, &bg_cap_done, bg_ndone + 1, sizeof *bg_done);
         bg_done[bg_ndone++] = j;
@@ -1558,6 +1576,7 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShade
     j.gen = pipe_gen;
     j.save = save;
     j.urgent = !vs && !fs;
+    j.heavy = vs != NULL;     /* a program's own vertex shader: the large ones */
     SDL_LockMutex(bg_lock);
     bg_todo = grow(bg_todo, &bg_cap_todo, bg_ntodo + 1, sizeof *bg_todo);
     if (j.urgent) {         /* a draw waits for it: ahead of the programs' own */
