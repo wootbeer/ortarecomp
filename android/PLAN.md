@@ -48,4 +48,14 @@ file dialog for the document picker, its `content://` reading for the disc image
    yields (NtYieldExecution, a zero KeDelayExecutionThread) return at once, but no wait in Orta
    loops on them. pd1 here: 6% on its title. The vertex/texture-hash worker pool woke all its
    workers for every job; it now wakes only as many as there are chunks for (`src/guest/vsh.c`).
+   **GPU driver** (in, to try): Options > Advanced > GPU driver picks a custom Vulkan driver (a
+   Turnip release zip as it comes, or a .so); `GpuDriverInstaller` unpacks it into
+   `gpu_drivers/NAME/` (library.txt names the library, from the zip's meta.json). At the next
+   start `android_gpu.c` opens it with libadrenotools (`external/libadrenotools`, BSD-2-Clause;
+   its hooks `libhook_impl.so`, `libmain_hook.so` packed unpacked: useLegacyPackaging) and SDL
+   loads Vulkan from it (patches/SDL/0003). A guard file is up while it opens and from the GPU
+   device until 120 frames are shown: a start that crashes falls back to the phone's driver at
+   the next one, with a message. `src/android/gpu_driver/` and `GpuDriverInstaller.java` know
+   nothing of the game, for snprecomp and btgarecomp (their RT64 takes the library's
+   vkGetInstanceProcAddr).
 7. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.

@@ -221,6 +221,8 @@ bool pdo_config_load(pdo_config *cfg)
             settings.touch_size = clamp_int(SDL_atoi(eq + 1), 90, 130);
         else if (strcmp(line, "touch_opacity") == 0)
             settings.touch_opacity = clamp_int(SDL_atoi(eq + 1), 10, 100);
+        else if (strcmp(line, "gpu_driver") == 0)
+            SDL_strlcpy(settings.gpu_driver, eq + 1, sizeof settings.gpu_driver);
         else if (strcmp(line, "depth_reversed") == 0)
             settings.depth_reversed = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "picture_crt") == 0)
@@ -289,6 +291,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  "touch_buttons=%s\n"
                  "touch_size=%d\n"
                  "touch_opacity=%d\n"
+                 "gpu_driver=%s\n"
                  "depth_reversed=%d\n"
                  "picture_crt=%d\n"
                  "picture_brightness=%d\n"
@@ -315,7 +318,7 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
                  settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble,
                  settings.touch_buttons == PDO_TOUCH_ALWAYS ? "always" : settings.touch_buttons == PDO_TOUCH_OFF ? "off" : "auto",
-                 settings.touch_size, settings.touch_opacity, settings.depth_reversed,
+                 settings.touch_size, settings.touch_opacity, settings.gpu_driver, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
                  settings.pic_saturation, settings.audio_out == PDO_AUDIO_HEADPHONES ? "headphones"
                  : settings.audio_out == PDO_AUDIO_SURROUND ? "surround" : "speakers",

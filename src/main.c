@@ -35,6 +35,7 @@
 #include <SDL3/SDL_main.h>
 #ifdef __ANDROID__
 #include <android/log.h>
+#include "android/android_gpu.h"
 #include <stdlib.h>
 #endif
 
@@ -481,6 +482,9 @@ int main(int argc, char **argv)
                 s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
                 s->fps30 ? 30 : 60, s->save_slot);
     }
+#ifdef __ANDROID__
+    pdo_android_gpu_driver_load();      /* before any Vulkan window: SDL loads Vulkan from it */
+#endif
 
     if (opt.import_iso) {
         char dst[PDO_PATH_MAX];

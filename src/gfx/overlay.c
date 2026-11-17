@@ -25,12 +25,15 @@
 #include <string.h>
 
 #include "guest/program.h"
+#ifdef __ANDROID__
+#include "android/android_gpu.h"
+#endif
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
        ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_ABOUT, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
-       ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_FULLSCREEN, ITEM_EXIT,
+       ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_GPUDRV, ITEM_FULLSCREEN, ITEM_EXIT,
        /* Picture (present.frag) */
        ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT, ITEM_PIC_RESET,
        /* links to the pages, and back */
@@ -75,8 +78,8 @@ static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA
 #ifdef __ANDROID__
 /* No Lossless Scaling on Android (CMakeLists.txt): frame generation is Off
  * or our interpolation, and there is no Lossless.dll to choose. */
-static const int advanced_game[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
-static const int advanced_launcher[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_game[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
 #else
 static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU,
@@ -231,8 +234,52 @@ static void pick_dll(void)
     SDL_ShowOpenFileDialog(dll_dialog_cb, NULL, NULL, filters, SDL_arraysize(filters), NULL, false);
 }
 
+/* Android: a custom GPU driver (src/android/android_gpu.c), a zip or .so
+ * from the system's picker, installed by the app when the menu takes it. */
+static char picked_driver[PDO_PATH_MAX];
+static SDL_AtomicInt driver_picked;
+enum { DRIVER_NONE, DRIVER_NEW, DRIVER_BAD, DRIVER_SYSTEM };
+static int driver_note;             /* what the help line says after a choice */
+
+static void SDLCALL driver_dialog_cb(void *userdata, const char *const *files, int filter)
+{
+    (void)userdata;
+    (void)filter;
+    if (files && files[0]) {
+        SDL_strlcpy(picked_driver, files[0], sizeof picked_driver);
+        SDL_SetAtomicInt(&driver_picked, 1);
+    }
+}
+
+static void pick_driver(void)
+{
+    SDL_ShowOpenFileDialog(driver_dialog_cb, NULL, NULL, NULL, 0, NULL, false);
+}
+
+static void take_picked_driver(void)
+{
+#ifdef __ANDROID__
+    char name[64], err[256];
+
+    if (!SDL_GetAtomicInt(&driver_picked))
+        return;
+    SDL_SetAtomicInt(&driver_picked, 0);
+    if (pdo_android_gpu_driver_install(picked_driver, name, sizeof name, err, sizeof err)) {
+        SDL_strlcpy(pdo_settings_get()->gpu_driver, name, sizeof pdo_settings_get()->gpu_driver);
+        driver_note = DRIVER_NEW;
+        SDL_Log("overlay: GPU driver %s installed; used from the next start", name);
+        pdo_settings_save();
+    } else {
+        driver_note = DRIVER_BAD;
+        SDL_Log("overlay: GPU driver not installed: %s", err);
+    }
+    dirty = true;
+#endif
+}
+
 static void take_picked_dll(void)
 {
+    take_picked_driver();
     if (SDL_GetAtomicInt(&dll_picked)) {
         SDL_SetAtomicInt(&dll_picked, 0);
         SDL_strlcpy(pdo_settings_get()->lsfg_dll, picked_dll, sizeof pdo_settings_get()->lsfg_dll);
@@ -353,6 +400,14 @@ static void change(int dir)
     case ITEM_INTERP: next_frame_gen(s, dir); break;
     case ITEM_LSMODE: s->lsfg_performance = !s->lsfg_performance; break;
     case ITEM_LSDLL:  if (dir > 0) pick_dll(); else s->lsfg_dll[0] = 0; break;
+    case ITEM_GPUDRV:
+        if (dir > 0)
+            pick_driver();
+        else if (s->gpu_driver[0]) {
+            s->gpu_driver[0] = 0;
+            driver_note = DRIVER_SYSTEM;
+        }
+        break;
     case ITEM_ABOUT:  break;        /* says who made it (its help), nothing to change */
     case ITEM_CONTROLS: if (dir > 0) { controls = true; selected = 0; } break;
     case ITEM_CLOSE:  if (dir > 0) set_open(false); break;
@@ -503,7 +558,7 @@ static bool capture_event(const SDL_Event *ev)
 static bool is_link(int item)
 {
     return item == ITEM_START || item == ITEM_EXIT || item == ITEM_CLOSE || item == ITEM_QUIT || item == ITEM_BACK ||
-           item == ITEM_LSDLL || item == ITEM_ABOUT ||
+           item == ITEM_LSDLL || item == ITEM_GPUDRV || item == ITEM_ABOUT ||
            item == ITEM_PIC_RESET || item == ITEM_PICK || item == ITEM_GPU || item == ITEM_CONTROLS ||
            (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_TOUCH);
 }
@@ -922,6 +977,7 @@ static float value_of(int item, char *v, size_t n)
         break;
     }
     case ITEM_GPU:    snprintf(v, n, "Vulkan"); break;
+    case ITEM_GPUDRV: snprintf(v, n, "%.14s", s->gpu_driver[0] ? s->gpu_driver : "System"); break;
     case ITEM_SLOT:   snprintf(v, n, "%d%s", s->save_slot, pdo_save_slot_used(s->save_slot) ? "" : " (empty)"); break;
     case ITEM_PICK: {   /* the end of the path: the file or folder's name */
         const char *f = launcher_files ? launcher_files : "-";
@@ -976,6 +1032,7 @@ static const char *label_of(int item)
     case ITEM_LSMODE: return "LS mode";
     case ITEM_LSDLL:  return "Lossless.dll";
     case ITEM_GPU:    return "Graphics";
+    case ITEM_GPUDRV: return "GPU driver";
     case ITEM_START:  return launcher_files_ok ? "Start game" : "Start game (no files)";
     case ITEM_PICK:   return "Game files";
     case ITEM_SLOT:   return "Save file";
@@ -1071,6 +1128,11 @@ static const char *help_of(int item)
     case ITEM_LSDLL:  return "This build has no LS: BUILDING.";
 #endif
     case ITEM_GPU:    return "The graphics API.";
+    case ITEM_GPUDRV:
+        return driver_note == DRIVER_BAD ? "Not a driver: see the log."
+             : driver_note == DRIVER_NEW ? "Set: from the next start."
+             : driver_note == DRIVER_SYSTEM ? "Phone's own: from next start."
+             : "OK: a Turnip zip. Left: phone's.";
     case ITEM_START:  return launcher_files_ok ? "Play." : "Choose your game files first.";
 #ifdef __ANDROID__
     case ITEM_PICK:   return "Your disc image.";

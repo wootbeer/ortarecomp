@@ -19,6 +19,7 @@
 #include <SDL3/SDL.h>
 #ifdef __ANDROID__
 #include <sys/system_properties.h>
+#include "android/android_gpu.h"
 #endif
 
 #include <stddef.h>
@@ -2533,6 +2534,9 @@ static bool init_here(int width, int height)
      * for by itself; a GPU without them gets the usual device. */
     if (pdo_settings_get()->lsfg_multiplier >= 2 && !getenv("PDO_BENCHMARK"))
         dev = pdo_lsfg_create_device();
+#endif
+#ifdef __ANDROID__
+    pdo_android_gpu_driver_device();    /* a custom driver's guard: until frames are shown */
 #endif
     if (!dev)
         dev = create_device();
@@ -6180,6 +6184,13 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
         } else {
             gpu_note(fence, s1);
         }
+#ifdef __ANDROID__
+        {   /* two seconds of frames: a custom GPU driver works */
+            static uint32_t shown;
+            if (++shown == 120)
+                pdo_android_gpu_driver_started();
+        }
+#endif
     }
     if (ls_drawn) {
         /* The frame counter counts what reached the screen. */

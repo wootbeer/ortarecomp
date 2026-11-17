@@ -81,6 +81,17 @@ if(ANDROID)
         src/android/descore/touch/descore_touch.c)
     set_source_files_properties(src/android/descore/touch/descore_touch.c
         PROPERTIES COMPILE_DEFINITIONS DESCORE_TOUCH_NO_GL)
+    # A custom Vulkan driver (Adreno: Turnip) chosen in the options, loaded
+    # with libadrenotools (external/libadrenotools, BSD-2-Clause) in place of
+    # the system's: src/android/gpu_driver/ (shared with other projects) and
+    # android_gpu.c; SDL takes it through patches/SDL/0003. Its hook
+    # libraries, libhook_impl.so and libmain_hook.so, go in the APK too
+    # (android/app/build.gradle.kts).
+    add_subdirectory(external/libadrenotools ${CMAKE_BINARY_DIR}/adrenotools EXCLUDE_FROM_ALL)
+    target_sources(OrtaRecomp PRIVATE
+        src/android/android_gpu.c
+        src/android/gpu_driver/gpu_driver.c)
+    target_link_libraries(OrtaRecomp PRIVATE adrenotools)
 else()
     add_executable(OrtaRecomp)
 endif()

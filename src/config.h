@@ -51,6 +51,8 @@ typedef struct pdo_settings {
     int  touch_buttons;     /* Android: PDO_TOUCH_*, when the on-screen controls show (src/android/) */
     int  touch_size;        /* Android: their size, 90-130 % (touch_controls.c) */
     int  touch_opacity;     /* Android: their opacity, 10-100 % */
+    char gpu_driver[64];    /* Android: a custom Vulkan driver's folder in gpu_drivers/, "" the
+                               system's (src/android/android_gpu.c, from the next start) */
     bool depth_reversed;    /* depth stored as 1 - z (renderer.c, read at start) */
     /* Picture (present.frag), on the finished frame: */
     bool picture_crt;       /* a CRT's darker midtones: x^(2.5/2.2) */

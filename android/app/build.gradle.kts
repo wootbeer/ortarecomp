@@ -51,8 +51,9 @@ android {
                     arguments += "-DPDO_GEN_DIR=$desktopDir/gen"
                     arguments += "-DPD1_GEN_DIR=$desktopDir/gen-pd1"
                 }
-                // libmain.so, the game with SDL linked in; nothing else the root project defines.
-                targets += listOf("OrtaRecomp")
+                // libmain.so, the game with SDL linked in; and libadrenotools' hooks for a
+                // custom GPU driver (src/android/gpu_driver/), loaded from the APK's library folder.
+                targets += listOf("OrtaRecomp", "hook_impl", "main_hook")
             }
         }
     }
@@ -83,6 +84,14 @@ android {
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+    }
+
+    // libadrenotools loads its hooks from nativeLibraryDir, which holds the libraries only when
+    // they are unpacked from the APK at install.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 

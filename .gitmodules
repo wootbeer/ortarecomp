@@ -16,3 +16,6 @@
 	url = https://github.com/KhronosGroup/glslang.git
 	shallow = true
 	ignore = dirty
+[submodule "external/libadrenotools"]
+	path = external/libadrenotools
+	url = https://github.com/bylaws/libadrenotools.git

@@ -32,6 +32,29 @@ public class OrtaActivity extends SDLActivity implements InputManager.InputDevic
         return args != null ? args : new String[0];
     }
 
+    /**
+     * Called by the game (src/android/android_gpu.c): installs the GPU driver the player picked
+     * (a content:// address from the file picker). "ok:" and its folder's name, or "error:" and why.
+     */
+    @SuppressWarnings("unused")
+    public static String gpuDriverInstall(String uri) {
+        if (mSingleton == null) {
+            return "error:no activity";
+        }
+        try {
+            return "ok:" + GpuDriverInstaller.install(mSingleton, android.net.Uri.parse(uri));
+        } catch (Exception e) {
+            Log.w(TAG, "GPU driver not installed", e);
+            return "error:" + e.getMessage();
+        }
+    }
+
+    /** Called by the game: where the APK's native libraries are (libadrenotools' hooks). */
+    @SuppressWarnings("unused")
+    public static String nativeLibraryDir() {
+        return mSingleton != null ? mSingleton.getApplicationInfo().nativeLibraryDir : "";
+    }
+
     /** Called by the game (src/guest/relaunch.c): start again on another program. */
     @SuppressWarnings("unused")
     public static void restartWith(String[] args) {
