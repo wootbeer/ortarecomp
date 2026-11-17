@@ -879,7 +879,8 @@ bool pdo_gfx_vsh_needs_cpu(int32_t program)
         return false;
     return SDL_GetAtomicInt(&settled[(uint32_t)program % SETTLE_SLOTS]) != program + 1;
 }
-static uint32_t bg_made;                        /* their pipelines made in the background (bg_ask) */
+static uint32_t bg_made;
+static uint32_t in_place_draws;   /* fs_wait: draws on a target drawn once, their pipeline made in place */                        /* their pipelines made in the background (bg_ask) */
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 /* Programs' own pipelines made in the background (bg_main, below). */
 typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs, *fs; SDL_GPUGraphicsPipeline *p;
@@ -1139,6 +1140,7 @@ bool pdo_gfx_depth_reversed(void)
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps);
 static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save);
+static void bg_ask_front(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs);
 static void bg_ask_urgent(const pdo_pipeline_state *ps);
 
 static void warm_pipelines(void)
@@ -1169,6 +1171,8 @@ static void warm_pipelines(void)
                     sv = spec_shader_of((uint64_t)ps.vsh_spec[1] << 32 | ps.vsh_spec[0]);
                 if (fk)
                     sf = fs_shader_of((uint64_t)ps.fs_spec[1] << 32 | ps.fs_spec[0], NULL);
+                if (fs_wait && ps.gpu_vsh == 1 && !vk)
+                    continue;   /* the vertex interpreter's: see the CPU stand-in in replay */
                 if ((!vk || sv) && (!fk || sf))
                     bg_ask(&ps, sv, sf, false);
                 continue;
@@ -1223,9 +1227,10 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
             pdo_vsh_spec_counts(&made, &failed, &pending, &ms);
             SDL_Log("gfx: draws by their fragment setup's own shader %u, by the interpreter %u "
                     "(shaders made %u, failed %u, to come %u); program draws from the CPU's vertices while "
-                    "their pipeline is made %u; draws left out until theirs is made %u", fs_spec_draws,
-                    fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped);
-            cpu_stand_in_draws = async_skipped = 0;
+                    "their pipeline is made %u; draws left out until theirs is made %u, "
+                    "on a target drawn once with theirs made in place %u", fs_spec_draws,
+                    fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped, in_place_draws);
+            cpu_stand_in_draws = async_skipped = in_place_draws = 0;
             last = now;
         }
         fs_spec_draws = fs_interp_draws = 0;
@@ -1572,6 +1577,8 @@ static int SDLCALL bg_main(void *unused)
     return 0;
 }
 
+static bool bg_front;   /* bg_ask_front: the next job goes first */
+
 /* Asks for ps's pipeline (ps names a program's own shader, vs). */
 static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save)
 {
@@ -1600,7 +1607,7 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShade
     j.fs = fs;
     j.gen = pipe_gen;
     j.save = save;
-    j.urgent = !vs && !fs;
+    j.urgent = (!vs && !fs) || bg_front;
     j.heavy = vs != NULL;     /* a program's own vertex shader: the large ones */
     SDL_LockMutex(bg_lock);
     bg_todo = grow(bg_todo, &bg_cap_todo, bg_ntodo + 1, sizeof *bg_todo);
@@ -1613,6 +1620,15 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShade
     }
     SDL_SignalCondition(bg_wake);
     SDL_UnlockMutex(bg_lock);
+}
+
+/* A pipeline with a setup's own shader that a draw waits for (fs_wait):
+ * ahead of the programs' own, as an interpreter's would be. */
+static void bg_ask_front(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs)
+{
+    bg_front = true;
+    bg_ask(ps, vs, fs, true);
+    bg_front = false;
 }
 
 /* A pipeline of the interpreters' (no shader of its own) a draw needs. */
@@ -1775,7 +1791,29 @@ typedef struct rtarget {
     bool stale;
     bool depth_only;          /* a shadow map: keyed by its depth surface,
                                  single-sampled, depth readable by shaders */
+    uint64_t drawn_cur, drawn_prev;     /* the last two frames (replay_frames) it was drawn to */
 } rtarget;
+
+static uint64_t replay_frames;          /* frames recorded (replay) */
+
+/* Notes that t is drawn to in this frame. */
+static void target_drawn(rtarget *t)
+{
+    if (t && t->drawn_cur != replay_frames) {
+        t->drawn_prev = t->drawn_cur;
+        t->drawn_cur = replay_frames;
+    }
+}
+
+/* t (NULL: the screen) was drawn to in one of the last few frames before
+ * this one, so it is drawn again soon: a draw on it can be left out while
+ * its pipeline is made. One drawn first, or once (a picture made at a
+ * scene's start, a line of text), would keep the hole: its pipeline is made
+ * in place (HakuX does the same, facts only). */
+static bool target_redrawn(const rtarget *t)
+{
+    return !t || (t->drawn_prev && replay_frames - t->drawn_prev <= 3);
+}
 
 static rtarget targets[MAX_TARGETS];
 static int ntargets;
@@ -3731,6 +3769,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
     upload_frame(cmd);
     prof_cut(&cmd, 4);      /* the uploads, and any wait the queue had before this frame */
     cur_target = NULL;
+    replay_frames++;
     bg_collect();
     vkcache_maybe_save();
     if (bloom)
@@ -3777,6 +3816,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             }
             pass = NULL;
             cur_target = target_of(&c->surf, &c->surf2);
+            target_drawn(cur_target);
             continue;
         }
         if (c->kind == CMD_COPY) {
@@ -3812,6 +3852,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         {
             pdo_pipeline_state ps = c->draw.ps;
             bool own_fs = false;    /* its setup has or will have its own shader (fs_wait) */
+            bool in_place = false;  /* fs_wait, a target drawn once: its pipeline made here */
             ps.single_sample = cur_target && cur_target->depth_only;
             ps.gpu_vsh = gpu;
             ps.combiners = (c->draw.ff.ps_final[2] & 0xFF) != 0;
@@ -3824,6 +3865,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
              * is, the interpreters'. */
             {
                 uint64_t vkey = 0, fkey;
+                bool stand_in;
                 SDL_GPUShader *svs = NULL, *sfs;
                 if (gpu == 1 && c->vu.prev_prog[1] == 0) {
                     vkey = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
@@ -3838,9 +3880,18 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 ps.vsh_spec[1] = (uint32_t)(vkey >> 32);
                 ps.fs_spec[0] = (uint32_t)fkey;
                 ps.fs_spec[1] = (uint32_t)(fkey >> 32);
-                if ((vkey || fkey) && !find_pipeline(&ps)) {
-                    if (!pipeline_failed(&ps))
-                        bg_ask(&ps, svs, sfs, true);
+                /* A program without its own shader yet is drawn from the
+                 * CPU's vertices below: no pipeline of the vertex interpreter
+                 * with the setup's own shader (Turnip took 27 s over one). */
+                stand_in = gpu == 1 && c->vu.prev_prog[1] == 0 && !vkey && c->has_cpu
+                           && pdo_vsh_spec_enabled();
+                if ((vkey || fkey) && !find_pipeline(&ps) && !(fs_wait && stand_in)) {
+                    if (!pipeline_failed(&ps)) {
+                        if (fs_wait && !svs)
+                            bg_ask_front(&ps, NULL, sfs);
+                        else
+                            bg_ask(&ps, svs, sfs, true);
+                    }
                     else if (fkey && !vkey)
                         own_fs = false;     /* its own will not come: the interpreter's */
                     /* meanwhile: the program's shader alone if its pipeline is there */
@@ -3859,12 +3910,17 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                             /* its own pipeline is not made yet: the CPU's vertices meanwhile */
                             gpu = 0;
                             ps.gpu_vsh = 0;
-                            if ((ps.fs_spec[0] || ps.fs_spec[1]) && !find_pipeline(&ps)) {
-                                if (fs_wait && !pipeline_failed(&ps))
-                                    bg_ask(&ps, NULL, sfs, true);   /* the one this draw waits for */
-                                else
-                                    own_fs = false;
-                                ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                            if (fkey) {     /* the setup's own shader with them, when its pipeline is made */
+                                ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                                ps.fs_spec[0] = (uint32_t)fkey;
+                                ps.fs_spec[1] = (uint32_t)(fkey >> 32);
+                                if (!find_pipeline(&ps)) {
+                                    if (fs_wait && !pipeline_failed(&ps))
+                                        bg_ask_front(&ps, NULL, sfs);   /* the one this draw waits for */
+                                    else
+                                        own_fs = false;
+                                    ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                                }
                             }
                             cpu_stand_in_draws++;
                         }
@@ -3882,10 +3938,22 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     fs_interp_draws++;
             }
             if (fs_wait && own_fs && !ps.fs_spec[0] && !ps.fs_spec[1] && !find_pipeline(&ps)) {
-                async_skipped++;
-                continue;                   /* until its own setup's pipeline is made */
+                uint64_t fk = 0;
+                SDL_GPUShader *sf = NULL;
+                if (target_redrawn(cur_target)) {
+                    async_skipped++;
+                    continue;               /* until its own setup's pipeline is made */
+                }
+                /* drawn once: its own setup's pipeline here, now */
+                fk = fs_key_of(&c->draw.ff, ps.combiners, &sf);
+                if (fk) {
+                    ps.fs_spec[0] = (uint32_t)fk;
+                    ps.fs_spec[1] = (uint32_t)(fk >> 32);
+                    in_place_draws++;
+                    in_place = true;
+                }
             }
-            if (pipelines_async && !find_pipeline(&ps)) {
+            if (pipelines_async && !in_place && !find_pipeline(&ps)) {
                 ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
                 ps.fs_spec[0] = ps.fs_spec[1] = 0;
                 if (!find_pipeline(&ps)) {
