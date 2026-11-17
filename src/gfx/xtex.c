@@ -260,6 +260,19 @@ static void decode_dxt(pix p, const pdo_xtex_info *info, const uint8_t *src, uin
     }
 }
 
+int pdo_xtex_bc(const pdo_xtex_info *info)
+{
+    const struct fmt *f = find(info->format);
+    if (!f || f->layout != COMPRESSED)
+        return 0;
+    return f->pix == PIX_DXT1 ? 1 : f->pix == PIX_DXT3 ? 2 : 3;
+}
+
+uint32_t pdo_xtex_bc_bytes(const pdo_xtex_info *info)
+{
+    return ((info->width + 3) / 4) * ((info->height + 3) / 4) * (pdo_xtex_bc(info) == 1 ? 8u : 16u);
+}
+
 void pdo_xtex_decode(const pdo_xtex_info *info, const uint8_t *src, uint8_t *rgba)
 {
     const struct fmt *f = find(info->format);

@@ -1598,10 +1598,18 @@ typedef struct gtex {
                                (a number: frame_datas are reused, addresses repeat) */
     uint64_t last_used;
     uint32_t w, h;
+    int      bc;            /* 1-3: DXT1/3/5 kept as BC1-BC3 on the GPU, not decoded (bc_textures) */
     SDL_GPUTexture *tex;
 } gtex;
 
 static gtex textures[MAX_TEXTURES];
+/* DXT1/3/5 textures go to the GPU as they are, as BC1-BC3, when it reads
+ * those (desktop GPUs, and the RP6's Adreno): decoded to RGBA they were
+ * four to eight times the bytes for every texel the GPU reads, on phones
+ * the 3D scene's largest cost, and the decoding was CPU time. The GPU's
+ * BC decoding is DXT's (S3TC), within a step of rounding in the blends.
+ * PDO_BC_TEXTURES=0 decodes them on the CPU as before. */
+static bool bc_textures;
 static int ntextures;
 
 /* A texture's bytes, to notice when the game rewrites them: it runs over
@@ -1936,8 +1944,9 @@ void pdo_gfx_copy_rect(const pdo_surface *src, const pdo_surface *dst,
 
 typedef struct pending_upload {
     gtex    *t;
-    uint32_t offset;   /* in the frame's texture transfer buffer */
+    uint32_t offset;   /* in the frame's texture transfer buffer (16-byte aligned for BC) */
     uint32_t level, w, h;
+    uint32_t bytes;
 } pending_upload;
 
 #define MAX_UPLOADS 2048
@@ -2029,12 +2038,21 @@ static tex_slot texture_for(const pdo_tex_ref *t)
         SDL_zero(ti);
         ti.type = SDL_GPU_TEXTURETYPE_2D;
         ti.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        if (bc_textures && info.known && (g->bc = pdo_xtex_bc(&info)) != 0)
+            ti.format = g->bc == 1 ? SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM : g->bc == 2
+                        ? SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM;
         ti.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
         ti.width = info.width;
         ti.height = info.height;
         ti.layer_count_or_depth = 1;
         ti.num_levels = levels;
         g->tex = SDL_CreateGPUTexture(dev, &ti);
+        if (g->bc) {
+            static uint32_t n_bc;
+            if (n_bc++ < 4)
+                SDL_Log("gfx: texture %08x %ux%u (%u levels) kept as BC%d", t->data, info.width, info.height,
+                        levels, g->bc);
+        }
     }
     g->last_used = frames;
     /* Hashed with the rest of the frame's textures, on the worker threads
@@ -2104,17 +2122,23 @@ static void check_textures(uint8_t **staging, uint32_t *staging_len, uint32_t *s
             pdo_xtex_info li;
             uint32_t off, need;
             pdo_xtex_level(&info, l, &li, &off);
-            need = li.width * li.height * 4;
+            need = g->bc ? pdo_xtex_bc_bytes(&li) : li.width * li.height * 4;
+            if (g->bc)
+                *staging_len = (*staging_len + 15) & ~15u;     /* a buffer-to-image copy's alignment */
             if (*staging_len + need > *staging_cap) {
                 *staging_cap = (*staging_len + need) * 2;
                 *staging = SDL_realloc(*staging, *staging_cap);
             }
-            pdo_xtex_decode(&li, src + off, *staging + *staging_len);
+            if (g->bc)
+                memcpy(*staging + *staging_len, src + off, need);
+            else
+                pdo_xtex_decode(&li, src + off, *staging + *staging_len);
             ups[*nups].t = g;
             ups[*nups].offset = *staging_len;
             ups[*nups].level = l;
             ups[*nups].w = li.width;
             ups[*nups].h = li.height;
+            ups[*nups].bytes = need;
             (*nups)++;
             *staging_len += need;
         }
@@ -2526,6 +2550,17 @@ static bool init_here(int width, int height)
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "?"));
         /* Whether the GPU reads the Xbox's compressed formats itself (they are
          * decoded on the CPU into RGBA, four to eight times the bytes). */
+        {
+            const char *e = SDL_getenv("PDO_BC_TEXTURES");
+            bc_textures = !(e && e[0] == '0');
+            for (int f = 0; f < 3 && bc_textures; f++)
+                bc_textures = SDL_GPUTextureSupportsFormat(dev, f == 0 ? SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM
+                                                           : f == 1 ? SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM
+                                                           : SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM,
+                                                           SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+            SDL_Log("gfx: DXT textures %s", bc_textures ? "kept compressed on the GPU (BC1-BC3)"
+                    : "decoded on the CPU");
+        }
         SDL_Log("gfx: compressed textures on this GPU: BC1 %s, BC2 %s, BC3 %s",
                 SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
                                              SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no",
@@ -3271,7 +3306,7 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
         SDL_GPUCopyPass *copy;
         uint8_t *map;
         Uint32 boff = vbytes + ibytes, coff = boff + bbytes, poff = coff + cbytes;
-        Uint32 tex_off = poff + pbytes;
+        Uint32 tex_off = (poff + pbytes + 15) & ~15u;     /* BC copies need 16-byte offsets */
 
         if (vbytes)
             F->gvb = ensure_buffer(F->gvb, &F->gvb_size, vbytes, SDL_GPU_BUFFERUSAGE_VERTEX);
@@ -4022,7 +4057,7 @@ static void capture_check_textures(void)
         uint32_t levels;
         const uint8_t *src;
 
-        if (!g->uploaded || g->last_used + 2 < F->frame)
+        if (!g->uploaded || g->last_used + 2 < F->frame || g->bc)     /* BC: the blocks as they are */
             continue;
         pdo_xtex_describe(g->format_word, g->size_word, &info);
         if (!info.known)
@@ -5932,9 +5967,10 @@ static void hand_over(void)
             F->ups[i].t->staged_in = F->frame;
         for (int i = 0; i < ready->nups; i++) {
             pending_upload *u = &ready->ups[i];
-            uint32_t need = u->w * u->h * 4;
+            uint32_t need = u->bytes;
             if (u->t->staged_in == F->frame)
                 continue;           /* this frame has a newer copy */
+            F->staging_len = (F->staging_len + 15) & ~15u;   /* BC copies' alignment */
             if (F->nups == MAX_UPLOADS) {
                 u->t->uploaded = false;     /* next time it is used */
                 continue;
