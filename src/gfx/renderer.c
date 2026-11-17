@@ -17,6 +17,9 @@
 #include "guest/vsh.h"      /* pdo_parallel */
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#endif
 
 #include <stddef.h>
 #include <stdio.h>
@@ -85,6 +88,13 @@ static uint32_t target_px(uint32_t v, bool depth_only)
 static SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1;
 static SDL_GPUTexture *frame_ms;
 static bool frame_stale;
+/* Multisampling on a tiled GPU (phones): a pass resolves its samples and
+ * keeps nothing else; the next one draws the resolved picture back in
+ * (begin_pass's seed). Storing and loading every sample at each pass
+ * moved four or eight times the picture through memory, what a tiler is
+ * slowest at; the seed reads it once. Edges drawn in an earlier pass go on
+ * as resolved there. On by default on Android; PDO_MSAA_RESOLVE_ONLY=0/1. */
+static bool msaa_resolve_only;
 static volatile bool paused;        /* the overlay menu holds the game */
 /* The overlay's holds, for the vblank clock (d3d_hle.c) to stop with the
  * game: when the current one began (ms, | 1 so never 0; 0: none), and the
@@ -2419,6 +2429,22 @@ static bool init_here(int width, int height)
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "driver"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "?"));
     }
+    {
+        const char *e = SDL_getenv("PDO_MSAA_RESOLVE_ONLY");
+#ifdef __ANDROID__
+        /* adb shell setprop debug.ortarecomp.msaa_resolve_only 0 (or 1) to
+         * compare, as an app has no environment of its own to set. */
+        char prop[PROP_VALUE_MAX] = "";
+        __system_property_get("debug.ortarecomp.msaa_resolve_only", prop);
+        if (!e || !*e)
+            e = prop;
+        msaa_resolve_only = true;
+#endif
+        if (e && *e)
+            msaa_resolve_only = *e == '1';
+        if (msaa_resolve_only)
+            SDL_Log("gfx: multisampling resolves each pass and keeps no samples (tiled GPU)");
+    }
     vkcache_load();             /* before any pipeline is made */
 
     window_thread = SDL_GetCurrentThreadID();
@@ -2669,13 +2695,16 @@ static SDL_GPURenderPass *begin_pass(SDL_GPUCommandBuffer *cmd, const command *c
      * draw it in first, unless this pass clears the color anyway. */
     if (ms && *stale && !(clear && (clear->clear_flags & 0xF0)))
         seed = snapshot(cmd);
-    *stale = false;
+    *stale = ms && msaa_resolve_only;   /* resolve-only: the samples are gone after this pass */
 
     SDL_zero(ct);
     ct.texture = ms ? ms : cur_color();
     ct.load_op = SDL_GPU_LOADOP_LOAD;
-    ct.store_op = ms ? SDL_GPU_STOREOP_RESOLVE_AND_STORE : SDL_GPU_STOREOP_STORE;
+    ct.store_op = !ms ? SDL_GPU_STOREOP_STORE : msaa_resolve_only ? SDL_GPU_STOREOP_RESOLVE
+                : SDL_GPU_STOREOP_RESOLVE_AND_STORE;
     ct.resolve_texture = ms ? cur_color() : NULL;
+    if (seed && msaa_resolve_only)
+        ct.load_op = SDL_GPU_LOADOP_DONT_CARE;  /* the seed covers it all */
     SDL_zero(dt);
     dt.texture = cur_target ? cur_target->depth : frame_depth;
     dt.load_op = SDL_GPU_LOADOP_LOAD;
@@ -2785,6 +2814,8 @@ static void bloom_pass(SDL_GPUCommandBuffer *cmd, int level)
 {
     SDL_GPUTexture *color = cur_color(), *ms = cur_target ? cur_target->ms : frame_ms;
     Uint32 w, h, bw, bh;
+    if (msaa_resolve_only)
+        ms = NULL;      /* the samples are not kept: added into the resolved picture, which seeds the next pass */
     int samples_log2 = ms ? (nsamples >= 8 ? 3 : nsamples >= 4 ? 2 : nsamples >= 2 ? 1 : 0) : 0;
     /* The same glow at two strengths, around the bright lights (Orta's
      * picture is dark: half of an episode 1 frame is under 20 of 255).
