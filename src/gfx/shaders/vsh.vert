@@ -39,8 +39,10 @@ layout(set = 1, binding = 0, std140) uniform Draw {
     ivec4 prev_in[4];
     vec4  blend_t;
     // Paired with a draw on another program: its base and count (y 0: the
-    // same program); z and w 0. Each program then runs on its own frame's constants and
-    // streams, and the outputs are blended.
+    // same program); w 0. Each program then runs on its own frame's constants and
+    // streams, and the outputs are blended. z 1: blending the same program,
+    // run it once on blended constants and streams instead (half the work;
+    // renderer.c, interp_once).
     ivec4 prev_prog;
     // The paired draw's viewport transform (c[58], c[59]): its positions
     // are in its own pixels (the game renders a boost's and a brake's end
@@ -267,7 +269,17 @@ vec4 to_clip(vec4 p, vec4 sc, vec4 of)
 void main()
 {
     bool blending = interp.x >= 0 && blend_t.x < 1.0;
-    if (blending) {
+    if (blending && prev_prog.z != 0 && prev_prog.y == 0) {
+        // Once, on both frames' constants and streams blended (mode 0):
+        // for the linear math that places vertices (a matrix, bones'
+        // matrices weighted) the same as blending the two runs.
+#ifdef PDO_VSH_SPEC
+        run_spec();
+#else
+        run(info.x, info.y);
+#endif
+        gl_Position = to_clip(R[12], mix(prev_vp_scale, vp_scale, blend_t.x), mix(prev_vp_offset, vp_offset, blend_t.x));
+    } else if (blending) {
         // Each frame's run as drawn -- the earlier frame's program (another
         // one across a switch) on its constants and streams, then this
         // frame's -- each through its own viewport, and the outputs blend

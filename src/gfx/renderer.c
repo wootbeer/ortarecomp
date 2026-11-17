@@ -3795,11 +3795,42 @@ static void prof_start(void)
             : prof_skip == 3 ? "; every draw cut to one pixel" : "");
 }
 
+/* Interpolating, a blended vertex-program draw runs its program once on
+ * both frames' constants and streams blended, instead of once for each
+ * frame with the outputs blended (shaders/vsh.vert, prev_prog.z): half the
+ * vertex work. On the RP6 (Turnip, 2x, 120 Hz) the two runs made the scene
+ * pass 6.3 ms of 8.3, and 1.5x did not help. Off by default, to compare:
+ * PDO_INTERP_ONCE=1 (Android: setprop debug.ortarecomp.interp_once 1,
+ * read again every 5 s). */
+static bool interp_once(void)
+{
+    static bool on;
+    static Uint64 next;
+    Uint64 now = SDL_GetTicksNS();
+    if (now >= next) {
+        const char *e = SDL_getenv("PDO_INTERP_ONCE");
+        bool was = on;
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        prop[0] = 0;
+        __system_property_get("debug.ortarecomp.interp_once", prop);
+        if (!e || !*e)
+            e = prop;
+#endif
+        on = e && *e == '1';
+        next = now + 5000000000ull;
+        if (on != was)
+            SDL_Log("interp: vertex programs run %s", on ? "once on both frames blended" : "for each frame, outputs blended");
+    }
+    return on;
+}
+
 static void replay(SDL_GPUCommandBuffer *cmd)
 {
     SDL_GPURenderPass *pass = NULL;
     int bloom = pdo_settings_get()->bloom;
     uint32_t bloom_at = UINT32_MAX;     /* the command after the frame's last 3D draw */
+    int once = interp_once();
 
     upload_frame(cmd);
     prof_cut(&cmd, 4);      /* the uploads, and any wait the queue had before this frame */
@@ -4055,6 +4086,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             if (gpu == 1) {
                 c->vu.blend_t[0] = t;
                 c->vu.interp[2] = tint;
+                c->vu.prev_prog[2] = once;
                 c->vu.info[3] = depth_rev;
                 SDL_PushGPUVertexUniformData(cmd, 0, &c->vu, sizeof c->vu);
             } else {
