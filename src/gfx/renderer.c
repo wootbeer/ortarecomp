@@ -2524,6 +2524,15 @@ static bool init_here(int width, int height)
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_NAME_STRING, "unknown GPU"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "driver"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "?"));
+        /* Whether the GPU reads the Xbox's compressed formats itself (they are
+         * decoded on the CPU into RGBA, four to eight times the bytes). */
+        SDL_Log("gfx: compressed textures on this GPU: BC1 %s, BC2 %s, BC3 %s",
+                SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no",
+                SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no",
+                SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no");
     }
     {
         const char *e = SDL_getenv("PDO_MSAA_RESOLVE_ONLY");
