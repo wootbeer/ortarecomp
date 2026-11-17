@@ -203,6 +203,9 @@ static void SDLCALL dll_dialog_cb(void *userdata, const char *const *files, int 
     if (files && files[0]) {
         SDL_strlcpy(picked_dll, files[0], sizeof picked_dll);
         SDL_SetAtomicInt(&dll_picked, 1);
+        SDL_Log("overlay: Lossless.dll chosen: %s", files[0]);
+    } else {
+        SDL_Log("overlay: Lossless.dll: %s", files ? "nothing chosen" : SDL_GetError());
     }
 }
 
@@ -1201,6 +1204,7 @@ static void draw_menu(void)
 
 SDL_Surface *pdo_overlay_image(bool *changed)
 {
+    take_picked_dll();      /* the launcher draws the menu but counts no game frames */
     *changed = false;
     if (!pdo_overlay_visible())
         return NULL;
