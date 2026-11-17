@@ -195,6 +195,7 @@ typedef struct command {
     float mvel[32];
     uint32_t pair_prev;     /* the paired draw in the frame before (match_frames) */
     uint8_t  consts_read[24]; /* vertex programs: a bit per c register read (pdo_gpu_vsh) */
+    uint32_t in_bytes[16];    /* vertex programs: the size of the stream each v register reads */
     float    anchor[8];       /* vertex programs: oPos of the first and last vertex (pdo_gpu_vsh) */
     bool     anchored;
     bool strayed;           /* its vertices strayed over a fifth of its size from its partner's */
@@ -695,6 +696,7 @@ void pdo_gfx_draw_vsh(const pdo_draw *d, const pdo_gpu_vsh *g, uint32_t nv,
             continue;
         }
         c->vu.inputs[r][0] = (int32_t)sbase[st];
+        c->in_bytes[r] = g->stream_bytes[st];
         c->vu.inputs[r][1] = g->input[r][1];
         c->vu.inputs[r][2] = g->input[r][2];
         c->vu.inputs[r][3] = g->input[r][3];
@@ -3799,9 +3801,9 @@ static void prof_start(void)
  * both frames' constants and streams blended, instead of once for each
  * frame with the outputs blended (shaders/vsh.vert, prev_prog.z): half the
  * vertex work. On the RP6 (Turnip, 2x, 120 Hz) the two runs made the scene
- * pass 6.3 ms of 8.3, and 1.5x did not help. Off by default, to compare:
- * PDO_INTERP_ONCE=1 (Android: setprop debug.ortarecomp.interp_once 1,
- * read again every 5 s). */
+ * pass 6.3 ms of 8.3, and 1.5x did not help; once, 4.2-5.6 ms, and a boost's
+ * end looked right. On by default; PDO_INTERP_ONCE=0 (Android: setprop
+ * debug.ortarecomp.interp_once 0, read again every 5 s) for the two runs. */
 static bool interp_once(void)
 {
     static bool on;
@@ -3809,6 +3811,7 @@ static bool interp_once(void)
     Uint64 now = SDL_GetTicksNS();
     if (now >= next) {
         const char *e = SDL_getenv("PDO_INTERP_ONCE");
+        static bool logged;
         bool was = on;
 #ifdef __ANDROID__
         static char prop[PROP_VALUE_MAX];
@@ -3817,10 +3820,11 @@ static bool interp_once(void)
         if (!e || !*e)
             e = prop;
 #endif
-        on = e && *e == '1';
+        on = !(e && *e == '0');
         next = now + 5000000000ull;
-        if (on != was)
+        if (on != was || !logged)
             SDL_Log("interp: vertex programs run %s", on ? "once on both frames blended" : "for each frame, outputs blended");
+        logged = true;
     }
     return on;
 }
@@ -5303,6 +5307,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
     uint32_t n_forced = 0, n_jumped = 0, n_rebuilt = 0, n_swapped = 0, n_still = 0, n_fvf_paired = 0;
     uint32_t n_lod = 0;     /* vertex-program draws paired across models (below) */
     uint32_t n_progswitch = 0;
+    static uint32_t n_streams_alike;   /* draws whose streams were read once (log) */
     uint32_t n_outblend = 0;    /* same program, a read register jumped: outputs blended */
     uint32_t n_screen = 0;  /* copies of the picture pasted on screen, not blended */  /* paired with the same draw on another program (boost, brake end) */
     char resized_txt[96] = "";
@@ -5653,6 +5658,27 @@ static void match_frames(frame_data *prev, frame_data *cur)
                         c->vu.prev_in[r] = pc->vu.inputs[r][0];
                     }
                     c->vu.interp[0] = pc->vu.info[2];
+                    /* Streams that hold the same bytes as the frame
+                     * before (a landscape, a model the game does not
+                     * touch) are read once, not from both frames: on
+                     * the RP6 reading both was much of the scene pass. */
+                    if (same_in) {
+                        uint32_t last = UINT32_MAX;
+                        bool alike = true;
+                        for (int r = 0; r < 16 && alike; r++) {
+                            uint32_t a = (uint32_t)c->vu.inputs[r][0], b = (uint32_t)pc->vu.inputs[r][0];
+                            if (!c->vu.inputs[r][3] || a == last)
+                                continue;
+                            last = a;
+                            alike = c->in_bytes[r] == pc->in_bytes[r] && a + c->in_bytes[r] <= cur->nblob
+                                    && b + pc->in_bytes[r] <= prev->nblob
+                                    && !memcmp(cur->blob + a, prev->blob + b, c->in_bytes[r]);
+                        }
+                        if (alike) {
+                            same_in = false;        /* nothing to blend in them */
+                            n_streams_alike++;
+                        }
+                    }
                     c->vu.interp[1] = same_in;
                     memcpy(c->vu.prev_scale, pc->vu.scale, sizeof c->vu.prev_scale);
                     memcpy(c->vu.prev_offset, pc->vu.offset, sizeof c->vu.prev_offset);
@@ -6221,7 +6247,9 @@ static void match_frames(frame_data *prev, frame_data *cur)
         }
         if (++st_frames == 300) {
             SDL_Log("interp: %u camera cuts in the last 300 frames; %.1f close calls, %.1f wrong pairs undone, "
-                    "%.1f rebuilt draws a frame", st_cuts, st_close / 300.0, st_swapped / 300.0, st_rebuilt / 300.0);
+                    "%.1f rebuilt draws a frame; %.1f program draws a frame with streams as before (read once)",
+                    st_cuts, st_close / 300.0, st_swapped / 300.0, st_rebuilt / 300.0, n_streams_alike / 300.0);
+            n_streams_alike = 0;
             st_frames = st_cuts = st_close = st_swapped = st_rebuilt = 0;
         }
     }
