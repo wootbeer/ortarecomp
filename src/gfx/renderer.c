@@ -263,7 +263,7 @@ typedef struct frame_data {
     bool on_gpu;
 } frame_data;
 
-static frame_data pool[5];
+static frame_data pool[6];   /* recording, handed over, being paired, and the two drawn */
 /* F: the frame being recorded (rec_F) -- one for all the game's threads,
  * which take turns under the guest CPU lock: kept per thread, a second
  * game thread that draws went on with a slot of its own from long before,
@@ -292,6 +292,7 @@ void pdo_gfx_take_frame_counts(uint32_t *drawn, uint32_t *dropped)
 }
 static frame_data *held_cur;        /* the main thread's newest */
 static frame_data *held_prev;       /* and the one before it */
+static frame_data *held_next;       /* the newest, being paired with held_cur (pair_main) */
 static bool game_done;              /* the game thread has ended */
 static int init_w, init_h, init_state;  /* pdo_gfx_init asked of the main thread:
                                          * 1 asked, 2 done, 3 failed */
@@ -1222,6 +1223,7 @@ void pdo_gfx_take_pass_counts(uint32_t out[4])
 }
 
 static Uint64 swap_wait_ns;              /* waiting for a swapchain image, for the timing log */
+static SDL_AtomicU32 pair_us;            /* pairing (run_match), on whichever thread: the main loop's log */
 static Uint64 main_wait_ns, main_record_ns, main_match_ns;   /* ... and pairing frames (match_frames) */    /* the same, and recording frames: the main loop's log */
 
 uint64_t pdo_gfx_take_swap_wait_ns(void)
@@ -6192,8 +6194,9 @@ static void match_frames(frame_data *prev, frame_data *cur)
  * handed over, not the one last drawn. */
 static frame_data *free_frame(void)
 {
-    for (int i = 0; i < 5; i++)
-        if (&pool[i] != F && &pool[i] != ready && &pool[i] != held_cur && &pool[i] != held_prev)
+    for (int i = 0; i < (int)SDL_arraysize(pool); i++)
+        if (&pool[i] != F && &pool[i] != ready && &pool[i] != held_cur && &pool[i] != held_prev
+            && &pool[i] != held_next)
             return &pool[i];
     return NULL;
 }
@@ -6580,6 +6583,103 @@ static bool skip_odd_frame(const frame_data *f, bool cap30)
            && SDL_GetTicksNS() - f->stamp < 40000000ull;
 }
 
+/* Pairs prev and cur (match_frames), with the slow-pairing log. */
+static void run_match(frame_data *prev, frame_data *cur)
+{
+    static uint32_t slow_logs;
+    static Uint64 slow_window;
+    Uint64 m0 = SDL_GetTicksNS(), dm;
+
+    programs_switched = viewport_changed = false;
+    match_frames(prev, cur);
+    dm = SDL_GetTicksNS() - m0;
+    SDL_AddAtomicU32(&pair_us, (int)(dm / 1000));
+    if (m0 - slow_window > 5000000000ull) {
+        slow_window = m0;
+        slow_logs = 0;
+    }
+    if (dm > 8000000 && slow_logs++ < 5) {     /* a frame's pairing over 8 ms */
+        uint32_t nd = 0;
+        for (uint32_t k = 0; k < cur->ncmds; k++)
+            nd += cur->cmds[k].kind == CMD_DRAW;
+        SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws): passes %.1f, across models %.1f, "
+                "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd,
+                mf_ns[0] / 1e6, mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
+    }
+}
+
+/* Interpolating, a new game frame is paired with the one before on a
+ * thread of its own: on the RP6 that took 4-5 ms a game frame, and on the
+ * main thread it cost the in-between frame after it its vblank (100 fps of
+ * 120). Meanwhile the main thread goes on drawing the pair before, which
+ * by then shows its newer frame (t past 1): the new pair takes over when
+ * paired, as its blend begins. match_frames writes only to the newer
+ * frame (and to its own statics, used on this thread alone then), which
+ * no other thread touches until it is done. */
+static SDL_Mutex *pair_lock;
+static SDL_Condition *pair_cond;
+static SDL_Thread *pair_thread;
+static frame_data *pair_prev, *pair_cur;     /* the job (under pair_lock) */
+static bool pair_busy, pair_done;
+
+static int SDLCALL pair_main(void *unused)
+{
+    (void)unused;
+    SDL_LockMutex(pair_lock);
+    for (;;) {
+        while (!pair_busy || pair_done)
+            SDL_WaitCondition(pair_cond, pair_lock);
+        SDL_UnlockMutex(pair_lock);
+        run_match(pair_prev, pair_cur);
+        SDL_LockMutex(pair_lock);
+        pair_done = true;
+        SDL_BroadcastCondition(pair_cond);
+    }
+    return 0;
+}
+
+/* Starts pairing prev and cur on the pairing thread: false if there is none. */
+static bool pair_start(frame_data *prev, frame_data *cur)
+{
+    if (!pair_thread) {
+        static bool tried;
+        if (tried || getenv("PDO_PAIR_HERE"))
+            return false;
+        tried = true;
+        pair_lock = SDL_CreateMutex();
+        pair_cond = SDL_CreateCondition();
+        if (pair_lock && pair_cond)
+            pair_thread = SDL_CreateThread(pair_main, "pairing", NULL);
+        if (!pair_thread)
+            return false;
+    }
+    SDL_LockMutex(pair_lock);
+    pair_prev = prev;
+    pair_cur = cur;
+    pair_done = false;
+    pair_busy = true;
+    SDL_BroadcastCondition(pair_cond);
+    SDL_UnlockMutex(pair_lock);
+    return true;
+}
+
+/* The pairing thread's job is done (waiting for it when wait): true once,
+ * then the paired frame is the main thread's to draw. */
+static bool pair_finished(bool wait)
+{
+    bool done;
+    if (!pair_thread)
+        return false;
+    SDL_LockMutex(pair_lock);
+    while (wait && pair_busy && !pair_done)
+        SDL_WaitCondition(pair_cond, pair_lock);
+    done = pair_busy && pair_done;
+    if (done)
+        pair_busy = false;
+    SDL_UnlockMutex(pair_lock);
+    return done;
+}
+
 void pdo_gfx_main_loop(void)
 {
     frame_data *cur = NULL, *prev = NULL;
@@ -6599,6 +6699,7 @@ void pdo_gfx_main_loop(void)
 
     for (;;) {
         frame_data *f;
+        bool async;             /* the new frame is paired on the pairing thread */
         /* Frame generation makes the frames between the game's instead. */
         /* pd1 draws its frame itself, one flat picture: no geometry to
          * blend, only frames to repeat (the counter rose, the motion not). */
@@ -6629,10 +6730,11 @@ void pdo_gfx_main_loop(void)
             } else if (!interp_ok && now >= retry_at) {
                 interp_ok = true;
             }
+            main_match_ns = (Uint64)SDL_SetAtomicU32(&pair_us, 0) * 1000;
             if (++log_n % 5 == 0)
-                SDL_Log("main: %.0f fps on screen, %.0f game frames; per second %.0f ms pairing, %.0f ms recording, "
+                SDL_Log("main: %.0f fps on screen, %.0f game frames; per second %.0f ms pairing%s, %.0f ms recording, "
                         "%.0f ms waiting for the window, %.0f ms submitting; GPU about %.1f ms a frame; blending %s",
-                        shown, games, main_match_ns / 1e6 / secs,
+                        shown, games, main_match_ns / 1e6 / secs, pair_thread ? " (its own thread)" : "",
                         main_record_ns / 1e6 / secs, main_wait_ns / 1e6 / secs, main_submit_ns / 1e6 / secs,
                         gpu_frames ? gpu_busy_ns / 1e6 / gpu_frames : 0.0,
                         !want ? "off" : interp_ok ? "on" : "held off");
@@ -6669,7 +6771,22 @@ void pdo_gfx_main_loop(void)
         if (f)
             ready = NULL;
         win_games += f != NULL;
-        if (f) {
+        SDL_UnlockMutex(q_lock);
+
+        if (f && pair_finished(true)) {     /* the one before is paired: it takes over first */
+            prev = cur;
+            cur = held_next;
+            SDL_LockMutex(q_lock);
+            held_prev = prev;
+            held_cur = cur;
+            held_next = NULL;
+            SDL_UnlockMutex(q_lock);
+        }
+        async = f && interp && cur && !shot_frame(f) && !(f->frame >= capture_frame && f->frame < capture_frame + capture_seq);
+        SDL_LockMutex(q_lock);
+        if (f && async) {
+            held_next = f;
+        } else if (f) {
             held_prev = cur;
             held_cur = f;
         }
@@ -6696,29 +6813,20 @@ void pdo_gfx_main_loop(void)
                 if (d > 8e6 && d < 50e6)
                     frame_interval += (d - frame_interval) * 0.1;
             }
+            if (async && pair_start(cur, f))
+                f = NULL;       /* drawn once paired (pair_finished, below) */
+            else if (async) {
+                SDL_LockMutex(q_lock);      /* no pairing thread: here, as before */
+                held_prev = cur;
+                held_cur = f;
+                held_next = NULL;
+                SDL_UnlockMutex(q_lock);
+            }
+        }
+        if (f) {
             prev = cur;
             cur = f;
-            programs_switched = viewport_changed = false;
-            {
-                Uint64 m0 = SDL_GetTicksNS(), dm;
-                static uint32_t slow_logs;
-                static Uint64 slow_window;
-                match_frames(interp ? prev : NULL, cur);
-                dm = SDL_GetTicksNS() - m0;
-                main_match_ns += dm;
-                if (now - slow_window > 5000000000ull) {
-                    slow_window = now;
-                    slow_logs = 0;
-                }
-                if (dm > 8000000 && slow_logs++ < 5) {     /* a frame's pairing over 8 ms */
-                    uint32_t nd = 0;
-                    for (uint32_t k = 0; k < cur->ncmds; k++)
-                        nd += cur->cmds[k].kind == CMD_DRAW;
-                    SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws): passes %.1f, across models %.1f, "
-                            "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd,
-                            mf_ns[0] / 1e6, mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
-                }
-            }
+            run_match(interp ? prev : NULL, cur);
             if (prev && f->frame >= capture_frame && f->frame < capture_frame + capture_seq)
                 capture_interp(prev, cur);
             /* Captures and screenshots are of the frame as it is. */
@@ -6730,6 +6838,22 @@ void pdo_gfx_main_loop(void)
                 SDL_UnlockMutex(q_lock);
                 if (!interp)
                     continue;
+            }
+        }
+        if (!f && pair_finished(false)) {   /* paired: the new pair takes over */
+            prev = cur;
+            cur = held_next;
+            SDL_LockMutex(q_lock);
+            held_prev = prev;
+            held_cur = cur;
+            held_next = NULL;
+            SDL_UnlockMutex(q_lock);
+            if (!interp) {      /* blending went off meanwhile: shown as it is */
+                draw_frame(cur, NULL, 1.0f);
+                win_shown++;
+                SDL_LockMutex(q_lock);
+                frames_drawn++;
+                SDL_UnlockMutex(q_lock);
             }
         }
         if (!interp || !prev || !cur)
