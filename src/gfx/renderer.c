@@ -865,13 +865,18 @@ static uint32_t cpu_stand_in_draws;             /* program draws from the CPU's 
 #define SETTLE_SLOTS 4096
 static SDL_AtomicInt settled[SETTLE_SLOTS];     /* the program's place + 1 when settled */
 
+static uint32_t unsettled, settle_clashes;    /* for the log: settled programs back on the CPU, and why */
 static void settle(int32_t program, bool yes)
 {
     SDL_AtomicInt *a = &settled[(uint32_t)program % SETTLE_SLOTS];
-    if (yes)
+    if (yes) {
+        if (SDL_GetAtomicInt(a) != program + 1 && SDL_GetAtomicInt(a))
+            settle_clashes++;           /* another program's slot */
         SDL_SetAtomicInt(a, program + 1);
-    else if (SDL_GetAtomicInt(a) == program + 1)
+    } else if (SDL_GetAtomicInt(a) == program + 1) {
         SDL_SetAtomicInt(a, 0);
+        unsettled++;                    /* one of its draws has no pipeline of its own */
+    }
 }
 
 bool pdo_gfx_vsh_needs_cpu(int32_t program)
@@ -1248,9 +1253,11 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
             SDL_Log("gfx: draws by their fragment setup's own shader %u, by the interpreter %u "
                     "(shaders made %u, failed %u, to come %u); program draws from the CPU's vertices while "
                     "their pipeline is made %u; draws left out until theirs is made %u, "
-                    "on a target drawn once with theirs made in place %u", fs_spec_draws,
-                    fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped, in_place_draws);
-            cpu_stand_in_draws = async_skipped = in_place_draws = 0;
+                    "on a target drawn once with theirs made in place %u; programs back on the CPU %u "
+                    "(slots shared %u)", fs_spec_draws,
+                    fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped, in_place_draws,
+                    unsettled, settle_clashes);
+            cpu_stand_in_draws = async_skipped = in_place_draws = unsettled = settle_clashes = 0;
             last = now;
         }
         fs_spec_draws = fs_interp_draws = 0;

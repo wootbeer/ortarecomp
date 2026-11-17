@@ -2459,6 +2459,23 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             if (cpu_too)
                 fetch_vsh(p, base, stride, first, count, vbuf);
             perf_ns[PERF_VSH] += SDL_GetTicksNS() - t;
+            {   /* Why the CPU ran vertex programs, every 5 s (the battery
+                 * and the game thread's time: only some of it is needed) */
+                static uint64_t why[5], last;
+                if (cpu_too)
+                    why[type == 1 ? 0 : p->writes_constants ? 1 : !gpu_p ? 2
+                        : pdo_gfx_capturing() ? 3 : 4] += count;
+                if (pdo_gfx_frame_count() >= last + 300) {
+                    last = pdo_gfx_frame_count();
+                    if (why[0] + why[1] + why[2] + why[3] + why[4])
+                        SDL_Log("d3d: vertex-program vertices made on the CPU in 300 frames: %llu point lists, "
+                                "%llu programs that write constants, %llu with the GPU's off or unable, "
+                                "%llu for a capture, %llu while their own pipeline is made (or one of them)",
+                                (unsigned long long)why[0], (unsigned long long)why[1], (unsigned long long)why[2],
+                                (unsigned long long)why[3], (unsigned long long)why[4]);
+                    SDL_memset(why, 0, sizeof why);
+                }
+            }
         }
         pre = false;
         {   /* How many program draws also have a pixel shader (not drawn yet). */
