@@ -13,10 +13,20 @@
 static char data_dir[PDO_PATH_MAX];
 char pdo_log_file[PDO_PATH_MAX];
 
+/* Depth: 32-bit float, reversed, for precision past the console's, on PC;
+ * on Android the game's own 24 bits: with 4x MSAA a sample is half the
+ * size in the tile memory, measured a few frames a second faster on the
+ * RP6 at 2x (52 against 49), and no z-fighting seen. */
+#ifdef __ANDROID__
+#define PDO_DEPTH_REVERSED_DEFAULT false
+#else
+#define PDO_DEPTH_REVERSED_DEFAULT true
+#endif
+
 static pdo_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
                                   .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
-                                  .skip_logos = true, .rumble = 100, .touch_size = 100, .touch_opacity = 30, .hrtf = true, .depth_reversed = true, .pic_contrast = 100,
+                                  .skip_logos = true, .rumble = 100, .touch_size = 100, .touch_opacity = 30, .hrtf = true, .depth_reversed = PDO_DEPTH_REVERSED_DEFAULT, .pic_contrast = 100,
                                   .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
 
 pdo_settings *pdo_settings_get(void)
