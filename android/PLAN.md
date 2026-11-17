@@ -39,4 +39,10 @@ file dialog for the document picker, its `content://` reading for the disc image
    fails, those vertices go to the CPU. No GPU at all: a message instead of a black screen
    with sound. Already so: DXT decoded on the CPU, depth format and MSAA checked, the crash
    handler catches a driver's abort.
+   **Power check** (BattleTanx's issue 6: a game thread spinning while it waits): RP6, per-thread
+   CPU (`top -H`): title screen, the busiest game thread 18% of a core, the rest 0-7%; Pandora's
+   Box 18%; in play 39% (the frame's work) and the renderer 21%. No thread spins: the kernel's
+   yields (NtYieldExecution, a zero KeDelayExecutionThread) return at once, but no wait in Orta
+   loops on them. pd1 here: 6% on its title. The vertex/texture-hash worker pool woke all its
+   workers for every job; it now wakes only as many as there are chunks for (`src/guest/vsh.c`).
 7. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.
