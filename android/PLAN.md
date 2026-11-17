@@ -58,4 +58,15 @@ file dialog for the document picker, its `content://` reading for the disc image
    the next one, with a message. `src/android/gpu_driver/` and `GpuDriverInstaller.java` know
    nothing of the game, for snprecomp and btgarecomp (their RT64 takes the library's
    vkGetInstanceProcAddr).
+   **Turnip on the RP6** (Mesa 26, Adreno 740): 4x with 4x MSAA, FXAA, bloom high and 16x
+   filtering hold 60 fps once a stage's pipelines are made (Qualcomm's driver: 11-15 ms a
+   frame at 2x). Turnip makes a pipeline slowly (0.3 s for a setup's own, 1-1.5 s for a
+   program's own) and took 20-27 s and hundreds of MB over each of the interpreters' (ff.frag
+   as it is, or the vertex-program interpreter): several at once ran it out of memory. With a
+   custom driver (`fs_wait` in renderer.c) those are not made: a draw waits for its setup's
+   own pipeline (left out meanwhile on a target drawn again within three frames, made in place
+   on one drawn once: text, HakuX's rule), and a program without its own shader yet is drawn
+   from the CPU's vertices with the setup's own shader. Three low-priority makers, two
+   programs' at once. A stage's first visit plays slower for about ten seconds, with a
+   "Building shaders" note in the corner; everything is kept for the next start.
 7. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.
