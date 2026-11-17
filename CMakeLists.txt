@@ -299,11 +299,11 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
     # SDK's or the system's. Without any, the game builds without it.
     set(PDO_SPIRV_HEADERS "" CACHE PATH "Folder holding spirv/unified1/spirv.hpp (SPIRV-Headers' include)")
     set(PDO_SPIRV_FOUND "")
-    # Android too (as btgarecomp's Android build): the DLL chosen through the
-    # system's file picker is copied into the app's storage (overlay.c).
+    # Not on Android: on the RP6 (Adreno 740) it took the GPU 40-68 ms a
+    # frame at 1080p, more with a smaller flow scale (android/PLAN.md).
     foreach(dir "${PDO_SPIRV_HEADERS}" "${CMAKE_CURRENT_SOURCE_DIR}/external/SPIRV-Headers/include"
                 "$ENV{VULKAN_SDK}/include" "$ENV{VULKAN_SDK}/Include" "/usr/include")
-        if(NOT PDO_SPIRV_FOUND AND dir AND EXISTS "${dir}/spirv/unified1/spirv.hpp")
+        if(NOT ANDROID AND NOT PDO_SPIRV_FOUND AND dir AND EXISTS "${dir}/spirv/unified1/spirv.hpp")
             set(PDO_SPIRV_FOUND "${dir}")
         endif()
     endforeach()
@@ -320,6 +320,8 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         target_sources(pdo_host PRIVATE src/gfx/lsfg_present.cpp)
         target_compile_definitions(pdo_host PUBLIC PDO_HAVE_LSFG=1)
         target_link_libraries(pdo_host PUBLIC lsfg)
+    elseif(ANDROID)
+        message(STATUS "Orta Recomp: no Lossless Scaling frame generation on Android")
     else()
         message(STATUS "Orta Recomp: no SPIR-V headers (run git submodule update --init, or set PDO_SPIRV_HEADERS); "
                        "building without Lossless Scaling frame generation")

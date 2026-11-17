@@ -72,9 +72,16 @@ static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
 /* Android's on-screen controls (src/android/touch_controls.c). */
 static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_BACK };
+#ifdef __ANDROID__
+/* No Lossless Scaling on Android (CMakeLists.txt): frame generation is Off
+ * or our interpolation, and there is no Lossless.dll to choose. */
+static const int advanced_game[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU, ITEM_ABOUT, ITEM_BACK };
+#else
 static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
 static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU,
                                          ITEM_ABOUT, ITEM_BACK };
+#endif
 
 static bool launcher;               /* pdo_launcher_begin .. end */
 static int launcher_choice;         /* PDO_LAUNCH_* picked, 0 none yet */
@@ -179,14 +186,23 @@ static void set_open(bool on)
 
 /* Frame generation steps: off, our blending (renderer.c), Lossless
  * Scaling's at 2x, 3x, 4x (lsfg_present.cpp). */
+/* Off, our interpolation, then Lossless Scaling 2x-4x (where built). */
+#ifdef __ANDROID__
+#define FRAME_GEN_STEPS 1
+#else
+#define FRAME_GEN_STEPS 4
+#endif
+
 static int frame_gen_step(const pdo_settings *s)
 {
+    if (FRAME_GEN_STEPS == 1)
+        return s->frame_interp ? 1 : 0;
     return s->lsfg_multiplier >= 2 ? s->lsfg_multiplier : s->frame_interp ? 1 : 0;
 }
 
 static void next_frame_gen(pdo_settings *s, int dir)
 {
-    int i = SDL_clamp(frame_gen_step(s) + dir, 0, 4);
+    int i = SDL_clamp(frame_gen_step(s) + dir, 0, FRAME_GEN_STEPS);
     s->frame_interp = i == 1;
     s->lsfg_multiplier = i >= 2 ? i : 1;
 }
@@ -211,63 +227,15 @@ static void SDLCALL dll_dialog_cb(void *userdata, const char *const *files, int 
 
 static void pick_dll(void)
 {
-#ifdef __ANDROID__
-    /* The system's picker: a filter by extension would hide it (a .dll has
-     * no MIME type it knows). */
-    SDL_ShowOpenFileDialog(dll_dialog_cb, NULL, NULL, NULL, 0, NULL, false);
-#else
     static const SDL_DialogFileFilter filters[] = { { "Lossless.dll", "dll" }, { "All files", "*" } };
     SDL_ShowOpenFileDialog(dll_dialog_cb, NULL, NULL, filters, SDL_arraysize(filters), NULL, false);
-#endif
 }
-
-#ifdef __ANDROID__
-/* Android's picker hands over a content:// address, not a path the
- * frame generation can open later: the file is copied into the app's
- * storage, lossless_scaling/Lossless.dll, where it is looked for
- * (pdo_lsfg_find_dll). False, and the copy there kept, if it is not a
- * Windows DLL. */
-static bool copy_picked_dll(const char *from)
-{
-    char dir[PDO_PATH_MAX], to[PDO_PATH_MAX], tmp[PDO_PATH_MAX + 8];
-    size_t size = 0;
-    uint8_t *data = SDL_LoadFile(from, &size);
-    bool ok;
-
-    if (!data || size < 64 || data[0] != 'M' || data[1] != 'Z') {
-        SDL_Log("overlay: the chosen file is not Lossless.dll (%s)", data ? "not a DLL" : SDL_GetError());
-        SDL_free(data);
-        return false;
-    }
-    snprintf(dir, sizeof dir, "%slossless_scaling", pdo_data_dir());
-    SDL_CreateDirectory(dir);
-    snprintf(to, sizeof to, "%s/Lossless.dll", dir);
-    snprintf(tmp, sizeof tmp, "%s.tmp", to);
-    ok = SDL_SaveFile(tmp, data, size) && SDL_RenamePath(tmp, to);
-    SDL_free(data);
-    if (!ok) {
-        SDL_Log("overlay: Lossless.dll could not be copied (%s)", SDL_GetError());
-        SDL_RemovePath(tmp);
-        return false;
-    }
-    /* The translated shaders were another DLL's. */
-    snprintf(tmp, sizeof tmp, "%s/shaders.bin", dir);
-    SDL_RemovePath(tmp);
-    SDL_Log("overlay: Lossless.dll copied into the app's storage (%u KB)", (unsigned)(size / 1024));
-    return true;
-}
-#endif
 
 static void take_picked_dll(void)
 {
     if (SDL_GetAtomicInt(&dll_picked)) {
         SDL_SetAtomicInt(&dll_picked, 0);
-#ifdef __ANDROID__
-        if (copy_picked_dll(picked_dll))
-            pdo_settings_get()->lsfg_dll[0] = 0;        /* found where it was copied */
-#else
         SDL_strlcpy(pdo_settings_get()->lsfg_dll, picked_dll, sizeof pdo_settings_get()->lsfg_dll);
-#endif
         dirty = true;
         pdo_settings_save();
     }

@@ -19,9 +19,6 @@
 #include "lsfg/lsfg.hpp"
 
 #include <SDL3/SDL_vulkan.h>
-#ifdef __ANDROID__
-#include <sys/system_properties.h>
-#endif
 
 #include <algorithm>
 #include <filesystem>
@@ -102,18 +99,10 @@ void from_transfer(VkCommandBuffer cmd, VkImage image, VkImageLayout layout, VkA
 
 /* The flow scale: the size the motion is worked out at, against the
  * picture's. Lossless Scaling's own suggestion (1 up to 1080 lines);
- * PDO_LSFG_FLOW, or on Android the property debug.ortarecomp.lsfg_flow,
- * 0.25 to 1, sets it (to find what a phone's GPU can take). */
+ * PDO_LSFG_FLOW, 0.25 to 1, sets it. */
 float flow_scale(uint32_t h)
 {
     const char *e = SDL_getenv("PDO_LSFG_FLOW");
-#ifdef __ANDROID__
-    static char prop[PROP_VALUE_MAX];
-    prop[0] = 0;
-    __system_property_get("debug.ortarecomp.lsfg_flow", prop);
-    if (!e || !*e)
-        e = prop;
-#endif
     float f = e && *e ? float(SDL_atof(e)) : 0.0f;
     return f > 0.0f ? std::clamp(f, 0.25f, 1.0f) : lsfg::default_flow_scale(h);
 }
