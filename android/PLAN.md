@@ -21,8 +21,12 @@ file dialog for the document picker, its `content://` reading for the disc image
    together, under START), START and MENU (the options). Options > Controls > Touch controls: when they show (Auto
    hides them while a gamepad is connected, as on the RP6), size, opacity.
 3. **Performance** on the device: frame rate, the guest CPU lock on ARM, Display > Frame rate 30.
-4. **Lossless Scaling** (btgarecomp's Android build runs `lib/lsfg`, which builds on Android as
-   it is): the DLL picked through the file dialog and copied into the app's storage.
+4. **Lossless Scaling** (in, to try): `lib/lsfg` built for Android too, as in btgarecomp's
+   Android build. Options > Advanced > Lossless.dll opens the system's picker; the file is
+   copied into the app's storage (`lossless_scaling/Lossless.dll`, where it is looked for) and
+   its shaders are translated at the next start (some seconds, once; then `shaders.bin`).
+   Android has no present wait: the generated frames are paced by time, as on PC. btgarecomp
+   found more judder there than on PC, less at 120 Hz than at 60.
 5. **pd1** (Pandora's Box > PANZER DRAGOON; in, to try): linked in (`PD1_GEN_DIR` is the
    desktop checkout's `gen-pd1/`). Switching programs starts the app again as the PC builds
    restart theirs: `src/guest/relaunch.c` calls `OrtaActivity.restartWith`, which starts

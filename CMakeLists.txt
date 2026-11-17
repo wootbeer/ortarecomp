@@ -299,10 +299,11 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
     # SDK's or the system's. Without any, the game builds without it.
     set(PDO_SPIRV_HEADERS "" CACHE PATH "Folder holding spirv/unified1/spirv.hpp (SPIRV-Headers' include)")
     set(PDO_SPIRV_FOUND "")
-    # Not on Android yet: to come from btgarecomp's Android build.
+    # Android too (as btgarecomp's Android build): the DLL chosen through the
+    # system's file picker is copied into the app's storage (overlay.c).
     foreach(dir "${PDO_SPIRV_HEADERS}" "${CMAKE_CURRENT_SOURCE_DIR}/external/SPIRV-Headers/include"
                 "$ENV{VULKAN_SDK}/include" "$ENV{VULKAN_SDK}/Include" "/usr/include")
-        if(NOT ANDROID AND NOT PDO_SPIRV_FOUND AND dir AND EXISTS "${dir}/spirv/unified1/spirv.hpp")
+        if(NOT PDO_SPIRV_FOUND AND dir AND EXISTS "${dir}/spirv/unified1/spirv.hpp")
             set(PDO_SPIRV_FOUND "${dir}")
         endif()
     endforeach()
