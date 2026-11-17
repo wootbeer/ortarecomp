@@ -893,7 +893,7 @@ static SDL_Thread *bg_thread;               /* the first of the background maker
  * (draws wait for the interpreters' ones: those first): Turnip compiling
  * several of those large shaders at once ran the RP6 out of memory (it
  * aborted in the driver). */
-#define BG_MAX_THREADS 4
+#define BG_MAX_THREADS 2       /* 4 ran Turnip out of memory on the RP6 even with one large one */
 static uint32_t bg_programs_busy;             /* programs' pipelines being made (under bg_lock) */
 /* Pipelines a draw needs and nothing has made yet: made in the background
  * too, ahead of the rest, the draw left out until then, rather than made
