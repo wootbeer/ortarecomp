@@ -93,7 +93,9 @@ static bool frame_stale;
  * (begin_pass's seed). Storing and loading every sample at each pass
  * moved four or eight times the picture through memory, what a tiler is
  * slowest at; the seed reads it once. Edges drawn in an earlier pass go on
- * as resolved there. On by default on Android; PDO_MSAA_RESOLVE_ONLY=0/1. */
+ * as resolved there. Off: on the RP6 (Adreno 740, 2x, 4x MSAA) it made no
+ * difference to the frame rate, and storing the samples is exact.
+ * PDO_MSAA_RESOLVE_ONLY=1 (Android: debug.ortarecomp.msaa_resolve_only). */
 static bool msaa_resolve_only;
 static volatile bool paused;        /* the overlay menu holds the game */
 /* The overlay's holds, for the vblank clock (d3d_hle.c) to stop with the
@@ -2438,7 +2440,6 @@ static bool init_here(int width, int height)
         __system_property_get("debug.ortarecomp.msaa_resolve_only", prop);
         if (!e || !*e)
             e = prop;
-        msaa_resolve_only = true;
 #endif
         if (e && *e)
             msaa_resolve_only = *e == '1';
