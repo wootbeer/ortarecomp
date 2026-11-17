@@ -246,6 +246,8 @@ typedef struct pdo_fvf_uniforms {
 
 /* Reversed depth (renderer.c): the depth buffer holds 1 - z. */
 bool pdo_gfx_depth_reversed(void);
+/* Shaders are being made for draws that wait for them: the overlay's note. */
+bool pdo_gfx_building(void);
 
 enum { PDO_FVF_PRE = 1, PDO_FVF_DIFFUSE = 2, PDO_FVF_SPECULAR = 4, PDO_FVF_NORMAL = 8,
        PDO_FVF_LIT = 16, PDO_FVF_FOGTABLE = 32 };

@@ -1135,6 +1135,22 @@ static void save_pipeline_key(const pdo_pipeline_state *ps)
  * mirrored, and shadow maps are read back un-reversed (ff.frag). */
 static bool depth_rev;
 
+/* Shaders or pipelines are being made for draws that are waiting for them
+ * (left out, or on the CPU's vertices): the overlay says so. When it last
+ * was (ms, 0 never). */
+static SDL_AtomicU32 building_ms;
+
+static void note_building(void)
+{
+    SDL_SetAtomicU32(&building_ms, (Uint32)SDL_GetTicks() | 1u);
+}
+
+bool pdo_gfx_building(void)
+{
+    Uint32 t = SDL_GetAtomicU32(&building_ms);
+    return t && (Uint32)SDL_GetTicks() - t < 700;
+}
+
 bool pdo_gfx_depth_reversed(void)
 {
     return depth_rev;
@@ -3927,6 +3943,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                                 }
                             }
                             cpu_stand_in_draws++;
+                            note_building();
                         }
                     }
                 }
@@ -3946,6 +3963,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 SDL_GPUShader *sf = NULL;
                 if (target_redrawn(cur_target)) {
                     async_skipped++;
+                    note_building();
                     continue;               /* until its own setup's pipeline is made */
                 }
                 /* drawn once: its own setup's pipeline here, now */
@@ -3964,6 +3982,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     if (!pipeline_failed(&ps))
                         bg_ask_urgent(&ps);
                     async_skipped++;
+                    note_building();
                     continue;               /* left out until its pipeline is made */
                 }
             }

@@ -563,6 +563,7 @@ static bool is_link(int item)
            (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_TOUCH);
 }
 static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
+static bool building;       /* shaders are being made: a note in a corner while playing */
 
 /* Clicks and taps (src/gfx/overlay.h, pdo_overlay_set_rect): where the
  * layer is in the window, the size of a character cell on it, and where
@@ -733,6 +734,21 @@ void pdo_overlay_frame(void)
     Uint64 now = SDL_GetTicks();
 
     take_picked_dll();
+    {   /* "Building shaders" while the renderer makes them (more than half a
+         * second of it, so a single quick one shows nothing) */
+        static Uint64 since;
+        bool b = pdo_gfx_building();
+        bool show;
+        if (!b)
+            since = 0;
+        else if (!since)
+            since = now;
+        show = b && now - since >= 500;
+        if (show != building) {
+            building = show;
+            dirty = true;
+        }
+    }
 
     if (!count_start)
         count_start = now;
@@ -749,7 +765,7 @@ void pdo_overlay_frame(void)
 
 bool pdo_overlay_visible(void)
 {
-    return open_ || pdo_settings_get()->show_fps;
+    return open_ || pdo_settings_get()->show_fps || building;
 }
 
 bool pdo_overlay_blocks_input(bool any_pressed)
@@ -766,6 +782,7 @@ bool pdo_overlay_blocks_input(bool any_pressed)
 
 #define SCALE 2.0f      /* 8x8 font at 16x16 on the 640x480 image */
 #define CHAR  8.0f      /* in unscaled units: the layer is 40 x 30 of them */
+#define SMALL 0.75f     /* the FPS counter's and the shader note's size, of the menu's */
 
 /* The look: a dark panel, an amber for the title bar and what is chosen,
  * a sky blue for the rule and the bars of sliders. */
@@ -1271,14 +1288,32 @@ SDL_Surface *pdo_overlay_image(bool *changed)
         draw_controls();
     else if (open_)
         draw_menu();
-    if (pdo_settings_get()->show_fps) {
-        char buf[32];
-        SDL_FRect bg = { 0, 0, 10 * CHAR, 2 * CHAR };
-        snprintf(buf, sizeof buf, fps < 0 ? "-- fps" : "%d fps", fps);
-        SDL_SetRenderDrawColor(painter, 0, 0, 0, 160);
-        SDL_RenderFillRect(painter, &bg);
-        SDL_SetRenderDrawColor(painter, 255, 255, 0, 255);
-        text(0.5f, 0.5f, buf);
+    if (pdo_settings_get()->show_fps || (building && !open_)) {
+        /* Smaller than the menu's text (they sit over the game): drawn at
+         * SMALL of its size, so in these units the layer is wider. */
+        float sq = (4.0f / 3.0f) / pdo_widescreen_ratio();
+        float wide = cols / SMALL;              /* the layer's width in small characters */
+        SDL_SetRenderScale(painter, SCALE * SMALL * sq, SCALE * SMALL);
+        if (pdo_settings_get()->show_fps) {
+            char buf[32];
+            SDL_FRect bg = { 0, 0, 8 * CHAR, 1.75f * CHAR };
+            snprintf(buf, sizeof buf, fps < 0 ? "-- fps" : "%d fps", fps);
+            SDL_SetRenderDrawColor(painter, 0, 0, 0, 140);
+            SDL_RenderFillRect(painter, &bg);
+            SDL_SetRenderDrawColor(painter, 255, 255, 0, 255);
+            text(0.4f, 0.4f, buf);
+        }
+        if (building && !open_) {
+            static const char note[] = "Building shaders";
+            float n = (float)(sizeof note - 1);
+            float rows = 30.0f / SMALL;
+            SDL_FRect bg = { (wide - n - 0.8f) * CHAR, (rows - 1.75f) * CHAR, (n + 0.8f) * CHAR, 1.75f * CHAR };
+            SDL_SetRenderDrawColor(painter, 0, 0, 0, 110);
+            SDL_RenderFillRect(painter, &bg);
+            SDL_SetRenderDrawColor(painter, 200, 200, 200, 200);
+            text(wide - n - 0.4f, rows - 1.35f, note);
+        }
+        SDL_SetRenderScale(painter, SCALE * sq, SCALE);
     }
     SDL_FlushRenderer(painter);
     dirty = false;
