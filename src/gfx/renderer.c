@@ -851,6 +851,34 @@ typedef struct { int32_t base; uint32_t count; uint64_t key; int state; } spec_p
 static spec_prog spec_progs[SPEC_PROG_SLOTS];   /* by base; state 0 empty, 1 asked, 2 ready, -1 none */
 static uint32_t spec_draws, interp_draws;       /* GPU program draws each way, for the log */
 static uint32_t fs_spec_draws, fs_interp_draws; /* draws by their setup's own shader or ff.frag's interpreter */
+static uint32_t cpu_stand_in_draws;             /* program draws from the CPU's vertices meanwhile */
+
+/* Vertex programs (by their place in progs) whose draws all have their own
+ * shader's pipeline ready. Until then the game thread makes their vertices
+ * on the CPU as well (pdo_gfx_vsh_needs_cpu), and a draw whose pipeline is
+ * not made yet is drawn from those, not by the interpreter (vsh.vert): on
+ * phones that is many times slower, under Turnip ten times so (3-20 fps
+ * while a new boss's pipelines were made), where the CPU's are the game's
+ * own vertices, made in parallel. A slot holds one program; one that
+ * collides only makes the other unsettled again. */
+#define SETTLE_SLOTS 4096
+static SDL_AtomicInt settled[SETTLE_SLOTS];     /* the program's place + 1 when settled */
+
+static void settle(int32_t program, bool yes)
+{
+    SDL_AtomicInt *a = &settled[(uint32_t)program % SETTLE_SLOTS];
+    if (yes)
+        SDL_SetAtomicInt(a, program + 1);
+    else if (SDL_GetAtomicInt(a) == program + 1)
+        SDL_SetAtomicInt(a, 0);
+}
+
+bool pdo_gfx_vsh_needs_cpu(int32_t program)
+{
+    if (program < 0 || !pdo_vsh_spec_enabled())
+        return false;
+    return SDL_GetAtomicInt(&settled[(uint32_t)program % SETTLE_SLOTS]) != program + 1;
+}
 static uint32_t bg_made;                        /* their pipelines made in the background (bg_ask) */
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 /* Programs' own pipelines made in the background (bg_main, below). */
@@ -1150,8 +1178,10 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
             double ms;
             pdo_vsh_spec_counts(&made, &failed, &pending, &ms);
             SDL_Log("gfx: draws by their fragment setup's own shader %u, by the interpreter %u "
-                    "(shaders made %u, failed %u, to come %u)", fs_spec_draws, fs_interp_draws, made, failed,
-                    pending);
+                    "(shaders made %u, failed %u, to come %u); program draws from the CPU's vertices while "
+                    "their pipeline is made %u", fs_spec_draws, fs_interp_draws, made, failed, pending,
+                    cpu_stand_in_draws);
+            cpu_stand_in_draws = 0;
             last = now;
         }
         fs_spec_draws = fs_interp_draws = 0;
@@ -3710,6 +3740,21 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                         ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
                     else if (!fkey)
                         ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                }
+                if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                    if (ps.vsh_spec[0] || ps.vsh_spec[1]) {
+                        settle(c->vu.info[0], true);
+                    } else {
+                        settle(c->vu.info[0], false);
+                        if (c->has_cpu && pdo_vsh_spec_enabled()) {
+                            /* its own pipeline is not made yet: the CPU's vertices meanwhile */
+                            gpu = 0;
+                            ps.gpu_vsh = 0;
+                            if ((ps.fs_spec[0] || ps.fs_spec[1]) && !find_pipeline(&ps))
+                                ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                            cpu_stand_in_draws++;
+                        }
+                    }
                 }
                 if (gpu == 1) {
                     if (ps.vsh_spec[0] || ps.vsh_spec[1])

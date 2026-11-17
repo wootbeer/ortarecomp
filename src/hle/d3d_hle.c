@@ -2451,8 +2451,10 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             if (type != 1 && use_gpu_vsh(p)) {
                 gpu_p = p;
                 /* A capture keeps the CPU's vertices too, to log and to
-                 * draw the frame both ways (PDO_CAPTURE_CPUVSH). */
-                cpu_too = pdo_gfx_capturing();
+                 * draw the frame both ways (PDO_CAPTURE_CPUVSH); so does a
+                 * program whose own shader's pipelines are still being
+                 * made, drawn from them meanwhile (renderer.c, settled). */
+                cpu_too = pdo_gfx_capturing() || pdo_gfx_vsh_needs_cpu(p->gpu_program);
             }
             if (cpu_too)
                 fetch_vsh(p, base, stride, first, count, vbuf);
