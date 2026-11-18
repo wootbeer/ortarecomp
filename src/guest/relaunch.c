@@ -165,7 +165,8 @@ static void restart_on(pdo_program program, const char *data_file)
             i++;                        /* and its value */
             continue;
         }
-        if (!strcmp(a, "--boot") || !strcmp(a, "--no-boot") || !strcmp(a, "--setup") || !strcmp(a, "--check"))
+        if (!strcmp(a, "--boot") || !strcmp(a, "--no-boot") || !strcmp(a, "--setup") || !strcmp(a, "--check")
+                || !strcmp(a, "--pd1"))
             continue;
         args[n++] = a;
     }

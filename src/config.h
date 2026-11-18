@@ -98,13 +98,21 @@ void pdo_difficulty_frame(void);
 pdo_settings *pdo_settings_get(void);
 /* Write the settings, keeping the game folder the file already holds. */
 bool pdo_settings_save(void);
+/* A setting from the command line (--name value): name as in the settings
+ * file (dashes for underscores; a few aliases: scale, output, volume...),
+ * value as there. For this run only: a save keeps the file's value unless
+ * the setting was changed since. False: no such setting. */
+bool pdo_settings_set(const pdo_config *cfg, const char *name, const char *value);
 /* The settings into the log, when they differ from the last time. */
 void pdo_settings_log(void);
 
 /* Where settings, saves and imported game files live. With a portable.txt
- * next to the executable this is the executable's folder; otherwise the
- * per-user data folder. Always ends in a path separator. */
+ * next to the executable this is the executable's folder; a new player
+ * gets one made there (portable by default); a player with data in the
+ * per-user folder keeps it. Always ends in a path separator. */
 const char *pdo_data_dir(void);
+/* Which of those pdo_data_dir chose and why, for the log. */
+extern const char *pdo_data_dir_note;
 
 /* The log file this run writes, empty without one (main.c); a crash report
  * names it. */
