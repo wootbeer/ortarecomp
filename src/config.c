@@ -464,22 +464,53 @@ static const struct { const char *alias, *key; } aliases[] = {
     { "interp", "frame_interp" }, { "fps", "show_fps" }, { "save_file", "save_slot" },
 };
 
-bool pdo_settings_set(const pdo_config *cfg, const char *name, const char *value)
+/* A command line's setting name as the file's key: false if it is none of
+ * those the command line takes. */
+static bool setting_key(const char *name, char *key, size_t cap)
 {
-    char key[40], *text, val[64];
-    pdo_config scratch = *cfg;
     size_t i;
+    char *text, line[PDO_PATH_MAX + 48];
+    pdo_config none;
 
-    if (n_overrides >= MAX_OVERRIDES || strlen(name) >= sizeof key)
+    if (strlen(name) >= cap)
         return false;
     for (i = 0; name[i]; i++)
         key[i] = name[i] == '-' ? '_' : (char)SDL_tolower((unsigned char)name[i]);
     key[i] = 0;
     for (i = 0; i < SDL_arraysize(aliases); i++)
         if (strcmp(key, aliases[i].alias) == 0)
-            SDL_strlcpy(key, aliases[i].key, sizeof key);
+            SDL_strlcpy(key, aliases[i].key, cap);
     if (strcmp(key, "game_dir") == 0 || strcmp(key, "window") == 0)
         return false;               /* --game-dir; the window's place is the menu's */
+    text = SDL_malloc(CONFIG_TEXT);
+    if (!text)
+        return false;
+    SDL_zero(none);
+    line[0] = 0;
+    if (config_text(&none, text, CONFIG_TEXT) >= 0)
+        line_of(text, key, line, sizeof line);
+    SDL_free(text);
+    if (!line[0])
+        return false;
+    /* the controls' bindings (key_, pad_, mouse_) are the Controls page's */
+    if (!strncmp(key, "key_", 4) || !strncmp(key, "pad_", 4))
+        return false;
+    return strncmp(key, "mouse_", 6) != 0 || !strcmp(key, "mouse_aim") || !strcmp(key, "mouse_speed");
+}
+
+bool pdo_settings_known(const char *name)
+{
+    char key[40];
+    return setting_key(name, key, sizeof key);
+}
+
+bool pdo_settings_set(const pdo_config *cfg, const char *name, const char *value)
+{
+    char key[40], *text, val[64];
+    pdo_config scratch = *cfg;
+
+    if (n_overrides >= MAX_OVERRIDES || !setting_key(name, key, sizeof key))
+        return false;
     if (strcmp(key, "audio_3d") == 0) {     /* the values the menu shows, too */
         if (strcmp(value, "5.1") == 0)
             value = "surround";

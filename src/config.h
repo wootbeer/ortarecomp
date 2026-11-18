@@ -103,6 +103,8 @@ bool pdo_settings_save(void);
  * value as there. For this run only: a save keeps the file's value unless
  * the setting was changed since. False: no such setting. */
 bool pdo_settings_set(const pdo_config *cfg, const char *name, const char *value);
+/* Whether pdo_settings_set takes name (before the settings are loaded). */
+bool pdo_settings_known(const char *name);
 /* The settings into the log, when they differ from the last time. */
 void pdo_settings_log(void);
 
