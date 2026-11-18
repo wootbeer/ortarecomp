@@ -10,7 +10,8 @@
   folder.
 - **Command line settings:** any setting can be given when starting, for
   that run only, e.g. `--scale 4 --msaa 4 --aspect 16:9`. `--pd1` starts
-  the original Panzer Dragoon straight away. `--help` lists everything.
+  the original Panzer Dragoon straight away. `--import-iso FILE` imports a
+  disc image and says when it's done. `--help` lists everything.
 
 ### Fixed
 

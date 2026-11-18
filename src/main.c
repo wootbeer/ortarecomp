@@ -73,6 +73,8 @@ static const char help_text[] =
     "  --boot              play at once, without the launcher\n"
     "  --pd1               play the original Panzer Dragoon at once\n"
     "  --game-dir DIR      the game files in DIR, for this run\n"
+    "  --import-iso FILE   import a disc image as the game files, then exit\n"
+    "  --check             check the game files, then exit\n"
     "  --setup             the launcher, on choosing the game files\n"
     "  --log FILE          write the log into FILE\n"
     "\n"
@@ -522,7 +524,8 @@ int main(int argc, char **argv)
     if (opt.log && !open_log(opt.log, opt.launch_data != NULL))
         return 2;
 #ifdef PDO_RELEASE
-    if (!opt.log) {
+    /* --import-iso and --check answer in the terminal, not the log. */
+    if (!opt.log && !opt.import_iso && !opt.check) {
         char log[PDO_PATH_MAX], old[PDO_PATH_MAX];
         snprintf(log, sizeof log, "%sortarecomp.log", pdo_data_dir());
         snprintf(old, sizeof old, "%sortarecomp-previous.log", pdo_data_dir());
@@ -561,14 +564,19 @@ int main(int argc, char **argv)
     if (opt.import_iso) {
         char dst[PDO_PATH_MAX];
         pdo_assets_default_import_dir(dst, sizeof dst);
+        char text[PDO_PATH_MAX * 2 + 1100];
         if (!pdo_assets_import_iso(opt.import_iso, dst, cli_progress, NULL, &check, err, sizeof err)) {
-            fprintf(stderr, "import failed: %s\n", err);
+            snprintf(text, sizeof text, "Import failed: %s\n", err);
+            tell(APP_NAME, text);
             SDL_Quit();
             return 1;
         }
         SDL_strlcpy(cfg.game_dir, dst, sizeof cfg.game_dir);
         pdo_config_save(&cfg);
         report(cfg.game_dir, &check);
+        snprintf(text, sizeof text, "Imported %s.\nThe game files are in %s\nStart Orta Recomp to play.\n",
+                 opt.import_iso, dst);
+        tell(APP_NAME, text);
         SDL_Quit();
         return 0;
     }

@@ -83,7 +83,8 @@ to use your user folder instead.
 - Command line: `--boot` starts the game without the launcher, `--pd1`
   starts the original Panzer Dragoon, and any setting can be given for
   that run, e.g. `OrtaRecomp --boot --scale 4 --msaa 4 --aspect 16:9`.
-  `--help` lists them all.
+  `--import-iso FILE` imports a disc image without the launcher. `--help`
+  lists them all.
 - Needs a 64-bit PC with a Vulkan graphics driver: Windows 10/11, or
   Linux / Steam Deck; or Android 11+ (preview, below). No Visual C++
   runtime needed on Windows. Linux needs glibc 2.34 or newer (Steam Deck,
