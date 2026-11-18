@@ -539,7 +539,10 @@ int main(int argc, char **argv)
     SDL_SetAppMetadata(APP_NAME, PDO_VERSION, "io.github.ortarecomp");
     SDL_Log("%s %s (built %s), %s, %d logical cores, %d MB RAM", APP_NAME, PDO_VERSION, __DATE__,
             SDL_GetPlatform(), SDL_GetNumLogicalCPUCores(), SDL_GetSystemRAM());
-    SDL_Log("data folder: %s, %s", pdo_data_dir(), pdo_data_dir_note ? pdo_data_dir_note : "");
+    {
+        const char *dir = pdo_data_dir();      /* first: it sets the note */
+        SDL_Log("data folder: %s, %s", dir, pdo_data_dir_note ? pdo_data_dir_note : "");
+    }
 
     if (!SDL_Init(opt.check || opt.import_iso ? 0 : SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
