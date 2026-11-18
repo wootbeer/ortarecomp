@@ -1,6 +1,6 @@
 # Current state
 
-v0.1.12 (beta, Windows and Linux/Steam Deck; Android in progress, `android/`): Panzer Dragoon Orta plays
+v0.1.13 (beta, Windows and Linux/Steam Deck; Android a preview, `android/`): Panzer Dragoon Orta plays
 through all ten episodes and the ending, with music, movies, saves, bosses
 and Pandora's Box, the original Panzer Dragoon included. Changes are
 listed in `CHANGELOG.md`.
@@ -92,7 +92,7 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    on the RP6 with Turnip, 4x with 4x MSAA holds 60 fps, and interpolation
    at 120 Hz mostly holds 120 (the vertex pre-pass, PDO_VOUT). Lossless Scaling
    was tried and taken out (too slow on Adreno). The game file picker now
-   draws in the launcher's window. Signing and the version are in. Next: the APK on the release; then which of the
+   draws in the launcher's window. Released with v0.1.13 (a preview). Next: which of the
    Android renderer work helps on PC (setups' own fragment shaders,
    background pipelines, the CPU stand-in), and later Concept of Love.
 6. Gunfire (issue 15): the mixbins' -6 dB headroom, the reverb send by

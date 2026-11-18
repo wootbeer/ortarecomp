@@ -2,8 +2,8 @@
 
 You will need the game files from a licensed copy in order to play it.
 
-A native PC port of Panzer Dragoon Orta, made by statically recompiling the
-Xbox game with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp), with
+A native PC and Android port of Panzer Dragoon Orta, made by statically
+recompiling the Xbox game with [xboxrecomp](https://github.com/sp00nznet/xboxrecomp), with
 graphics, audio and input of its own on [SDL 3](https://libsdl.org).
 
 Unofficial, and not affiliated with the rights holders. **No game data is
@@ -13,7 +13,7 @@ included.** You need your own copy of the game to play this.
 interpolation (smooth motion above 60 fps). If something looks wrong, turn
 Frame interp. off in F1 > Advanced and see if it goes away, then report it.
 
-Android build is planned.
+Available for Windows, Linux / Steam Deck and Android (preview).
 
 ## Features
 
@@ -29,8 +29,8 @@ Android build is planned.
   up to 16x.
 - **Smooth motion:** frame interpolation above 60 fps for high refresh rate
   displays (beta), or Lossless Scaling's frame generation with your own copy
-  of Lossless Scaling (experimental). On a weak PC, a steady 30 fps (Display >
-  Frame rate) with the game at full speed.
+  of Lossless Scaling (PC only, experimental). On a weak device, a steady
+  30 fps (Display > Frame rate) with the game at full speed.
 - **Color correction:** brightness, contrast, gamma and saturation, a CRT
   look, optional TV softening, and bloom (Low or High) that leaves the HUD
   alone.
@@ -39,15 +39,21 @@ Android build is planned.
   the console; or a simple pan), the movies' own 5.1 soundtracks, the
   game's room reverb and a master volume.
 - **Controls:** controllers (with vibration), keyboard and mouse (with
-  mouse aim), every button rebindable.
+  mouse aim), touch controls on Android, every button rebindable. Menus
+  work with mouse and touch too.
 - **Three save files** (the original keeps one), picked in the launcher.
 - **The original Panzer Dragoon:** Pandora's Box > APPENDIX > PANZER
   DRAGOON plays the 1995 game from the Orta disc, recompiled as well, and
   its EXIT comes back to Orta.
+- **Android:** the same game and options as PC. Supports custom GPU
+  drivers (like Turnip on Snapdragon).
+- **Shader cache:** shaders are built while you play the first time and
+  saved for next time.
 - **Extras:** open every Pandora's Box item without touching your save,
   skip the boot logos or the launcher, an FPS counter, fullscreen (Alt+Enter), portable
   mode.
 - **Easy setup:** point the launcher at your disc image or game folder.
+  No runtimes to install.
 - **Crash and freeze reports** written to a log, to attach to bug reports.
 
 ## Game Files
@@ -73,7 +79,9 @@ want to save settings, saves and game files locally.
 - Alt+Enter: fullscreen.
 - Save file 1, 2 or 3 is picked in the launcher before starting.
 - Needs a 64-bit PC with a Vulkan graphics driver: Windows 10/11, or
-  Linux / Steam Deck.
+  Linux / Steam Deck; or Android 11+ (preview, below). No Visual C++
+  runtime needed on Windows. Linux needs glibc 2.34 or newer (Steam Deck,
+  Ubuntu 22.04 and newer are fine).
 
 ## Frame Generation
 
@@ -103,6 +111,18 @@ Nothing from Lossless Scaling is in this repository or a release.
   the launcher and the F1 menu work with the Deck's controls (View + Menu
   opens the menu in game).
 
+## Android (preview)
+
+- Install the APK from the release. Needs Android 11+ (64-bit) with Vulkan.
+- Choose Game files in the launcher and pick your disc image. It gets
+  copied into the app, so you can delete the image after.
+- Controller or touch controls. Back + Start or Android's Back button opens
+  the menu.
+- Snapdragon devices: Turnip is usually faster. Download a Turnip zip and
+  pick it in Options > Advanced > GPU driver. If it crashes, the app goes
+  back to the normal driver.
+- To report an issue: long-press the app icon > Share log.
+
 ## Reporting Issues
 
 Every run writes `ortarecomp.log` to the data folder
@@ -121,13 +141,15 @@ See [BUILDING.md](BUILDING.md).
 
 Known:
 - Beta status. Played through on Windows; Linux and Steam Deck are less
-  tested so far.
+  tested so far, and Android (a preview) has been tested on one device.
 - Frame interpolation can show odd frames in some scenes.
-- The first time an effect appears it can stutter once while its shaders are
-  built; they are kept for next time.
+- The first time you play a scene it can be slow for a few seconds while
+  shaders build ("Building shaders" shows in the corner). After that they're
+  saved. New versions rebuild them once.
 - The original Panzer Dragoon: the window closes and opens again when
-  switching to it or back. It runs at 20 fps, as on the console (Lossless
-  Scaling's frame generation can smooth it), and draws its own 640x480
+  switching to it or back (on Android the app restarts). It runs at 20 fps,
+  as on the console (Lossless Scaling's frame generation can smooth it), and
+  draws its own 640x480
   picture, so most Display options do not change it.
 - USA version only.
 - Switching between 4:3 and widescreen takes effect the next time the game
@@ -147,6 +169,8 @@ Else:
   frame generation
 - [SPIRV-Headers](https://github.com/KhronosGroup/SPIRV-Headers) (MIT), for
   building that
+- [libadrenotools](https://github.com/bylaws/libadrenotools) (BSD-2-Clause):
+  custom GPU drivers on Android
 - [glslang](https://github.com/KhronosGroup/glslang) (BSD and others, see
   its license): the game's vertex programs made into GPU shaders of their own
 

@@ -1,5 +1,35 @@
 # Changelog
 
+## v0.1.13 (beta)
+
+### Added
+
+- **Android (preview):** an APK for Android 11+ with Vulkan. Touch
+  controls, controller support, the original Panzer Dragoon, and custom GPU
+  drivers like Turnip (Options > Advanced > GPU driver). Tested on a
+  Retroid Pocket 6.
+- Mouse and touch work in the menus and launcher.
+- Options > Advanced > About.
+- A small "Building shaders" note while new shaders are being built.
+
+### Changed
+
+- **Smoother first runs:** shaders build in the background, and the
+  graphics driver's compiled shaders are saved too, so scenes you've seen
+  start smooth. Shaders rebuild once with this version.
+- **AMD on Windows:** the dragon's wings (and other models) no longer
+  disappear for a moment the first time a stage plays.
+- **Frame interpolation is much lighter:** 144 fps at 4x on a mid-range
+  GPU.
+- Less CPU and video memory used overall. Better for handhelds and battery.
+- GPUs missing some features (some older Android ones) now run.
+- Menu: Picture and Bloom moved to Display, Show FPS to Advanced. Smaller
+  FPS counter.
+
+### Fixed
+
+- A `Lossless.dll` picked in the launcher wasn't used.
+
 ## v0.1.12 (beta)
 
 ### Fixed
