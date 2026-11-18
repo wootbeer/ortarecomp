@@ -148,6 +148,12 @@ static bool parse_args(int argc, char **argv, options *o)
                 o->set_name[o->n_set] = name;
                 o->set_value[o->n_set] = i + 1 < argc && strncmp(argv[i + 1], "--", 2) != 0 ? argv[++i] : "1";
             }
+            if (!pdo_settings_known(o->set_name[o->n_set])) {
+                char text[300];
+                snprintf(text, sizeof text, "unknown argument: --%s\n(--help lists them)\n", o->set_name[o->n_set]);
+                tell(APP_NAME, text);
+                return false;
+            }
             o->n_set++;
         } else {
             char text[300];
