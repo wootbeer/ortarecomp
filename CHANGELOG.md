@@ -1,5 +1,12 @@
 # Changelog
 
+## v0.1.15 (beta)
+
+### Fixed
+
+- **A random crash on some graphics drivers** (seen on Intel HD 620): saving
+  the driver's shader cache while new shaders were being built (issue 28).
+
 ## v0.1.14 (beta)
 
 ### Added

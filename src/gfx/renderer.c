@@ -346,11 +346,23 @@ static bool gpu_depth_clamp = true, gpu_anisotropy = true;
  * kind go to the CPU from then on (pdo_gfx_vertex_shader_failed). */
 static bool gpu_vsh_failed, gpu_fvf_failed;
 
+/* Pipelines are made under it for reading (any number at once), and the
+ * driver's pipeline cache is read out for saving under it for writing:
+ * Intel's Windows driver (HD 620) crashed in vkGetPipelineCacheData while
+ * another thread made a pipeline into the same cache (issue 28). Made in
+ * vkcache_load, before any pipeline; NULL (no locking) without a cache. */
+static SDL_RWLock *vkcache_lock;
+
 static SDL_GPUGraphicsPipeline *create_pipeline(SDL_GPUGraphicsPipelineCreateInfo *pi)
 {
+    SDL_GPUGraphicsPipeline *p;
+
     if (!gpu_depth_clamp)
         pi->rasterizer_state.enable_depth_clip = true;
-    return SDL_CreateGPUGraphicsPipeline(dev, pi);
+    SDL_LockRWLockForReading(vkcache_lock);
+    p = SDL_CreateGPUGraphicsPipeline(dev, pi);
+    SDL_UnlockRWLock(vkcache_lock);
+    return p;
 }
 
 /* The device: first with what SDL asks for except clip distances and
@@ -1557,6 +1569,8 @@ static void vkcache_load(void)
     vkcache_file(path, sizeof path);
     data = SDL_LoadFile(path, &size);
     vkcache_on = PDO_SetGPUVulkanPipelineCache(dev, data, data ? size : 0);
+    if (vkcache_on && !vkcache_lock)
+        vkcache_lock = SDL_CreateRWLock();
     if (vkcache_on)
         SDL_Log("gfx: driver pipeline cache: %s (%zu KB)", data ? "loaded" : "new", size / 1024);
     SDL_free(data);
@@ -1569,10 +1583,13 @@ static int SDLCALL vkcache_save_main(void *unused)
     void *buf;
 
     (void)unused;
+    SDL_LockRWLockForWriting(vkcache_lock);     /* no pipeline being made meanwhile */
     n = PDO_GetGPUVulkanPipelineCacheData(dev, NULL, 0);
     buf = n ? SDL_malloc(n) : NULL;
-    if (buf) {
+    if (buf)
         n = PDO_GetGPUVulkanPipelineCacheData(dev, buf, n);
+    SDL_UnlockRWLock(vkcache_lock);
+    if (buf) {
         vkcache_file(path, sizeof path);
         snprintf(tmp, sizeof tmp, "%s.tmp", path);
         if (n && SDL_SaveFile(tmp, buf, n) && SDL_RenamePath(tmp, path))
@@ -3710,7 +3727,13 @@ static int SDLCALL comp_main(void *unused)
         ci.threadcount_z = 1;
         SDL_UnlockMutex(comp_lock);
         t0 = SDL_GetTicksNS();
+        SDL_LockRWLockForReading(vkcache_lock);    /* see create_pipeline */
         p = SDL_CreateGPUComputePipeline(dev, &ci);
+        SDL_UnlockRWLock(vkcache_lock);
+        if (p) {                /* into the driver's cache too: saved when none for a while */
+            vkcache_adds++;
+            vkcache_last_add_ns = SDL_GetTicksNS();
+        }
         if (!p)
             SDL_Log("gfx: vertex program %016llx: no compute pipeline (%s)", (unsigned long long)c->vkey,
                     SDL_GetError());
