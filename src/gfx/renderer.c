@@ -948,7 +948,7 @@ static SDL_GPUShader *spec_shader_of(uint64_t key)
             return spec_shaders[i].s;
     if (!pdo_vsh_spec_find(key, &spv, &bytes))
         return NULL;
-    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 2, 5);
+    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 5);
     if (!sh) {
         SDL_Log("gfx: vertex program %016llx: no shader (%s)", (unsigned long long)key, SDL_GetError());
         return NULL;
@@ -2882,7 +2882,7 @@ static bool init_here(int width, int height)
     vs = make_shader(ff_vert_spv, sizeof ff_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs = make_shader(ff_frag_spv, sizeof ff_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
     fs_ps = make_shader(ff_ps_frag_spv, sizeof ff_ps_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
-    vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 2, 5);
+    vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 5);
     if (!vsh_vs)
         SDL_Log("gfx: no GPU vertex programs (%s); they run on the CPU", SDL_GetError());
     fvf_vs = make_shader_sb(fvf_vert_spv, sizeof fvf_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
@@ -3851,7 +3851,7 @@ static const frame_data *consts_f, *consts_p;
 
 static void push_consts(SDL_GPUCommandBuffer *cmd, const command *c, float t)
 {
-    static float k[384][4];
+    static float k[192][4], kp[192][4];
     int32_t cur = c->vu.info[2], prev = P && t < 1.0f ? c->vu.interp[0] : -1;
 
     if (cur < 0 || (uint32_t)cur + 192 > F->nvconsts)
@@ -3861,10 +3861,11 @@ static void push_consts(SDL_GPUCommandBuffer *cmd, const command *c, float t)
     if (consts_pushed && cur == consts_cur && prev == consts_prev && consts_f == F
         && consts_p == (prev >= 0 ? P : NULL))
         return;
-    memcpy(k, F->vconsts[cur], 192 * sizeof k[0]);
-    if (prev >= 0)
-        memcpy(k + 192, P->vconsts[prev], 192 * sizeof k[0]);
+    /* Two pushes of 3 KiB: SDL binds 4 KiB of a uniform block. */
+    memcpy(k, F->vconsts[cur], sizeof k);
+    memcpy(kp, prev >= 0 ? P->vconsts[prev] : F->vconsts[cur], sizeof kp);
     SDL_PushGPUVertexUniformData(cmd, 1, k, sizeof k);
+    SDL_PushGPUVertexUniformData(cmd, 2, kp, sizeof kp);
     consts_pushed = true;
     consts_cur = cur;
     consts_prev = prev;

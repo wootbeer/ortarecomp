@@ -28,7 +28,11 @@ layout(set = 0, binding = 4, std430) readonly buffer PrevConstants { vec4 pcbuf[
 // blending), pushed with each draw (renderer.c, push_consts): read from a
 // uniform block at fixed places, not from the frame's whole storage buffer
 // (cbuf, pcbuf: bound still, unread) -- a phone GPU keeps them on chip.
-layout(set = 1, binding = 1, std140) uniform Consts { vec4 kc[192]; vec4 kp[192]; };
+// Two blocks of 3 KiB: SDL binds a uniform block 4 KiB wide (one of 6 KiB
+// read the earlier frame's constants past its end, and vertices flew in
+// the in-between frames).
+layout(set = 1, binding = 1, std140) uniform Consts { vec4 kc[192]; };
+layout(set = 1, binding = 2, std140) uniform PrevConsts { vec4 kp[192]; };
 
 layout(set = 1, binding = 0, std140) uniform Draw {
     ivec4 info;          // program base (uvec4 units), instructions, constant base (vec4 units),
