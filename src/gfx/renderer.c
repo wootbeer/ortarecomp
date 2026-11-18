@@ -1223,6 +1223,11 @@ static void warm_pipelines(void)
                     bg_ask(&ps, sv, sf, false);
                 continue;
             }
+            if (fs_wait)
+                continue;   /* the fragment interpreter's: with a custom driver only made when a
+                               draw needs one (saved under the phone's own driver, Turnip took
+                               10-20 s and much memory over each, 158 at once, and the app was
+                               killed) */
             if (pipelines_async)
                 bg_ask(&ps, NULL, NULL, false);     /* the game starts meanwhile */
             else
