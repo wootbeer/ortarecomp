@@ -79,5 +79,6 @@ file dialog for the document picker, its `content://` reading for the disc image
    program and render state. The scene pass was vertex work (as slow cut to one pixel and at
    1.5x). Qualcomm's own driver reaches 61-80 interpolating (its submits are slow): 60 there.
 7. **Release**: the disc image picker (Game files in the launcher) draws in the launcher's
-   window, its dialogs over it, instead of a window of its own (all platforms). Signing (in:
-   `keystore.properties`), `versionCode`, the APK on the GitHub release beside the PC downloads.
+   window, its dialogs over it, instead of a window of its own (all platforms). Signing
+   (`keystore.properties`) and the version (CMakeLists.txt's: 0.1.12 is versionCode 112) are
+   in. Left: the APK on the GitHub release beside the PC downloads.
