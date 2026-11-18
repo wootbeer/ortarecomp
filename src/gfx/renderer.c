@@ -3998,7 +3998,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                  * with the setup's own shader (Turnip took 27 s over one). */
                 stand_in = gpu == 1 && c->vu.prev_prog[1] == 0 && !vkey && c->has_cpu
                            && pdo_vsh_spec_enabled();
-                if ((vkey || fkey) && !find_pipeline(&ps) && !(fs_wait && stand_in)) {
+                if ((vkey || fkey) && !find_pipeline(&ps) && !(fs_wait && (stand_in || (gpu == 1 && !vkey)))) {
                     if (!pipeline_failed(&ps)) {
                         if (fs_wait && !svs)
                             bg_ask_front(&ps, NULL, sfs);
@@ -4050,6 +4050,15 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                     fs_spec_draws++;
                 else
                     fs_interp_draws++;
+            }
+            if (fs_wait && gpu == 1 && !ps.vsh_spec[0] && !ps.vsh_spec[1] && !find_pipeline(&ps)) {
+                /* No pipeline of the vertex interpreter's with a custom
+                 * driver (Turnip took 20 s and hundreds of MB over each;
+                 * a particle effect's ran the RP6 out of memory): a draw
+                 * without the CPU's vertices waits for its program's own. */
+                async_skipped++;
+                note_building();
+                continue;
             }
             if (fs_wait && own_fs && !ps.fs_spec[0] && !ps.fs_spec[1] && !find_pipeline(&ps)) {
                 uint64_t fk = 0;
@@ -4968,7 +4977,9 @@ static int cmp_key(const void *a, const void *b)
  * their source known (pdo_gfx_set_draw_source). */
 static bool blendable(const command *c)
 {
-    return c->kind == CMD_DRAW && c->id_src;
+    /* Not a point list (particles): never blended as the CPU made them,
+     * and paired on the GPU, many alike made pairing take 17-23 ms. */
+    return c->kind == CMD_DRAW && c->id_src && !(c->vsh && c->vu.blend_t[1] != 0.0f);
 }
 
 /* A 3D draw: by a vertex program, or fixed-function not pretransformed --
