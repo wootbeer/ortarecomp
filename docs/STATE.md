@@ -89,7 +89,8 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    thread is busy.
 5. Android (`android/`, `android/PLAN.md`): touch controls, pd1, other
    GPUs' fallbacks and a custom GPU driver (Turnip, libadrenotools) are in;
-   on the RP6 with Turnip, 4x with 4x MSAA holds 60 fps. Lossless Scaling
+   on the RP6 with Turnip, 4x with 4x MSAA holds 60 fps, and interpolation
+   at 120 Hz mostly holds 120 (the vertex pre-pass, PDO_VOUT). Lossless Scaling
    was tried and taken out (too slow on Adreno). Next: the setup screen in
    the launcher's window, release signing and the APK; then which of the
    Android renderer work helps on PC (setups' own fragment shaders,

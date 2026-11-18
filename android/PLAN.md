@@ -69,4 +69,13 @@ file dialog for the document picker, its `content://` reading for the disc image
    from the CPU's vertices with the setup's own shader. Three low-priority makers, two
    programs' at once. A stage's first visit plays slower for about ten seconds, with a
    "Building shaders" note in the corner; everything is kept for the next start.
+   **Interpolating at 120 Hz** (Turnip, 2x): 120 most of the time, 91-102 in the busiest moments,
+   no longer falling back to 60. What it took: pairing on a thread of its own; Android always in
+   step with the screen (Fast/Off made frames never shown); particles (point lists) made on the
+   GPU; constants in uniform blocks (two of 3 KiB: SDL binds 4 KiB); and the vertex pre-pass
+   (renderer.c, vout_prepass): each program's vertices made once a game frame by a compute shader
+   of its own (vsh.vert with PDO_VSH_COMPUTE), the draws reading them (vout.vert) and blending
+   them with the frame before's. One compute pipeline a program instead of a graphics pipeline a
+   program and render state. The scene pass was vertex work (as slow cut to one pixel and at
+   1.5x). Qualcomm's own driver reaches 61-80 interpolating (its submits are slow): 60 there.
 7. **Release**: signing, `versionCode`, the APK on the GitHub release beside the PC downloads.
