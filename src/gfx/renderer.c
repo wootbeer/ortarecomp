@@ -1058,6 +1058,7 @@ static int fs_shader_state(uint64_t key)
  * with a custom driver; PDO_FS_WAIT=1/0 (or debug.ortarecomp.fs_wait) to
  * choose. */
 static bool fs_wait;
+static bool fs_wait_chosen;     /* PDO_FS_WAIT (or the property) given: kept as it says */
 
 static uint64_t fs_key_of(const pdo_ff_uniforms *u, bool combiners, SDL_GPUShader **sh)
 {
@@ -1385,6 +1386,19 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
             SDL_Log("gfx: a pipeline took %.0f ms to make here: the ones draws need are made in the "
                     "background from now on, the draw left out until then", (double)dt / 1e6);
         }
+        /* A driver this slow is slower still over the interpreters'
+         * pipelines (AMD's on Windows: 7 s over each of the vertex
+         * interpreter's, the dragon's wings left out meanwhile; its
+         * setups' own 0.3-0.6 s): as with a custom driver on Android, draws
+         * wait for their own instead. Set once, before the pairing thread
+         * reads it again. */
+#ifndef __ANDROID__    /* there: chosen by the driver at start */
+        if (dt > 50000000ull && !fs_wait && !fs_wait_chosen) {
+            fs_wait = true;
+            SDL_Log("gfx: draws wait for their fragment setup's own pipeline from now on (no "
+                    "interpreter's in between: this driver makes pipelines slowly)");
+        }
+#endif
     }
     return p;
 }
@@ -2890,8 +2904,10 @@ static bool init_here(int width, int height)
             e = prop;
         fs_wait = pdo_android_gpu_driver_custom();
 #endif
-        if (e && *e)
+        if (e && *e) {
             fs_wait = *e == '1';
+            fs_wait_chosen = true;
+        }
         if (fs_wait)
             SDL_Log("gfx: draws wait for their fragment setup's own pipeline (no interpreter's in between)");
     }
