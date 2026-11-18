@@ -625,9 +625,15 @@ void sub_002C12AE(void)
  * .aix (src/audio/aix.c) and overwrite each chunk CRI unlocks with the same
  * stretch of the soundtrack: CRI still paces the writes to the picture. A
  * chunk at the offset CRI wrote last is a rewrite of it (CRI locks each
- * chunk twice); any other is the next stretch. */
+ * chunk twice); any other is the next stretch.
+ * Each stream is taken by the first buffer routed to it after the movie
+ * starts, and by no other: nothing says when the movie ends, and in play
+ * the game's voices go to the centre (mixbin 2) too. Taken by any buffer
+ * routed there, they were overwritten with the movie's centre channel
+ * after it ended: no voices in episode 1 after the opening (issue 37). */
 static pdo_aix movie_aix;
 static struct { uint32_t buf; int stream; uint32_t last_off, last_pos, last_frames; bool any; } movie_out[4];
+static bool movie_taken[3];     /* the stream has had its buffer this movie */
 
 static bool test_ac3(void)
 {
@@ -643,6 +649,7 @@ static void movie51_start(uint32_t name_va)
 
     pdo_aix_free(&movie_aix);
     memset(movie_out, 0, sizeof movie_out);
+    memset(movie_taken, 0, sizeof movie_taken);
     if (!name_va)
         return;
     while (n + 1 < sizeof name && MEM8(name_va + n))
@@ -680,6 +687,8 @@ static void movie51_route(uint32_t buf, uint32_t first_bin)
             slot = i;
     if (slot < 0)
         return;
+    if (movie_out[slot].buf != buf && movie_taken[stream])
+        return;                     /* not the movie's: the game's own sound */
     if (movie_out[slot].buf != buf || movie_out[slot].stream != stream)
         SDL_Log("dsound: 5.1 movie buffer 0x%08x plays soundtrack stream %d", buf, stream);
     else
@@ -687,6 +696,7 @@ static void movie51_route(uint32_t buf, uint32_t first_bin)
     memset(&movie_out[slot], 0, sizeof movie_out[slot]);
     movie_out[slot].buf = buf;
     movie_out[slot].stream = stream;
+    movie_taken[stream] = true;
 }
 
 static void movie51_forget(uint32_t buf)

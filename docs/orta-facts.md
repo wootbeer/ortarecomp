@@ -277,6 +277,10 @@ virtual addresses in the USA `default.xbe`.
   quad (0x0006A0A8). We show the picture's rectangle alone, its size from
   the .sfd's sequence header and placed through the quad's texture
   coordinates, when nothing but a fade is drawn over it.
+- 5.1 soundtracks (opening_bs, ins1_bs, ins2_bs .aix): CRI routes one
+  stereo buffer per stream (front to mixbin 0, back to 4, centre/LFE to 2)
+  as the movie starts. Nothing marks the movie's end, and in play with 5.1
+  output the game routes its voices to mixbin 2 as well (issue 37).
 
 ## Widescreen
 

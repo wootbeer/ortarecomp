@@ -28,6 +28,8 @@
 
 ### Fixed
 
+- **Voices missing with 5.1 sound** after the opening movie and other
+  movies with 5.1 audio: they were replaced by the movie's sound (issue 37).
 - A `Lossless.dll` picked in the launcher wasn't used.
 
 ## v0.1.12 (beta)
