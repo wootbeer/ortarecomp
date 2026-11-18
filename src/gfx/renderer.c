@@ -1790,6 +1790,8 @@ typedef struct gtex {
     uint64_t staged_in;     /* hand_over: number of the frame with an upload of it
                                (a number: frame_datas are reused, addresses repeat) */
     uint64_t last_used;
+    uint32_t stable;        /* check_textures: frames its full hash has not changed */
+    uint64_t sample;        /* ... and the hash of a few samples of it, the last frame */
     uint32_t w, h;
     int      bc;            /* 1-3: DXT1/3/5 kept as BC1-BC3 on the GPU, not decoded (bc_textures) */
     SDL_GPUTexture *tex;
@@ -2173,6 +2175,8 @@ static struct tex_check {
     pdo_xtex_info  info;
     uint32_t       levels, bytes;
     uint64_t       hash;
+    uint64_t       sample;  /* a few samples' hash (check_textures) */
+    bool           skip;    /* not hashed in full this frame: stable, samples as before */
 } *checks;
 static uint32_t nchecks, cap_checks;
 
@@ -2303,12 +2307,43 @@ static void hash_blocks(void *ctx, uint32_t first, uint32_t end)
 /* Hash this frame's textures (in parallel: on the game thread it was a
  * large share of the frame), then decode the ones that changed into
  * *staging and note their uploads. */
+/* Four samples of 1 KB across a texture's bytes (its start, thirds, end). */
+static uint64_t sample_hash(const uint8_t *p, uint32_t n)
+{
+    uint32_t k = n < 1024 ? n : 1024;
+    uint64_t h = hash_bytes(p, k);
+    if (n > 4096) {
+        h = rotl64(h, 23) ^ hash_bytes(p + (n / 3 & ~15u), k);
+        h = rotl64(h, 23) ^ hash_bytes(p + (2 * (n / 3) & ~15u), k);
+        h = rotl64(h, 23) ^ hash_bytes(p + n - k, k);
+    }
+    return h;
+}
+
+/* A texture whose full hash has not changed for STABLE_FRAMES frames is
+ * hashed in full one frame in four (its own, staggered), and every frame
+ * only four samples of it: when they change it is hashed in full at once.
+ * A texture loaded over another rewrites the samples; a small change
+ * inside a long-stable texture is seen within four frames. Every texture
+ * every frame was hundreds of MB of the game's memory read a second
+ * (the battery, on a phone). PDO_TEX_ALWAYS=1 still checks everything. */
+#define STABLE_FRAMES 120
+
 static void check_textures(uint8_t **staging, uint32_t *staging_len, uint32_t *staging_cap,
                            pending_upload *ups, int *nups)
 {
+    static uint32_t round;
+
+    round++;
     nblocks = 0;
+    for (uint32_t i = 0; i < nchecks; i++) {
+        gtex *g = checks[i].g;
+        checks[i].sample = checks[i].bytes ? sample_hash(checks[i].src, checks[i].bytes) : 0;
+        checks[i].skip = g->uploaded && !tex_always && g->stable >= STABLE_FRAMES
+                         && checks[i].sample == g->sample && ((round + (uint32_t)(g - textures)) & 3u) != 0;
+    }
     for (uint32_t i = 0; i < nchecks; i++)
-        for (uint32_t o = 0; o < checks[i].bytes; o += HASH_BLOCK) {
+        for (uint32_t o = 0; o < checks[i].bytes && !checks[i].skip; o += HASH_BLOCK) {
             blocks = grow(blocks, &cap_blocks, nblocks + 1, sizeof *blocks);
             blocks[nblocks].check = i;
             blocks[nblocks].offset = o;
@@ -2321,6 +2356,16 @@ static void check_textures(uint8_t **staging, uint32_t *staging_len, uint32_t *s
     for (uint32_t b = 0; b < nblocks; b++) {     /* in order, per texture */
         uint64_t *h = &checks[blocks[b].check].hash;
         *h = rotl64(*h, 23) * 0x9E3779B97F4A7C15ull ^ blocks[b].hash;
+    }
+    for (uint32_t i = 0; i < nchecks; i++) {
+        gtex *g = checks[i].g;
+        if (checks[i].skip)
+            checks[i].hash = g->hash;           /* as it was */
+        else if (g->uploaded && checks[i].hash == g->hash)
+            g->stable += g->stable < STABLE_FRAMES;
+        else
+            g->stable = 0;
+        g->sample = checks[i].sample;
     }
     for (uint32_t i = 0; i < nchecks; i++) {
         gtex *g = checks[i].g;
