@@ -13,7 +13,7 @@ included.** You need your own copy of the game to play this.
 interpolation (smooth motion above 60 fps). If something looks wrong, turn
 Frame interp. off in F1 > Advanced and see if it goes away, then report it.
 
-Android build is planned.
+An Android version (preview) is in each release as an APK.
 
 ## Features
 
@@ -73,7 +73,7 @@ want to save settings, saves and game files locally.
 - Alt+Enter: fullscreen.
 - Save file 1, 2 or 3 is picked in the launcher before starting.
 - Needs a 64-bit PC with a Vulkan graphics driver: Windows 10/11, or
-  Linux / Steam Deck.
+  Linux / Steam Deck; or Android (preview, below).
 
 ## Frame Generation
 
@@ -103,6 +103,23 @@ Nothing from Lossless Scaling is in this repository or a release.
   the launcher and the F1 menu work with the Deck's controls (View + Menu
   opens the menu in game).
 
+## Android (preview)
+
+- Install the `android.apk` from the release (allow installing from your
+  browser or file manager). 64-bit Android 11 or later with a Vulkan GPU.
+- In the launcher, choose Game files and pick your disc image. Its files are
+  copied into the app's storage, so the image can be deleted afterwards.
+- A controller works as on PC (Back + Start opens the menu); without one,
+  on-screen touch controls show (Options > Controls > Touch controls).
+  Android's Back button opens the menu too.
+- On Adreno (Snapdragon) GPUs, Mesa's Turnip driver is usually faster:
+  download a Turnip release zip and choose it in Options > Advanced > GPU
+  driver. It is used from the next start, and the phone's own driver comes
+  back by itself if it crashes.
+- The first visit to each stage plays slower for a few seconds while its
+  shaders are made ("Building shaders" in the corner); they are kept.
+- To report an issue, long-press the app icon and choose Share log.
+
 ## Reporting Issues
 
 Every run writes `ortarecomp.log` to the data folder
@@ -121,7 +138,7 @@ See [BUILDING.md](BUILDING.md).
 
 Known:
 - Beta status. Played through on Windows; Linux and Steam Deck are less
-  tested so far.
+  tested so far, and Android (a preview) has been tested on one device.
 - Frame interpolation can show odd frames in some scenes.
 - The first time an effect appears it can stutter once while its shaders are
   built; they are kept for next time.

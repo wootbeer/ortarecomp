@@ -1,5 +1,48 @@
 # Changelog
 
+## v0.1.13 (beta)
+
+### Added
+
+- Android (preview): an APK for 64-bit Android 11 and later with a Vulkan
+  GPU, tested on a Retroid Pocket 6 (Snapdragon). On-screen touch
+  controls (hidden while a controller is connected), the original Panzer
+  Dragoon from Pandora's Box, and a custom GPU driver (Mesa's Turnip on
+  Adreno) chosen in Options > Advanced > GPU driver, with the phone's own
+  driver back after a crash. The app's "Share log" shortcut sends the log.
+- The options menu and the launcher take mouse clicks and taps.
+- Options > Advanced > About.
+- A small "Building shaders" note in the corner while a scene's new
+  shaders are made, so a slow moment the first time has a reason shown.
+
+### Changed
+
+- The graphics driver's compiled pipelines are kept between runs
+  (`pipelines.vkcache` in the data folder): a scene seen before starts
+  smooth. Shaders are made again once with this version.
+- Each texture-stage setup is made into a GPU shader of its own, and the
+  pipelines draws need are made in the background by several threads.
+  On a driver that makes pipelines slowly (AMD's on Windows, the first
+  time), draws wait for their own shaders instead of a general one that
+  took seconds to make: the dragon's wings no longer disappear for a
+  moment the first time a stage plays.
+- Frame interpolation is much lighter: matching each new frame to the one
+  before runs on a thread of its own, the game's vertex programs run once
+  a game frame on the GPU for both pictures, and particles are made on the
+  GPU. At 4x on a Radeon RX 5700 XT it holds 144 fps on a 144 Hz screen.
+- Compressed (DXT) textures stay compressed on the GPU: less video memory
+  and faster loading.
+- Recording a frame for the GPU costs about half the CPU time it did:
+  lighter on battery and on handhelds.
+- GPUs without depth clamping or anisotropic filtering (some older
+  Android ones) run instead of refusing to start.
+- Menu: Picture and Bloom under Display, Show FPS under Advanced; a
+  smaller FPS counter.
+
+### Fixed
+
+- A `Lossless.dll` chosen in the launcher was not used.
+
 ## v0.1.12 (beta)
 
 ### Fixed
