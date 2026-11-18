@@ -5479,6 +5479,8 @@ static bool draw_corners(const frame_data *f, const command *c, float out[8])
 /* Where two alike draws are, cheaply: the screen and world translation of
  * a fixed-function draw, a program draw's anchors, else its corners. To
  * pick a big group's few nearest before the full distance. */
+static bool corners_of(const frame_data *f, const command *c, float out[8]);
+
 static float near_of(const frame_data *pf, const command *pc, const frame_data *cf, const command *c)
 {
     float d = 0.0f;
@@ -5493,7 +5495,7 @@ static float near_of(const frame_data *pf, const command *pc, const frame_data *
             d += SDL_fabsf(c->anchor[i] - pc->anchor[i]) + SDL_fabsf(c->anchor[4 + i] - pc->anchor[4 + i]);
     } else {
         float a4[8], b4[8];
-        if (draw_corners(pf, pc, a4) && draw_corners(cf, c, b4))
+        if (corners_of(pf, pc, a4) && corners_of(cf, c, b4))
             for (int i = 0; i < 8; i++)
                 if (a4[i] == a4[i] && b4[i] == b4[i])
                     d += SDL_fabsf(a4[i] - b4[i]);
@@ -5518,8 +5520,41 @@ static bool corners_of(const frame_data *f, const command *c, float out[8])
     return true;
 }
 
+/* The constants' floats a program reads (its consts_read bits), in order:
+ * draw_distance summed over all 768 testing each bit, for every pair of a
+ * group of alike draws (most of pairing's time on the RP6). Programs are
+ * few; their lists are kept (pairing thread). */
+static const uint16_t *read_list(const uint8_t m[24], uint16_t *n)
+{
+    enum { SLOTS = 64 };
+    static struct { bool used; uint8_t key[24]; uint16_t n; uint16_t idx[768]; } cache[SLOTS];
+    uint32_t h = (uint32_t)hash_bytes(m, 24) % SLOTS, s = h;
+
+    for (uint32_t k = 0; k < SLOTS; k++, s = (s + 1) % SLOTS) {
+        if (cache[s].used && !memcmp(cache[s].key, m, 24)) {
+            *n = cache[s].n;
+            return cache[s].idx;
+        }
+        if (!cache[s].used)
+            break;
+    }
+    if (cache[s].used)      /* full: this one's place is taken over */
+        s = h;
+    cache[s].used = true;
+    memcpy(cache[s].key, m, 24);
+    cache[s].n = 0;
+    for (int i = 0; i < 192 * 4; i++)
+        if (m[i >> 5] >> ((i >> 2) & 7) & 1)
+            cache[s].idx[cache[s].n++] = (uint16_t)i;
+    *n = cache[s].n;
+    return cache[s].idx;
+}
+
+static uint32_t dd_calls;       /* draw_distance this pairing, for the slow-pairing log */
+
 static float draw_distance(const frame_data *pf, const command *pc, const frame_data *cf, const command *c)
 {
+    dd_calls++;
     float d = pc->id_src == c->id_src ? 0.0f : 1e-3f, a4[8], b4[8];   /* the same data: only a tie-break */
 
     if (corners_of(pf, pc, a4) && corners_of(cf, c, b4))
@@ -5556,10 +5591,13 @@ static float draw_distance(const frame_data *pf, const command *pc, const frame_
          * battleships paired worse with their own last frame than with
          * another, and their constants "jumped"). */
         const float *a = pf->vconsts[pc->vu.info[2]], *b = cf->vconsts[c->vu.info[2]];
-        for (int i = 0; i < 192 * 4; i++)
-            if ((c->consts_read[i >> 5] >> ((i >> 2) & 7) & 1) && SDL_fabsf(a[i]) < 1e6f &&
-                SDL_fabsf(b[i]) < 1e6f)     /* not stale, huge or NaN registers */
+        uint16_t n;
+        const uint16_t *idx = read_list(c->consts_read, &n);
+        for (uint16_t k = 0; k < n; k++) {
+            int i = idx[k];
+            if (SDL_fabsf(a[i]) < 1e6f && SDL_fabsf(b[i]) < 1e6f)     /* not stale, huge or NaN registers */
                 d += SDL_fabsf(a[i] - b[i]);
+        }
     } else {
         /* From where it was, or from where it was going (moved on by how it
          * moved the frame before), whichever is nearer: in a pack flying in
@@ -7101,6 +7139,7 @@ static void run_match(frame_data *prev, frame_data *cur)
     Uint64 m0 = SDL_GetTicksNS(), dm;
 
     programs_switched = viewport_changed = false;
+    dd_calls = 0;
     match_frames(prev, cur);
     dm = SDL_GetTicksNS() - m0;
     SDL_AddAtomicU32(&pair_us, (int)(dm / 1000));
@@ -7112,8 +7151,8 @@ static void run_match(frame_data *prev, frame_data *cur)
         uint32_t nd = 0;
         for (uint32_t k = 0; k < cur->ncmds; k++)
             nd += cur->cmds[k].kind == CMD_DRAW;
-        SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws): passes %.1f, across models %.1f, "
-                "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd,
+        SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws, %u distances): passes %.1f, across models %.1f, "
+                "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd, dd_calls,
                 mf_ns[0] / 1e6, mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
     }
 }
