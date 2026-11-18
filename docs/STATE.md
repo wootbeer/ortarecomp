@@ -24,12 +24,17 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
 - `src/gfx/renderer.c`: the game records frames on its thread; the main
   thread owns the window and draws them on the SDL GPU API (Vulkan), with
   vertex programs and fixed-function vertices on the GPU. Each vertex
-  program becomes its own shader (`vsh_spec.c`: straight-line GLSL into
-  `vsh.vert`, glslang at run time, cached in `shaders/`); its pipelines are
-  made in the background (`bg_ask`), the interpreter drawing until then
-  and for draws paired across programs. `PDO_VSH_SPEC=0` turns it off. Frame
-  interpolation pairs the draws of the last two frames (`match_frames`) and
-  blends them; see the archive for what is and is not blended, and why.
+  program and each fragment setup becomes its own shader (`vsh_spec.c`,
+  glslang at run time, cached in `shaders/`), their pipelines made in the
+  background by three threads; the driver's compiled pipelines are kept
+  in `pipelines.vkcache`. Until a program's is made it is drawn from the
+  CPU's vertices. On a slow driver (Turnip, or any whose first pipeline
+  takes over 50 ms) draws wait for their own pipelines (`fs_wait`) instead
+  of the interpreters' (seconds each there). Frame interpolation pairs the
+  draws of the last two frames (`match_frames`, on a thread of its own)
+  and blends them; vertex programs run once a game frame on compute (the
+  vertex pre-pass, `vout_prepass`; `PDO_VOUT=0` turns it off), the draws
+  blending their outputs. See the archive for what is and is not blended.
   Movies (Display > Movies, Original by default): `d3d_hle.c` marks a
   movie's picture (its size from the .sfd), the window pass shows it alone
   with subtitles laid over its bottom (`movie_only`).
@@ -74,8 +79,8 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
 
 1. Frame interpolation: the main source of reports to expect (beta). A
    frame's pairing logs its stages when over 8 ms; blending holds off after
-   two slow seconds. On weaker PCs, next: reuse group distances in the
-   wrong-pair check, lazy bounds.
+   two slow seconds. Pairing runs on its own thread; on the RP6 it is
+   136-191 ms a second at 120 Hz.
 2. A full play on the release build with no `[ICALL] Failed` in the log.
 3. First-time pipeline stalls (kept in `pipelines.bin` after); programs'
    own are made in the background; the driver's own compile is kept in

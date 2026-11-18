@@ -1055,8 +1055,9 @@ static int fs_shader_state(uint64_t key)
  * waits for its own pipeline instead. Turnip took up to 20 s and hundreds
  * of MB over each of them (it ran the RP6 out of memory twice with only two
  * being made), for a pipeline used for the half second its own takes. On
- * with a custom driver; PDO_FS_WAIT=1/0 (or debug.ortarecomp.fs_wait) to
- * choose. */
+ * with a custom driver on Android, and elsewhere from the first pipeline
+ * that takes over 50 ms (AMD's Windows driver: 7 s over each of the vertex
+ * interpreter's); PDO_FS_WAIT=1/0 (or debug.ortarecomp.fs_wait) to choose. */
 static bool fs_wait;
 static bool fs_wait_chosen;     /* PDO_FS_WAIT (or the property) given: kept as it says */
 
