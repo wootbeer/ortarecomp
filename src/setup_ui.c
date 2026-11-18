@@ -199,7 +199,10 @@ bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check, SDL_Window *window, S
     SDL_strlcpy(title, u.window ? SDL_GetWindowTitle(u.window) : WINDOW_TITLE, sizeof title);
     draw(&u, -1);
 
-    {
+    /* Files found on their own only on a first start: from the launcher
+     * the player asked to choose, and the search would find the files
+     * already in use (the app's game folder) and return at once. */
+    if (!u.borrowed) {
         char found[PDO_PATH_MAX], err[1024] = "";
         bool is_iso;
 
