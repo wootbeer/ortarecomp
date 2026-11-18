@@ -36,7 +36,28 @@ int pdo_vsh_spec_get(uint64_t key, const uint32_t *code, uint32_t count,
  * for pipelines made up front. */
 bool pdo_vsh_spec_find(uint64_t key, const uint32_t **spv, size_t *bytes);
 
+/* A program's compute variant (the vertex pre-pass, renderer.c): as
+ * pdo_vsh_spec_get, by the key of its vertex shader. */
+uint64_t pdo_vsh_comp_key(uint64_t vkey);
+int pdo_vsh_comp_get(uint64_t vkey, const uint32_t *code, uint32_t count, const uint32_t **spv, size_t *bytes);
+
 /* Programs made (and failed) so far, for the log; ms spent making them. */
 void pdo_vsh_spec_counts(uint32_t *made, uint32_t *failed, uint32_t *pending, double *ms);
 
 void pdo_vsh_spec_quit(void);
+
+/* Fragment setups: shaders/ff.frag built with one draw's setup (texture
+ * stage operations, or pixel shader stages; alpha test; fog mode) as
+ * constants, so the GPU's compiler leaves out what the setup does not do,
+ * where the interpreter branches on it at every pixel. Made and kept like
+ * the vertex programs, on the same thread and in the same folder.
+ * PDO_FS_SPEC=0 turns them off. */
+#define PDO_FS_SPEC_WORDS 90
+struct pdo_ff_uniforms;
+bool pdo_fs_spec_enabled(void);
+/* The setup a draw's uniforms (and whether it uses a pixel shader) ask for. */
+void pdo_fs_spec_blob(const struct pdo_ff_uniforms *u, bool combiners, int32_t out[PDO_FS_SPEC_WORDS]);
+uint64_t pdo_fs_spec_key(const int32_t *w);
+char *pdo_fs_spec_glsl(const int32_t *w);
+/* As pdo_vsh_spec_get; ready shaders also come from pdo_vsh_spec_find. */
+int pdo_fs_spec_get(uint64_t key, const int32_t *w, const uint32_t **spv, size_t *bytes);

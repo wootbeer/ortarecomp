@@ -48,6 +48,11 @@ typedef struct pdo_settings {
     bool skip_logos;        /* a press during the boot logos goes to the title (src/guest/intro_skip.c) */
     bool skip_launcher;     /* start the game without the launcher (src/main.c; Shift held shows it) */
     int  rumble;            /* controller vibration strength, 0-100 % (src/hle/input_hle.c) */
+    int  touch_buttons;     /* Android: PDO_TOUCH_*, when the on-screen controls show (src/android/) */
+    int  touch_size;        /* Android: their size, 90-130 % (touch_controls.c) */
+    int  touch_opacity;     /* Android: their opacity, 10-100 % */
+    char gpu_driver[64];    /* Android: a custom Vulkan driver's folder in gpu_drivers/, "" the
+                               system's (src/android/android_gpu.c, from the next start) */
     bool depth_reversed;    /* depth stored as 1 - z (renderer.c, read at start) */
     /* Picture (present.frag), on the finished frame: */
     bool picture_crt;       /* a CRT's darker midtones: x^(2.5/2.2) */
@@ -65,6 +70,8 @@ typedef struct pdo_settings {
 /* 21:9 is the game's widescreen mode made wider (2.37:1, 64:27). */
 enum { PDO_ASPECT_4_3, PDO_ASPECT_16_9, PDO_ASPECT_21_9, PDO_ASPECT_COUNT };
 enum { PDO_AUDIO_STEREO, PDO_AUDIO_HEADPHONES, PDO_AUDIO_SURROUND, PDO_AUDIO_COUNT };
+/* Android's on-screen controls: hidden while a gamepad is connected, always shown, or never. */
+enum { PDO_TOUCH_AUTO, PDO_TOUCH_ALWAYS, PDO_TOUCH_OFF, PDO_TOUCH_COUNT };
 /* The whole picture with bars; stretched to the window; zoomed to fill it,
  * the overflow cut off. */
 enum { PDO_FIT_BARS, PDO_FIT_STRETCH, PDO_FIT_ZOOM, PDO_FIT_COUNT };
@@ -91,6 +98,8 @@ void pdo_difficulty_frame(void);
 pdo_settings *pdo_settings_get(void);
 /* Write the settings, keeping the game folder the file already holds. */
 bool pdo_settings_save(void);
+/* The settings into the log, when they differ from the last time. */
+void pdo_settings_log(void);
 
 /* Where settings, saves and imported game files live. With a portable.txt
  * next to the executable this is the executable's folder; otherwise the

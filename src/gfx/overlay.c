@@ -25,38 +25,69 @@
 #include <string.h>
 
 #include "guest/program.h"
+#ifdef __ANDROID__
+#include "android/android_gpu.h"
+#endif
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_VOLUME,
        ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
-       ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
+       ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_ABOUT, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
-       ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_FULLSCREEN, ITEM_EXIT,
+       ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_GPUDRV, ITEM_FULLSCREEN, ITEM_EXIT,
        /* Picture (present.frag) */
        ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT, ITEM_PIC_RESET,
        /* links to the pages, and back */
-       ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_BACK,
+       ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_GO_TOUCH, ITEM_BACK,
        ITEM_COUNT };
 
 /* The menu is pages: a short main list (the game's, or the launcher's
  * before the game starts) of links, and a page per subject. */
-enum { PAGE_MAIN, PAGE_DISPLAY, PAGE_PICTURE, PAGE_SOUND, PAGE_GAMEPLAY, PAGE_ADVANCED, PAGE_COUNT };
-static const char *page_names[PAGE_COUNT] = { "OPTIONS", "DISPLAY", "PICTURE", "SOUND", "GAMEPLAY", "ADVANCED" };
+enum { PAGE_MAIN, PAGE_DISPLAY, PAGE_PICTURE, PAGE_SOUND, PAGE_GAMEPLAY, PAGE_ADVANCED, PAGE_TOUCH, PAGE_COUNT };
+static const char *page_names[PAGE_COUNT] = { "OPTIONS", "DISPLAY", "PICTURE", "SOUND", "GAMEPLAY", "ADVANCED",
+                                              "TOUCH" };
 
-static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
+#ifdef __ANDROID__
+/* Touch controls, a page of their own under Controls. */
+static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
+                                 ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_GO_TOUCH, ITEM_CLOSE, ITEM_QUIT };
+static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_SOUND,
+                                     ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_GO_TOUCH, ITEM_EXIT };
+#else
+static const int game_main[] = { ITEM_GO_DISPLAY, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
                                  ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT };
-static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND,
+static const int launcher_main[] = { ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GO_DISPLAY, ITEM_GO_SOUND,
                                      ITEM_GO_GAMEPLAY, ITEM_GO_ADVANCED, ITEM_CONTROLS, ITEM_EXIT };
+#endif
+/* Picture is a page under Display (page_back returns there). */
+#ifdef __ANDROID__
+/* Always fullscreen there: no Fullscreen line; and always in step with the
+ * screen (apply_vsync, renderer.c): no VSync line. */
+static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_RATE, ITEM_SHADOWS,
+                                    ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
+static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT,
+                                        ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
+#else
 static const int display_game[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS,
-                                    ITEM_FPS, ITEM_BACK };
+                                    ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
 static const int display_launcher[] = { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_FULLSCREEN, ITEM_SOFT,
-                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_FPS, ITEM_BACK };
-static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BLOOM, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
+                                        ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_PIC_BLOOM, ITEM_GO_PICTURE, ITEM_BACK };
+#endif
+static const int picture_items[] = { ITEM_PIC_LOOK, ITEM_PIC_BRIGHT, ITEM_PIC_CONTRAST, ITEM_PIC_GAMMA, ITEM_PIC_SAT,
                                      ITEM_PIC_RESET, ITEM_BACK };
 static const int sound_items[] = { ITEM_VOLUME, ITEM_3D, ITEM_HRTF, ITEM_BACK };
 static const int gameplay_items[] = { ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_BACK };
-static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_BACK };
-static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_GPU,
-                                         ITEM_BACK };
+/* Android's on-screen controls (src/android/touch_controls.c). */
+static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_BACK };
+#ifdef __ANDROID__
+/* No Lossless Scaling on Android (CMakeLists.txt): frame generation is Off
+ * or our interpolation, and there is no Lossless.dll to choose. */
+static const int advanced_game[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
+#else
+static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU,
+                                         ITEM_ABOUT, ITEM_BACK };
+#endif
 
 static bool launcher;               /* pdo_launcher_begin .. end */
 static int launcher_choice;         /* PDO_LAUNCH_* picked, 0 none yet */
@@ -73,6 +104,7 @@ static const int *page_items(int *n)
     case PAGE_SOUND:    return PAGE_OF(sound_items);
     case PAGE_GAMEPLAY: return PAGE_OF(gameplay_items);
     case PAGE_ADVANCED: return launcher ? PAGE_OF(advanced_launcher) : PAGE_OF(advanced_game);
+    case PAGE_TOUCH:    return PAGE_OF(touch_items);
     default:            return launcher ? PAGE_OF(launcher_main) : PAGE_OF(game_main);
     }
 #undef PAGE_OF
@@ -105,6 +137,11 @@ static int counted, fps = -1;
 bool pdo_overlay_open(void)
 {
     return open_;
+}
+
+bool pdo_overlay_on_touch_page(void)
+{
+    return (open_ || launcher) && page == PAGE_TOUCH;
 }
 
 void pdo_launcher_begin(const char *files, bool ok)
@@ -150,19 +187,29 @@ static void set_open(bool on)
     else {
         swallow = true;
         pdo_settings_save();
+        pdo_settings_log();
     }
 }
 
 /* Frame generation steps: off, our blending (renderer.c), Lossless
  * Scaling's at 2x, 3x, 4x (lsfg_present.cpp). */
+/* Off, our interpolation, then Lossless Scaling 2x-4x (where built). */
+#ifdef __ANDROID__
+#define FRAME_GEN_STEPS 1
+#else
+#define FRAME_GEN_STEPS 4
+#endif
+
 static int frame_gen_step(const pdo_settings *s)
 {
+    if (FRAME_GEN_STEPS == 1)
+        return s->frame_interp ? 1 : 0;
     return s->lsfg_multiplier >= 2 ? s->lsfg_multiplier : s->frame_interp ? 1 : 0;
 }
 
 static void next_frame_gen(pdo_settings *s, int dir)
 {
-    int i = SDL_clamp(frame_gen_step(s) + dir, 0, 4);
+    int i = SDL_clamp(frame_gen_step(s) + dir, 0, FRAME_GEN_STEPS);
     s->frame_interp = i == 1;
     s->lsfg_multiplier = i >= 2 ? i : 1;
 }
@@ -179,6 +226,9 @@ static void SDLCALL dll_dialog_cb(void *userdata, const char *const *files, int 
     if (files && files[0]) {
         SDL_strlcpy(picked_dll, files[0], sizeof picked_dll);
         SDL_SetAtomicInt(&dll_picked, 1);
+        SDL_Log("overlay: Lossless.dll chosen: %s", files[0]);
+    } else {
+        SDL_Log("overlay: Lossless.dll: %s", files ? "nothing chosen" : SDL_GetError());
     }
 }
 
@@ -188,8 +238,52 @@ static void pick_dll(void)
     SDL_ShowOpenFileDialog(dll_dialog_cb, NULL, NULL, filters, SDL_arraysize(filters), NULL, false);
 }
 
+/* Android: a custom GPU driver (src/android/android_gpu.c), a zip or .so
+ * from the system's picker, installed by the app when the menu takes it. */
+static char picked_driver[PDO_PATH_MAX];
+static SDL_AtomicInt driver_picked;
+enum { DRIVER_NONE, DRIVER_NEW, DRIVER_BAD, DRIVER_SYSTEM };
+static int driver_note;             /* what the help line says after a choice */
+
+static void SDLCALL driver_dialog_cb(void *userdata, const char *const *files, int filter)
+{
+    (void)userdata;
+    (void)filter;
+    if (files && files[0]) {
+        SDL_strlcpy(picked_driver, files[0], sizeof picked_driver);
+        SDL_SetAtomicInt(&driver_picked, 1);
+    }
+}
+
+static void pick_driver(void)
+{
+    SDL_ShowOpenFileDialog(driver_dialog_cb, NULL, NULL, NULL, 0, NULL, false);
+}
+
+static void take_picked_driver(void)
+{
+#ifdef __ANDROID__
+    char name[64], err[256];
+
+    if (!SDL_GetAtomicInt(&driver_picked))
+        return;
+    SDL_SetAtomicInt(&driver_picked, 0);
+    if (pdo_android_gpu_driver_install(picked_driver, name, sizeof name, err, sizeof err)) {
+        SDL_strlcpy(pdo_settings_get()->gpu_driver, name, sizeof pdo_settings_get()->gpu_driver);
+        driver_note = DRIVER_NEW;
+        SDL_Log("overlay: GPU driver %s installed; used from the next start", name);
+        pdo_settings_save();
+    } else {
+        driver_note = DRIVER_BAD;
+        SDL_Log("overlay: GPU driver not installed: %s", err);
+    }
+    dirty = true;
+#endif
+}
+
 static void take_picked_dll(void)
 {
+    take_picked_driver();
     if (SDL_GetAtomicInt(&dll_picked)) {
         SDL_SetAtomicInt(&dll_picked, 0);
         SDL_strlcpy(pdo_settings_get()->lsfg_dll, picked_dll, sizeof pdo_settings_get()->lsfg_dll);
@@ -214,7 +308,7 @@ static void next_aa(pdo_settings *s, int dir)
 
 static int index_of(int item);
 
-/* To a page, on its first line; back to the main list, on that page's link. */
+/* To a page, on its first line; back to the main list (Picture: to Display), on that page's link. */
 static void go_page(int p)
 {
     page = p;
@@ -225,9 +319,9 @@ static void go_page(int p)
 static void page_back(void)
 {
     static const int link[PAGE_COUNT] = { 0, ITEM_GO_DISPLAY, ITEM_GO_PICTURE, ITEM_GO_SOUND, ITEM_GO_GAMEPLAY,
-                                          ITEM_GO_ADVANCED };
+                                          ITEM_GO_ADVANCED, ITEM_GO_TOUCH };
     int from = page;
-    page = PAGE_MAIN;
+    page = from == PAGE_PICTURE ? PAGE_DISPLAY : PAGE_MAIN;
     selected = index_of(link[from]);
     dirty = true;
 }
@@ -296,6 +390,9 @@ static void change(int dir)
     case ITEM_SHADOWS: s->shadow_original = !s->shadow_original; break;
     case ITEM_RATE:   s->fps30 = !s->fps30; break;
     case ITEM_RUMBLE: s->rumble = SDL_clamp((s->rumble + 10 * dir) / 10 * 10, 0, 100); break;
+    case ITEM_TOUCH:  s->touch_buttons = (s->touch_buttons + PDO_TOUCH_COUNT + dir) % PDO_TOUCH_COUNT; break;
+    case ITEM_TOUCH_SIZE: s->touch_size = SDL_clamp(s->touch_size + 10 * dir, 90, 130); break;
+    case ITEM_TOUCH_ALPHA: s->touch_opacity = SDL_clamp(s->touch_opacity + 5 * dir, 10, 100); break;
     case ITEM_3D:
         s->audio_out = (s->audio_out + PDO_AUDIO_COUNT + dir) % PDO_AUDIO_COUNT;
         pdo_mixer_apply_output();
@@ -307,6 +404,15 @@ static void change(int dir)
     case ITEM_INTERP: next_frame_gen(s, dir); break;
     case ITEM_LSMODE: s->lsfg_performance = !s->lsfg_performance; break;
     case ITEM_LSDLL:  if (dir > 0) pick_dll(); else s->lsfg_dll[0] = 0; break;
+    case ITEM_GPUDRV:
+        if (dir > 0)
+            pick_driver();
+        else if (s->gpu_driver[0]) {
+            s->gpu_driver[0] = 0;
+            driver_note = DRIVER_SYSTEM;
+        }
+        break;
+    case ITEM_ABOUT:  break;        /* says who made it (its help), nothing to change */
     case ITEM_CONTROLS: if (dir > 0) { controls = true; selected = 0; } break;
     case ITEM_CLOSE:  if (dir > 0) set_open(false); break;
     case ITEM_QUIT:   if (dir > 0) ask_quit(); break;
@@ -329,6 +435,7 @@ static void change(int dir)
     case ITEM_GO_SOUND:    if (dir > 0) go_page(PAGE_SOUND); break;
     case ITEM_GO_GAMEPLAY: if (dir > 0) go_page(PAGE_GAMEPLAY); break;
     case ITEM_GO_ADVANCED: if (dir > 0) go_page(PAGE_ADVANCED); break;
+    case ITEM_GO_TOUCH:    if (dir > 0) go_page(PAGE_TOUCH); break;
     case ITEM_BACK:        if (dir > 0) page_back(); break;
     }
     dirty = true;
@@ -452,6 +559,132 @@ static bool capture_event(const SDL_Event *ev)
     return true;
 }
 
+static bool is_link(int item)
+{
+    return item == ITEM_START || item == ITEM_EXIT || item == ITEM_CLOSE || item == ITEM_QUIT || item == ITEM_BACK ||
+           item == ITEM_LSDLL || item == ITEM_GPUDRV || item == ITEM_ABOUT ||
+           item == ITEM_PIC_RESET || item == ITEM_PICK || item == ITEM_GPU || item == ITEM_CONTROLS ||
+           (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_TOUCH);
+}
+static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
+static bool building;       /* shaders are being made: a note in a corner while playing */
+
+/* Clicks and taps (src/gfx/overlay.h, pdo_overlay_set_rect): where the
+ * layer is in the window, the size of a character cell on it, and where
+ * draw_menu last put the panel and its lines, in cells. */
+static float shown_x, shown_y, shown_w, shown_h;
+static float cell_w = 16.0f, cell_h = 16.0f;    /* SCALE * CHAR, narrower in widescreen */
+static float menu_x0, menu_y0, menu_w, menu_h, menu_step;
+
+void pdo_overlay_set_rect(float x, float y, float w, float h)
+{
+    shown_x = x;
+    shown_y = y;
+    shown_w = w;
+    shown_h = h;
+}
+
+static float value_of(int item, char *v, size_t n);
+
+/* A tap on a slider's bar (or just past its ends): chooses the line and
+ * moves its value to the tapped place, a step at a time while each step
+ * brings it nearer. False when the tap is elsewhere or not on a slider. */
+static bool slide_to(int item, int line, float col)
+{
+    char v[64];
+    float bx = menu_x0 + menu_w - 16, bw = 9;
+    float t, now;
+
+    if (value_of(item, v, sizeof v) < 0.0f || col < bx - 1.5f || col >= bx + bw + 1.5f)
+        return false;
+    quit_armed = false;
+    selected = line;
+    dirty = true;
+    t = SDL_clamp((col - bx) / bw, 0.0f, 1.0f);
+    for (int k = 0; k < 400; k++) {
+        int dir;
+        float next;
+
+        now = value_of(item, v, sizeof v);
+        dir = t > now ? +1 : -1;
+        change(dir);
+        next = value_of(item, v, sizeof v);
+        if (SDL_fabsf(next - t) >= SDL_fabsf(now - t)) {
+            if (next != now)
+                change(-dir);           /* that step went past: back */
+            break;
+        }
+    }
+    return true;
+}
+
+/* A click or tap at (x, y), in the window's points (SDL makes a tap a
+ * click; touch says it was one): the line under it is chosen, and a way
+ * somewhere (a page, Start, Back) taken. On the chosen line's value a
+ * click's left or right half changes it down or up; a tap's half of the
+ * whole line does, a bigger target, and a tap on a slider's bar sets it
+ * there. Off the panel a click goes back; a tap, easily a miss, does
+ * nothing. */
+static void click(SDL_WindowID id, float x, float y, bool touch)
+{
+    SDL_Window *win = SDL_GetWindowFromID(id);
+    float d = win ? SDL_GetWindowPixelDensity(win) : 1.0f;
+    float col, row;
+    int n, i;
+    const int *items;
+
+    if (shown_w <= 0 || shown_h <= 0)
+        return;
+    x = (x * d - shown_x) / shown_w * PDO_OVERLAY_W;
+    y = (y * d - shown_y) / shown_h * PDO_OVERLAY_H;
+    col = x / cell_w;
+    row = y / cell_h;
+    if (controls) {
+        const float w = 38, x0 = (cols - w) / 2, y0 = 0.75f;
+        for (i = 0; i < CTL_COUNT; i++) {
+            float ry = y0 + 5 + i * 1.0f + (i >= PDO_IN_COUNT ? 0.75f : 0);
+            if (col >= x0 && col < x0 + w && row >= ry - 0.0625f && row < ry + 1.0625f)
+                break;
+        }
+        if (i == CTL_COUNT) {
+            if (!touch)
+                act(ACT_BACK);
+        } else if (i == selected) {
+            act(ACT_OK);
+        } else {
+            selected = i;
+            dirty = true;
+        }
+        return;
+    }
+    if (col < menu_x0 || col >= menu_x0 + menu_w || row < menu_y0 || row >= menu_y0 + menu_h) {
+        if (!touch)
+            act(ACT_BACK);
+        return;
+    }
+    items = page_items(&n);
+    i = (int)SDL_floorf((row - (menu_y0 + 4.0f - 0.4f)) / menu_step);
+    if (i < 0 || i >= n)
+        return;
+    if (touch && slide_to(items[i], i, col))
+        return;
+    if (i != selected) {
+        quit_armed = false;
+        selected = i;
+        dirty = true;
+        if (!is_link(items[i]) && items[i] != ITEM_QUIT)
+            return;                 /* chosen; a second tap, or one on its value, changes it */
+    }
+    if (is_link(items[i]) || items[i] == ITEM_QUIT)
+        act(ACT_OK);
+    else if (touch)
+        change(col < menu_x0 + menu_w / 2 ? -1 : +1);
+    else if (col >= menu_x0 + menu_w - 16)
+        change(col < menu_x0 + menu_w - 8 ? -1 : +1);
+    else
+        change(+1);
+}
+
 bool pdo_overlay_event(const SDL_Event *ev)
 {
     if (open_ && capture)
@@ -468,6 +701,13 @@ bool pdo_overlay_event(const SDL_Event *ev)
         act(k == SDLK_UP ? ACT_UP : k == SDLK_DOWN ? ACT_DOWN : k == SDLK_LEFT ? ACT_LEFT
             : k == SDLK_RIGHT ? ACT_RIGHT : k == SDLK_RETURN || k == SDLK_SPACE ? ACT_OK
             : k == SDLK_ESCAPE || k == SDLK_BACKSPACE ? ACT_BACK : ACT_NONE);
+        return true;
+    }
+    if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN || ev->type == SDL_EVENT_MOUSE_BUTTON_UP) {
+        if (!open_)
+            return false;
+        if (ev->type == SDL_EVENT_MOUSE_BUTTON_DOWN && ev->button.button == SDL_BUTTON_LEFT)
+            click(ev->button.windowID, ev->button.x, ev->button.y, ev->button.which == SDL_TOUCH_MOUSEID);
         return true;
     }
     if (ev->type == SDL_EVENT_GAMEPAD_BUTTON_DOWN || ev->type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
@@ -498,6 +738,21 @@ void pdo_overlay_frame(void)
     Uint64 now = SDL_GetTicks();
 
     take_picked_dll();
+    {   /* "Building shaders" while the renderer makes them (more than half a
+         * second of it, so a single quick one shows nothing) */
+        static Uint64 since;
+        bool b = pdo_gfx_building();
+        bool show;
+        if (!b)
+            since = 0;
+        else if (!since)
+            since = now;
+        show = b && now - since >= 500;
+        if (show != building) {
+            building = show;
+            dirty = true;
+        }
+    }
 
     if (!count_start)
         count_start = now;
@@ -514,7 +769,7 @@ void pdo_overlay_frame(void)
 
 bool pdo_overlay_visible(void)
 {
-    return open_ || pdo_settings_get()->show_fps;
+    return open_ || pdo_settings_get()->show_fps || building;
 }
 
 bool pdo_overlay_blocks_input(bool any_pressed)
@@ -531,6 +786,7 @@ bool pdo_overlay_blocks_input(bool any_pressed)
 
 #define SCALE 2.0f      /* 8x8 font at 16x16 on the 640x480 image */
 #define CHAR  8.0f      /* in unscaled units: the layer is 40 x 30 of them */
+#define SMALL 0.75f     /* the FPS counter's and the shader note's size, of the menu's */
 
 /* The look: a dark panel, an amber for the title bar and what is chosen,
  * a sky blue for the rule and the bars of sliders. */
@@ -546,7 +802,6 @@ bool pdo_overlay_blocks_input(bool any_pressed)
 #define COL_OFF      96, 104, 120, 255
 #define COL_TRACK    52, 60, 80, 255
 
-static float cols = 40;     /* the layer's width in characters: more in 16:9 (drawn narrower) */
 
 static void color(Uint8 r, Uint8 g, Uint8 b, Uint8 a)
 {
@@ -695,6 +950,17 @@ static float value_of(int item, char *v, size_t n)
     case ITEM_VSYNC:  snprintf(v, n, "%s", s->vsync == PDO_VSYNC_OFF ? "Off" : s->vsync == PDO_VSYNC_FAST ? "Fast" : "On"); break;
     case ITEM_SHADOWS: snprintf(v, n, "%s", s->shadow_original ? "Low" : "High"); break;
     case ITEM_RATE:   snprintf(v, n, "%s", s->fps30 ? "30" : "60"); break;
+    case ITEM_ABOUT: {
+        const char *ver = SDL_GetAppMetadataProperty(SDL_PROP_APP_METADATA_VERSION_STRING);
+        snprintf(v, n, "v%s", ver ? ver : "?");
+        break;
+    }
+    case ITEM_TOUCH:
+        snprintf(v, n, "%s", s->touch_buttons == PDO_TOUCH_ALWAYS ? "Always"
+                 : s->touch_buttons == PDO_TOUCH_OFF ? "Off" : "Auto");
+        break;
+    case ITEM_TOUCH_SIZE:  snprintf(v, n, "%d%%", s->touch_size); return (s->touch_size - 90) / 40.0f;
+    case ITEM_TOUCH_ALPHA: snprintf(v, n, "%d%%", s->touch_opacity); return (s->touch_opacity - 10) / 90.0f;
     case ITEM_RUMBLE:
         if (s->rumble)
             snprintf(v, n, "%d%%", s->rumble);
@@ -732,6 +998,7 @@ static float value_of(int item, char *v, size_t n)
         break;
     }
     case ITEM_GPU:    snprintf(v, n, "Vulkan"); break;
+    case ITEM_GPUDRV: snprintf(v, n, "%.14s", s->gpu_driver[0] ? s->gpu_driver : "System"); break;
     case ITEM_SLOT:   snprintf(v, n, "%d%s", s->save_slot, pdo_save_slot_used(s->save_slot) ? "" : " (empty)"); break;
     case ITEM_PICK: {   /* the end of the path: the file or folder's name */
         const char *f = launcher_files ? launcher_files : "-";
@@ -740,7 +1007,7 @@ static float value_of(int item, char *v, size_t n)
         break;
     }
     case ITEM_GO_DISPLAY: case ITEM_GO_PICTURE: case ITEM_GO_SOUND: case ITEM_GO_GAMEPLAY:
-    case ITEM_GO_ADVANCED: case ITEM_CONTROLS:
+    case ITEM_GO_ADVANCED: case ITEM_GO_TOUCH: case ITEM_CONTROLS:
         snprintf(v, n, ">"); break;
     }
     return -1.0f;
@@ -774,6 +1041,10 @@ static const char *label_of(int item)
     case ITEM_SHADOWS: return "Shadows";
     case ITEM_RATE:   return "Frame rate";
     case ITEM_RUMBLE: return "Vibration";
+    case ITEM_TOUCH:  return "Touch buttons";
+    case ITEM_ABOUT:  return "About";
+    case ITEM_TOUCH_SIZE: return "Touch size";
+    case ITEM_TOUCH_ALPHA: return "Touch opacity";
     case ITEM_3D:     return "Output";
     case ITEM_HRTF:   return "3D sound";
     case ITEM_VSH:    return "Vertex programs";
@@ -782,6 +1053,7 @@ static const char *label_of(int item)
     case ITEM_LSMODE: return "LS mode";
     case ITEM_LSDLL:  return "Lossless.dll";
     case ITEM_GPU:    return "Graphics";
+    case ITEM_GPUDRV: return "GPU driver";
     case ITEM_START:  return launcher_files_ok ? "Start game" : "Start game (no files)";
     case ITEM_PICK:   return "Game files";
     case ITEM_SLOT:   return "Save file";
@@ -795,6 +1067,7 @@ static const char *label_of(int item)
     case ITEM_GO_SOUND:    return "Sound";
     case ITEM_GO_GAMEPLAY: return "Gameplay";
     case ITEM_GO_ADVANCED: return "Advanced";
+    case ITEM_GO_TOUCH:    return "Touch controls";
     }
     return "";
 }
@@ -838,6 +1111,10 @@ static const char *help_of(int item)
     case ITEM_SHADOWS: return "Low: lighter on the GPU.";
     case ITEM_RATE:   return "60 is default.";
     case ITEM_RUMBLE: return "Controller rumble strength.";
+    case ITEM_TOUCH:  return "Auto hides them while a controller is connected.";
+    case ITEM_ABOUT:  return "Orta Recomp by wootbeer github.com/wootbeer";
+    case ITEM_TOUCH_SIZE: return "Size of the on-screen controls.";
+    case ITEM_TOUCH_ALPHA: return "Opacity of the on-screen controls.";
     case ITEM_3D: {
         static const char *helps[PDO_AUDIO_COUNT] = { "Two speakers or a TV.", "Headphones: sounds around you.",
                                                       "5.1 speakers: sound all around." };
@@ -872,6 +1149,11 @@ static const char *help_of(int item)
     case ITEM_LSDLL:  return "This build has no LS: BUILDING.";
 #endif
     case ITEM_GPU:    return "The graphics API.";
+    case ITEM_GPUDRV:
+        return driver_note == DRIVER_BAD ? "Not a driver: see the log."
+             : driver_note == DRIVER_NEW ? "Set: from the next start."
+             : driver_note == DRIVER_SYSTEM ? "Phone's own: from next start."
+             : "OK: a Turnip zip. Left: phone's.";
     case ITEM_START:  return launcher_files_ok ? "Play." : "Choose your game files first.";
 #ifdef __ANDROID__
     case ITEM_PICK:   return "Your disc image.";
@@ -888,29 +1170,30 @@ static const char *help_of(int item)
     case ITEM_GO_SOUND:    return "Volume, stereo or 5.1.";
     case ITEM_GO_GAMEPLAY: return "Pandora's Box, boot logos.";
     case ITEM_GO_ADVANCED: return "Frame generation and more.";
+    case ITEM_GO_TOUCH:    return "On-screen buttons: when, size.";
     }
     return "";
 }
 
-static bool is_link(int item)
-{
-    return item == ITEM_START || item == ITEM_EXIT || item == ITEM_CLOSE || item == ITEM_QUIT || item == ITEM_BACK ||
-           item == ITEM_LSDLL ||
-           item == ITEM_PIC_RESET || item == ITEM_PICK || item == ITEM_GPU || item == ITEM_CONTROLS ||
-           (item >= ITEM_GO_DISPLAY && item <= ITEM_GO_ADVANCED);
-}
 
 static void draw_menu(void)
 {
     int n;
     const int *items = page_items(&n);
     /* rows two cells apart, closer on long pages so the panel (its title,
-     * rows and help line) stays inside the layer's 30 */
-    const float w = 34, x0 = (cols - w) / 2, step = SDL_min(2.0f, 19.5f / (float)n);
-    const float h = 4.0f + n * step + 6.0f, y0 = SDL_max((30 - h) / 2, 0.5f);
+     * rows and help line) stays inside the layer's 30 with 0.75 to spare
+     * above and below: at 0.5 the longest pages' bottom edge, a pixel
+     * outside the panel, fell off the layer */
+    const float w = 34, x0 = (cols - w) / 2, step = SDL_min(2.0f, 18.5f / (float)n);
+    const float h = 4.0f + n * step + 6.0f, y0 = SDL_max((30 - h) / 2, 0.75f);
     char v[40];
 
     frame(x0, y0, w, h, page_names[page]);
+    menu_x0 = x0;
+    menu_y0 = y0;
+    menu_w = w;
+    menu_h = h;
+    menu_step = step;
     for (int i = 0; i < n; i++) {
         int item = items[i];
         float y = y0 + 4.0f + i * step;
@@ -918,8 +1201,8 @@ static void draw_menu(void)
         bool sel = i == selected, off = (item == ITEM_START && !launcher_files_ok) || item_inactive(item);
 
         if (item == ITEM_BACK || item == ITEM_CLOSE || item == ITEM_EXIT) {
-            COLOR(COL_TRACK);
-            fill(x0 + 1, y - 0.6f, w - 2, 0.125f);       /* a rule before the way out */
+            COLOR(COL_TRACK);       /* a rule before the way out, in the gap above it */
+            fill(x0 + 1, y - SDL_min(0.6f, (step - 1.0f) * 0.5f + 0.0625f), w - 2, 0.125f);
         }
         if (sel) {
             COLOR(COL_SEL);
@@ -972,6 +1255,7 @@ static void draw_menu(void)
 
 SDL_Surface *pdo_overlay_image(bool *changed)
 {
+    take_picked_dll();      /* the launcher draws the menu but counts no game frames */
     *changed = false;
     if (!pdo_overlay_visible())
         return NULL;
@@ -995,6 +1279,8 @@ SDL_Surface *pdo_overlay_image(bool *changed)
             squeeze = sq;
             SDL_SetRenderScale(painter, SCALE * sq, SCALE);
             cols = PDO_OVERLAY_W / (SCALE * sq * CHAR);
+            cell_w = SCALE * sq * CHAR;
+            cell_h = SCALE * CHAR;
             dirty = true;
         }
     }
@@ -1006,14 +1292,32 @@ SDL_Surface *pdo_overlay_image(bool *changed)
         draw_controls();
     else if (open_)
         draw_menu();
-    if (pdo_settings_get()->show_fps) {
-        char buf[32];
-        SDL_FRect bg = { 0, 0, 10 * CHAR, 2 * CHAR };
-        snprintf(buf, sizeof buf, fps < 0 ? "-- fps" : "%d fps", fps);
-        SDL_SetRenderDrawColor(painter, 0, 0, 0, 160);
-        SDL_RenderFillRect(painter, &bg);
-        SDL_SetRenderDrawColor(painter, 255, 255, 0, 255);
-        text(0.5f, 0.5f, buf);
+    if (pdo_settings_get()->show_fps || (building && !open_)) {
+        /* Smaller than the menu's text (they sit over the game): drawn at
+         * SMALL of its size, so in these units the layer is wider. */
+        float sq = (4.0f / 3.0f) / pdo_widescreen_ratio();
+        float wide = cols / SMALL;              /* the layer's width in small characters */
+        SDL_SetRenderScale(painter, SCALE * SMALL * sq, SCALE * SMALL);
+        if (pdo_settings_get()->show_fps) {
+            char buf[32];
+            SDL_FRect bg = { 0, 0, 8 * CHAR, 1.75f * CHAR };
+            snprintf(buf, sizeof buf, fps < 0 ? "-- fps" : "%d fps", fps);
+            SDL_SetRenderDrawColor(painter, 0, 0, 0, 140);
+            SDL_RenderFillRect(painter, &bg);
+            SDL_SetRenderDrawColor(painter, 255, 255, 0, 255);
+            text(0.4f, 0.4f, buf);
+        }
+        if (building && !open_) {
+            static const char note[] = "Building shaders";
+            float n = (float)(sizeof note - 1);
+            float rows = 30.0f / SMALL;
+            SDL_FRect bg = { (wide - n - 0.8f) * CHAR, (rows - 1.75f) * CHAR, (n + 0.8f) * CHAR, 1.75f * CHAR };
+            SDL_SetRenderDrawColor(painter, 0, 0, 0, 110);
+            SDL_RenderFillRect(painter, &bg);
+            SDL_SetRenderDrawColor(painter, 200, 200, 200, 200);
+            text(wide - n - 0.4f, rows - 1.35f, note);
+        }
+        SDL_SetRenderScale(painter, SCALE * sq, SCALE);
     }
     SDL_FlushRenderer(painter);
     dirty = false;

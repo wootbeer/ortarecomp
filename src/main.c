@@ -35,6 +35,7 @@
 #include <SDL3/SDL_main.h>
 #ifdef __ANDROID__
 #include <android/log.h>
+#include "android/android_gpu.h"
 #include <stdlib.h>
 #endif
 
@@ -409,24 +410,24 @@ static bool run_launcher(pdo_config *cfg, pdo_game_check *check, bool *have_game
                                 PDO_OVERLAY_H * k };
                 SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
                 SDL_RenderTexture(ren, tex, NULL, &r);
+                pdo_overlay_set_rect(r.x, r.y, r.w, r.h);       /* its clicks and taps */
             }
             SDL_RenderPresent(ren);
         }
         pdo_launcher_end();
         if (choice != PDO_LAUNCH_PICK)
             break;
-        /* The game file picker (setup_ui.c), its own window and dialogs. */
-        SDL_HideWindow(win);
+        /* The game file picker (setup_ui.c): its dialogs over this window,
+         * its import progress in it. */
         {
             pdo_config pick = *cfg;
             pdo_game_check pc;
-            if (pdo_setup_run(&pick, &pc)) {
+            if (pdo_setup_run(&pick, &pc, win, ren)) {
                 *cfg = pick;
                 *check = pc;
                 *have_game = true;
             }
         }
-        SDL_ShowWindow(win);
     }
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
@@ -471,15 +472,10 @@ int main(int argc, char **argv)
     }
 
     pdo_config_load(&cfg);
-    {
-        const pdo_settings *s = pdo_settings_get();
-        SDL_Log("settings: %gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, fixed function on %s, "
-                "aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa, s->anisotropy, s->bloom,
-                s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
-                s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
-                s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
-                s->fps30 ? 30 : 60, s->save_slot);
-    }
+    pdo_settings_log();
+#ifdef __ANDROID__
+    pdo_android_gpu_driver_load();      /* before any Vulkan window: SDL loads Vulkan from it */
+#endif
 
     if (opt.import_iso) {
         char dst[PDO_PATH_MAX];
@@ -519,7 +515,7 @@ int main(int argc, char **argv)
     /* --boot (or --no-boot) goes straight on, as before: the first-run
      * picker if there are no game files. Otherwise the launcher. */
     if (opt.boot || opt.no_boot) {
-        if (!have_game && !pdo_setup_run(&cfg, &check)) {
+        if (!have_game && !pdo_setup_run(&cfg, &check, NULL, NULL)) {
             SDL_Quit();
             return 0;
         }

@@ -278,7 +278,15 @@ void sub_002B3510(void)
     if (pp)     /* D3DPRESENT_PARAMETERS: BackBufferFormat +8, MultiSampleType +16, Flags +36 */
         SDL_Log("d3d: back buffer format 0x%x, multisample 0x%x, flags 0x%x", MEM32(pp + 8), MEM32(pp + 16),
                 MEM32(pp + 36));
-    pdo_gfx_init(w, h);
+    if (!pdo_gfx_init(w, h)) {
+        /* No picture can come: say so rather than leave a black screen
+         * with sound (the log has SDL's reasons, "gfx:" lines). */
+        char msg[512];
+        snprintf(msg, sizeof msg, "The graphics could not start on this device's GPU, so the game cannot "
+                 "show anything (%s).\n\nOrta Recomp needs Vulkan 1.1. The log has the details.", SDL_GetError());
+        SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR, "Orta Recomp", msg, NULL);
+        exit(1);
+    }
     sub_002B3510_gen();
     note_backbuffers();
 }
@@ -2106,7 +2114,7 @@ static void vsh_gpu_job(const pdo_vsh_program *p, uint32_t base, uint32_t stride
  * program can (it does not write constants) and has been handed over. */
 static bool use_gpu_vsh(pdo_vsh_program *p)
 {
-    if (!pdo_settings_get()->gpu_vertex || p->writes_constants)
+    if (!pdo_settings_get()->gpu_vertex || pdo_gfx_vertex_shader_failed(false) || p->writes_constants)
         return false;
     if (p->gpu_program < 0) {
         static uint32_t code[8 * PDO_VSH_MAX_INSNS];
@@ -2440,15 +2448,37 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         }
         {
             Uint64 t = SDL_GetTicksNS();
-            if (type != 1 && use_gpu_vsh(p)) {
+            if (use_gpu_vsh(p)) {
                 gpu_p = p;
                 /* A capture keeps the CPU's vertices too, to log and to
-                 * draw the frame both ways (PDO_CAPTURE_CPUVSH). */
-                cpu_too = pdo_gfx_capturing();
+                 * draw the frame both ways (PDO_CAPTURE_CPUVSH); so does a
+                 * program whose own shader's pipelines are still being
+                 * made, drawn from them meanwhile (renderer.c, settled).
+                 * A point list is drawn on the GPU alone (its squares are
+                 * made there; the CPU's vertices are points): its draws
+                 * wait for its pipelines instead. */
+                cpu_too = pdo_gfx_capturing() || (type != 1 && pdo_gfx_vsh_needs_cpu(p->gpu_program));
             }
             if (cpu_too)
                 fetch_vsh(p, base, stride, first, count, vbuf);
             perf_ns[PERF_VSH] += SDL_GetTicksNS() - t;
+            {   /* Why the CPU ran vertex programs, every 5 s (the battery
+                 * and the game thread's time: only some of it is needed) */
+                static uint64_t why[5], last;
+                if (cpu_too)
+                    why[type == 1 ? 0 : p->writes_constants ? 1 : !gpu_p ? 2
+                        : pdo_gfx_capturing() ? 3 : 4] += count;
+                if (pdo_gfx_frame_count() >= last + 300) {
+                    last = pdo_gfx_frame_count();
+                    if (why[0] + why[1] + why[2] + why[3] + why[4])
+                        SDL_Log("d3d: vertex-program vertices made on the CPU in 300 frames: %llu point lists, "
+                                "%llu programs that write constants, %llu with the GPU's off or unable, "
+                                "%llu for a capture, %llu while their own pipeline is made (or one of them)",
+                                (unsigned long long)why[0], (unsigned long long)why[1], (unsigned long long)why[2],
+                                (unsigned long long)why[3], (unsigned long long)why[4]);
+                    SDL_memset(why, 0, sizeof why);
+                }
+            }
         }
         pre = false;
         {   /* How many program draws also have a pixel shader (not drawn yet). */
@@ -2463,6 +2493,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
             }
         }
     } else if (type != 1 && hud_k == 1.0f && pdo_settings_get()->gpu_fixed &&
+               !pdo_gfx_vertex_shader_failed(true) &&
                fvf_on_gpu_job(base, stride, first, count, &gpu_f)) {
         fvf_on_gpu = true;
         pre = (gpu_f.u.layout0[2] & PDO_FVF_PRE) != 0;
@@ -2530,6 +2561,34 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                         d.ff.ps_c1[s][0], d.ff.ps_c1[s][1], d.ff.ps_c1[s][2], d.ff.ps_c1[s][3]);
             }
         }
+    }
+    if (type == 1 && gpu_p && !cpu_too) {
+        /* A point list's squares made by the vertex shader: four vertices
+         * a point, numbered point * 4 + corner (shaders/vsh.vert). The
+         * CPU ran each particle's program and made its square (20-120
+         * thousand vertices a second in Orta's episode 1 on the RP6). */
+        static uint32_t *qi, qcap;
+        pdo_gpu_vsh g;
+        if (n > qcap) {
+            qcap = n * 2;
+            qi = SDL_realloc(qi, qcap * 6 * sizeof *qi);
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t v = order[i] << 2;
+            qi[i * 6 + 0] = v;     qi[i * 6 + 1] = v | 1; qi[i * 6 + 2] = v | 2;
+            qi[i * 6 + 3] = v | 1; qi[i * 6 + 4] = v | 3; qi[i * 6 + 5] = v | 2;
+        }
+        vsh_gpu_job(gpu_p, base, stride, first, count, &g);
+        g.points = RS(RS_POINTSPRITEENABLE) ? 2 : 1;
+        g.point_min = lf(RS(RS_POINTSIZE_MIN));
+        g.point_max = lf(RS(RS_POINTSIZE_MAX));
+        g.point_vp[0] = d.viewport[2] > 0.0f ? d.viewport[2] : 1.0f;
+        g.point_vp[1] = d.viewport[3] > 0.0f ? d.viewport[3] : 1.0f;
+        d.ps.topology = 0;
+        d.ps.cull = 0;
+        pdo_gfx_draw_vsh(&d, &g, count * 4, qi, n * 6, NULL);
+        draws_drawn++;
+        return;
     }
     if (type == 1) {
         draw_points(&d, vbuf, order, n);

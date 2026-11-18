@@ -60,8 +60,9 @@ Lossless Scaling's frame generation. See [PLAN.md](PLAN.md).
 
 Signed with your own release key, so updates install over each other (by hand or with an
 updater such as Obtainium, which takes the APK from the GitHub release). Every release must
-be signed with the same key and have a higher `versionCode` (`app/build.gradle.kts`, with
-`versionName` the same as the PC release's tag).
+be signed with the same key and have a higher `versionCode`: both it and `versionName` come
+from the version in `CMakeLists.txt` (0.1.12 is versionCode 112), so raising that for a PC
+release raises the APK's too.
 
 One-time: make the key with the `keytool` that comes with Android Studio, outside the repo,
 and back the `.jks` file and its password up (a lost key means users must uninstall to

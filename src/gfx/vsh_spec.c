@@ -4,6 +4,7 @@
  * here. */
 #include "gfx/vsh_spec.h"
 #include "gfx/shaders_spv.h"
+#include "gfx/renderer.h"
 #include "config.h"
 
 #include <SDL3/SDL.h>
@@ -91,7 +92,7 @@ static void write_masked(sbuf *b, const char *dst, uint32_t idx, const char *val
     put(b, "        %s%u.%s = %s.%s;\n", dst, idx, sw, val, sw);
 }
 
-static char *gen(const uint32_t *code, uint32_t count)
+static char *gen(const uint32_t *code, uint32_t count, bool compute)
 {
     sbuf b = {0};
     bool v_used[16] = {0}, rel_any = false;
@@ -101,6 +102,8 @@ static char *gen(const uint32_t *code, uint32_t count)
     /* #version stays first. */
     put(&b, "%.*s", (int)(nl - src + 1), src);
     put(&b, "#define PDO_VSH_SPEC 1\n");
+    if (compute)
+        put(&b, "#define PDO_VSH_COMPUTE 1\n");
     put(&b, "%s", nl + 1);
 
     for (uint32_t i = 0; i < count; i++) {
@@ -245,9 +248,114 @@ static bool code_valid(const uint32_t *code, uint32_t count)
     return count > 0;
 }
 
+/* ── Fragment setups (ff.frag with one draw's setup as constants) ────── */
+
+/* The blob's words: [0] pixel shader (combiners) or texture stages; the
+ * stages' color_op, alpha_op, stage_misc (4 x 4 each); alpha_test enable,
+ * func, specular; fog_mode enable, mode; the pixel shader's rgb in, rgb
+ * out, alpha in, alpha out (8 each) and final (4). What the setup does not
+ * use is 0, so that setups differing only there share a shader: the other
+ * kind's fields, stages after the first disabled one, combiner stages past
+ * the count, the alpha function with the test off, the fog mode with fog
+ * off. */
+#define B_COMB    0
+#define B_COP     1
+#define B_AOP     17
+#define B_MISC    33
+#define B_AT      49
+#define B_FOG     52
+#define B_RGBIN   54
+#define B_RGBOUT  62
+#define B_AIN     70
+#define B_AOUT    78
+#define B_FINAL   86
+
+void pdo_fs_spec_blob(const pdo_ff_uniforms *u, bool combiners, int32_t out[PDO_FS_SPEC_WORDS])
+{
+    memset(out, 0, PDO_FS_SPEC_WORDS * sizeof *out);
+    out[B_COMB] = combiners;
+    if (combiners) {
+        int count = u->ps_final[2] & 0xFF;
+        if (count > 8)
+            count = 8;
+        for (int i = 0; i < count; i++) {
+            out[B_RGBIN + i] = u->ps_rgb_in[i];
+            out[B_RGBOUT + i] = u->ps_rgb_out[i];
+            out[B_AIN + i] = u->ps_a_in[i];
+            out[B_AOUT + i] = u->ps_a_out[i];
+        }
+        memcpy(&out[B_FINAL], u->ps_final, 4 * sizeof(int32_t));
+        for (int s = 0; s < 4; s++) {
+            out[B_MISC + s * 4 + 1] = u->stage_misc[s][1];      /* has texture */
+            out[B_MISC + s * 4 + 3] = u->stage_misc[s][3];      /* shadow map */
+        }
+    } else {
+        for (int s = 0; s < 4 && u->color_op[s][0] > 1; s++) {
+            memcpy(&out[B_COP + s * 4], u->color_op[s], 4 * sizeof(int32_t));
+            memcpy(&out[B_AOP + s * 4], u->alpha_op[s], 4 * sizeof(int32_t));
+            memcpy(&out[B_MISC + s * 4], u->stage_misc[s], 4 * sizeof(int32_t));
+        }
+        out[B_AT + 2] = u->alpha_test[3];                       /* specular */
+    }
+    out[B_AT] = u->alpha_test[0] != 0;
+    out[B_AT + 1] = u->alpha_test[0] ? u->alpha_test[1] : 0;
+    out[B_FOG] = u->fog_mode[0] != 0;
+    out[B_FOG + 1] = u->fog_mode[0] ? u->fog_mode[1] : 0;
+}
+
+static void put_ivec4s(sbuf *b, const char *name, const int32_t *w, int n)
+{
+    put(b, "const ivec4 %s[%d] = ivec4[%d](", name, n, n);
+    for (int i = 0; i < n; i++)
+        put(b, "%sivec4(%d, %d, %d, %d)", i ? ", " : "", w[i * 4], w[i * 4 + 1], w[i * 4 + 2], w[i * 4 + 3]);
+    put(b, ");\n");
+}
+
+char *pdo_fs_spec_glsl(const int32_t *w)
+{
+    sbuf b = { 0 };
+    const char *src = ff_frag_src, *nl = strchr(src, '\n');
+
+    if (!nl || strncmp(src, "#version", 8) != 0)
+        return NULL;
+    put(&b, "%.*s", (int)(nl - src + 1), src);          /* #version */
+    put(&b, "#define PDO_FF_SPEC\n");
+    if (w[B_COMB])
+        put(&b, "#define PIXEL_SHADER\n");
+    put_ivec4s(&b, "color_op", &w[B_COP], 4);
+    put_ivec4s(&b, "alpha_op", &w[B_AOP], 4);
+    put_ivec4s(&b, "stage_misc", &w[B_MISC], 4);
+    put_ivec4s(&b, "ps_rgb_in", &w[B_RGBIN], 2);
+    put_ivec4s(&b, "ps_rgb_out", &w[B_RGBOUT], 2);
+    put_ivec4s(&b, "ps_a_in", &w[B_AIN], 2);
+    put_ivec4s(&b, "ps_a_out", &w[B_AOUT], 2);
+    put(&b, "const ivec4 ps_final = ivec4(%d, %d, %d, %d);\n", w[B_FINAL], w[B_FINAL + 1], w[B_FINAL + 2],
+        w[B_FINAL + 3]);
+    put(&b, "const ivec4 fog_mode = ivec4(%d, %d, 0, 0);\n", w[B_FOG], w[B_FOG + 1]);
+    put(&b, "#define alpha_test ivec4(%d, %d, u_alpha_test.z, %d)\n", w[B_AT], w[B_AT + 1], w[B_AT + 2]);
+    put(&b, "#line 2\n%s", nl + 1);
+    return b.p;
+}
+
 char *pdo_vsh_spec_glsl(const uint32_t *code, uint32_t count)
 {
-    return code_valid(code, count) ? gen(code, count) : NULL;
+    return code_valid(code, count) ? gen(code, count, false) : NULL;
+}
+
+/* The program's compute variant (vsh.vert's PDO_VSH_COMPUTE): run once a
+ * vertex, its outputs written to a buffer (renderer.c, the vertex pre-pass). */
+static char *comp_glsl(const uint32_t *code, uint32_t count)
+{
+    return code_valid(code, count) ? gen(code, count, true) : NULL;
+}
+
+uint64_t pdo_vsh_comp_key(uint64_t vkey)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (int i = 0; i < 8; i++)
+        h = (h ^ ((vkey >> (8 * i)) & 0xFF)) * 0x100000001B3ull;
+    h = (h ^ 'C') * 0x100000001B3ull;
+    return h ? h : 1;
 }
 
 /* FNV-1a, 64 bits. */
@@ -257,6 +365,23 @@ static uint64_t fnv(uint64_t h, const void *p, size_t n)
     for (size_t i = 0; i < n; i++)
         h = (h ^ s[i]) * 0x100000001B3ull;
     return h;
+}
+
+uint64_t pdo_fs_spec_key(const int32_t *w)
+{
+    static uint64_t base;
+    uint64_t h;
+
+    if (!base)
+        base = fnv(fnv(0xCBF29CE484222325ull, "ff", 2), ff_frag_src, sizeof ff_frag_src);
+    h = fnv(base, w, PDO_FS_SPEC_WORDS * sizeof *w);
+    return h ? h : 1;
+}
+
+/* What shaders/ holds is for this build of vsh.vert and ff.frag. */
+static uint64_t build_key(void)
+{
+    return fnv(pdo_vsh_spec_key(NULL, 0), ff_frag_src, sizeof ff_frag_src);
 }
 
 uint64_t pdo_vsh_spec_key(const uint32_t *code, uint32_t count)
@@ -279,7 +404,8 @@ uint64_t pdo_vsh_spec_key(const uint32_t *code, uint32_t count)
 typedef struct {
     uint64_t key;
     int      state;             /* 0 waiting, 1 ready, -1 failed */
-    uint32_t *code, count;      /* while waiting */
+    int      kind;              /* 0 a vertex program, 1 a fragment setup, 2 a program's compute variant */
+    uint32_t *code, count;      /* while waiting: the program (count instructions), or the setup */
     uint32_t *spv;
     size_t   bytes;
 } entry;
@@ -367,7 +493,7 @@ static void tidy_cache(void)
              '/'
 #endif
              );
-    snprintf(want, sizeof want, "%016llx", (unsigned long long)pdo_vsh_spec_key(NULL, 0));
+    snprintf(want, sizeof want, "%016llx", (unsigned long long)build_key());
     have = SDL_LoadFile(stamp, &size);
     if (have && size == strlen(want) && !memcmp(have, want, size)) {
         SDL_free(have);
@@ -392,11 +518,12 @@ static void tidy_cache(void)
     SDL_CreateDirectory(dir);
     SDL_SaveFile(stamp, want, strlen(want));
     if (n)
-        SDL_Log("gfx: %d vertex program shaders of another build removed", n);
+        SDL_Log("gfx: %d shaders of another build removed", n);
 }
 
-static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t key)
+static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t key, int kind)
 {
+    const char *what = kind == 1 ? "fragment setup" : kind == 2 ? "vertex program (compute)" : "vertex program";
     glslang_input_t in;
     glslang_shader_t *sh;
     glslang_program_t *prog = NULL;
@@ -404,7 +531,7 @@ static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t ke
 
     memset(&in, 0, sizeof in);
     in.language = GLSLANG_SOURCE_GLSL;
-    in.stage = GLSLANG_STAGE_VERTEX;
+    in.stage = kind == 1 ? GLSLANG_STAGE_FRAGMENT : kind == 2 ? GLSLANG_STAGE_COMPUTE : GLSLANG_STAGE_VERTEX;
     in.client = GLSLANG_CLIENT_VULKAN;
     in.client_version = GLSLANG_TARGET_VULKAN_1_0;
     in.target_language = GLSLANG_TARGET_SPV;
@@ -418,16 +545,16 @@ static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t ke
     if (!sh)
         return false;
     if (!glslang_shader_preprocess(sh, &in) || !glslang_shader_parse(sh, &in)) {
-        SDL_Log("gfx: vertex program %016llx: %s", (unsigned long long)key, glslang_shader_get_info_log(sh));
+        SDL_Log("gfx: %s %016llx: %s", what, (unsigned long long)key, glslang_shader_get_info_log(sh));
         goto out;
     }
     prog = glslang_program_create();
     glslang_program_add_shader(prog, sh);
     if (!glslang_program_link(prog, GLSLANG_MSG_SPV_RULES_BIT | GLSLANG_MSG_VULKAN_RULES_BIT)) {
-        SDL_Log("gfx: vertex program %016llx: %s", (unsigned long long)key, glslang_program_get_info_log(prog));
+        SDL_Log("gfx: %s %016llx: %s", what, (unsigned long long)key, glslang_program_get_info_log(prog));
         goto out;
     }
-    glslang_program_SPIRV_generate(prog, GLSLANG_STAGE_VERTEX);
+    glslang_program_SPIRV_generate(prog, in.stage);
     *bytes = glslang_program_SPIRV_get_size(prog) * 4;
     *spv = malloc(*bytes);
     if (*spv) {
@@ -467,6 +594,7 @@ static int SDLCALL work(void *unused)
         {
             uint64_t key = e->key, t0 = SDL_GetTicksNS();
             uint32_t *code = e->code, count = e->count, *spv = NULL;
+            int kind = e->kind;
             size_t bytes = 0;
             bool ok;
             char *glsl;
@@ -474,15 +602,29 @@ static int SDLCALL work(void *unused)
             e->code = NULL;     /* ours now; e may move while unlocked */
             SDL_UnlockMutex(lock);
             ok = load(key, &spv, &bytes);
-            if (!ok && (glsl = pdo_vsh_spec_glsl(code, count)) != NULL) {
-                ok = compile(glsl, &spv, &bytes, key);
+            glsl = ok ? NULL : kind == 1 ? pdo_fs_spec_glsl((const int32_t *)code)
+                 : kind == 2 ? comp_glsl(code, count) : pdo_vsh_spec_glsl(code, count);
+            if (glsl) {
+                ok = compile(glsl, &spv, &bytes, key, kind);
                 free(glsl);
                 if (ok)
                     save(key, spv, bytes);
-                if (n_logged++ < 64)
-                    SDL_Log("gfx: vertex program %016llx (%u instructions) %s in %.0f ms", (unsigned long long)key,
-                            count, ok ? "made into its own shader" : "left to the interpreter",
-                            (double)(SDL_GetTicksNS() - t0) / 1e6);
+                if (n_logged++ < 96) {
+                    if (kind == 2)
+                        SDL_Log("gfx: vertex program %016llx (%u instructions) %s in %.0f ms",
+                                (unsigned long long)key, count, ok ? "made into its compute shader" : "left without one",
+                                (double)(SDL_GetTicksNS() - t0) / 1e6);
+                    else if (kind)
+                        SDL_Log("gfx: fragment setup %016llx (%s) %s in %.0f ms", (unsigned long long)key,
+                                code[B_COMB] ? "pixel shader" : "texture stages",
+                                ok ? "made into its own shader" : "left to the interpreter",
+                                (double)(SDL_GetTicksNS() - t0) / 1e6);
+                    else
+                        SDL_Log("gfx: vertex program %016llx (%u instructions) %s in %.0f ms",
+                                (unsigned long long)key, count,
+                                ok ? "made into its own shader" : "left to the interpreter",
+                                (double)(SDL_GetTicksNS() - t0) / 1e6);
+                }
             }
             free(code);
             SDL_LockMutex(lock);
@@ -574,6 +716,78 @@ int pdo_vsh_spec_get(uint64_t key, const uint32_t *code, uint32_t count,
     return state;
 }
 
+int pdo_vsh_comp_get(uint64_t vkey, const uint32_t *code, uint32_t count, const uint32_t **spv, size_t *bytes)
+{
+    uint64_t key = pdo_vsh_comp_key(vkey);
+    entry *e;
+    int state;
+
+    if (!pdo_vsh_spec_enabled() || !start())
+        return -1;
+    SDL_LockMutex(lock);
+    e = find(key);
+    if (!e && (e = add(key)) != NULL) {
+        e->kind = 2;
+        e->code = malloc((size_t)count * 32);
+        if (e->code) {
+            memcpy(e->code, code, (size_t)count * 32);
+            e->count = count;
+            n_pending++;
+            SDL_SignalCondition(wake);
+        } else {
+            e->state = -1;
+        }
+    }
+    state = e ? e->state : -1;
+    if (state == 1) {
+        *spv = e->spv;
+        *bytes = e->bytes;
+    }
+    SDL_UnlockMutex(lock);
+    return state;
+}
+
+int pdo_fs_spec_get(uint64_t key, const int32_t *w, const uint32_t **spv, size_t *bytes)
+{
+    entry *e;
+    int state;
+
+    if (!pdo_fs_spec_enabled() || !start())
+        return -1;
+    SDL_LockMutex(lock);
+    e = find(key);
+    if (!e && (e = add(key)) != NULL) {
+        e->kind = 1;
+        e->code = malloc(PDO_FS_SPEC_WORDS * sizeof *w);
+        if (e->code) {
+            memcpy(e->code, w, PDO_FS_SPEC_WORDS * sizeof *w);
+            n_pending++;
+            SDL_SignalCondition(wake);
+        } else {
+            e->state = -1;
+        }
+    }
+    state = e ? e->state : -1;
+    if (state == 1) {
+        *spv = e->spv;
+        *bytes = e->bytes;
+    }
+    SDL_UnlockMutex(lock);
+    return state;
+}
+
+bool pdo_fs_spec_enabled(void)
+{
+    static int known = -1;
+    if (known < 0) {
+        const char *e = getenv("PDO_FS_SPEC");
+        known = !(e && e[0] == '0');
+        if (!known)
+            SDL_Log("gfx: fragment setups interpreted on the GPU (PDO_FS_SPEC=0)");
+    }
+    return known && pdo_vsh_spec_enabled();
+}
+
 bool pdo_vsh_spec_find(uint64_t key, const uint32_t **spv, size_t *bytes)
 {
     entry *e;
@@ -659,5 +873,21 @@ void pdo_vsh_spec_counts(uint32_t *made, uint32_t *failed, uint32_t *pending, do
 }
 
 void pdo_vsh_spec_quit(void) {}
+
+bool pdo_fs_spec_enabled(void) { return false; }
+
+uint64_t pdo_vsh_comp_key(uint64_t vkey) { return vkey ^ 1; }
+
+int pdo_vsh_comp_get(uint64_t vkey, const uint32_t *code, uint32_t count, const uint32_t **spv, size_t *bytes)
+{
+    (void)vkey; (void)code; (void)count; (void)spv; (void)bytes;
+    return -1;
+}
+
+int pdo_fs_spec_get(uint64_t key, const int32_t *w, const uint32_t **spv, size_t *bytes)
+{
+    (void)key; (void)w; (void)spv; (void)bytes;
+    return -1;
+}
 
 #endif

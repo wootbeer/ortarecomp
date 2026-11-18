@@ -24,29 +24,49 @@ layout(set = 2, binding = 2) uniform sampler2D tex2;
 layout(set = 2, binding = 3) uniform sampler2D tex3;
 
 layout(set = 3, binding = 0, std140) uniform FF {
-    ivec4 color_op[4];   // op, arg1, arg2, arg0
-    ivec4 alpha_op[4];   // op, arg1, arg2, arg0
-    ivec4 stage_misc[4]; // result arg, has texture, texcoord set, shadow map
+    ivec4 u_color_op[4];   // op, arg1, arg2, arg0
+    ivec4 u_alpha_op[4];   // op, arg1, arg2, arg0
+    ivec4 u_stage_misc[4]; // result arg, has texture, texcoord set, shadow map
                          // (8 | D3DCMP_* - 0x200, + 16 for 24-bit depth)
     vec4  tfactor;
-    ivec4 alpha_test;    // enable, func, ref (0-255), specular enable
-    ivec4 ps_rgb_in[2];  // pixel shader (register combiners), 8 stages each
-    ivec4 ps_rgb_out[2];
-    ivec4 ps_a_in[2];
-    ivec4 ps_a_out[2];
+    ivec4 u_alpha_test;    // enable, func, ref (0-255), specular enable
+    ivec4 u_ps_rgb_in[2];  // pixel shader (register combiners), 8 stages each
+    ivec4 u_ps_rgb_out[2];
+    ivec4 u_ps_a_in[2];
+    ivec4 u_ps_a_out[2];
     vec4  ps_c0[8];
     vec4  ps_c1[8];
-    ivec4 ps_final;      // final ABCD, final EFG, PSCombinerCount, texture modes
+    ivec4 u_ps_final;      // final ABCD, final EFG, PSCombinerCount, texture modes
     vec4  ps_fc0;
     vec4  ps_fc1;
     vec4  tc_scale[4];   // xy: texel -> normalised for linear textures; z: no alpha;
                          // w: red and green signed (V8U8), stored offset by 128
-    ivec4 fog_mode;      // enable, D3DFOGMODE (0 NONE, 1 EXP, 2 EXP2, 3 LINEAR)
+    ivec4 u_fog_mode;      // enable, D3DFOGMODE (0 NONE, 1 EXP, 2 EXP2, 3 LINEAR)
     vec4  fog_color;
     vec4  fog_params;    // start, end, density
     vec4  bump_mat[4];   // BUMPENVMAT00, 01, 11, 10
     vec4  bump_lum[4];   // BUMPENVLSCALE, BUMPENVLOFFSET
 };
+
+// The draw's setup (which operations, arguments, textures, pixel shader
+// stages, alpha test, fog mode) is read from the uniforms above; a shader
+// specialised for one setup (src/gfx/vsh_spec.c, PDO_FF_SPEC) has these
+// names as constants instead, and the GPU's compiler drops every branch
+// the setup does not take. The values (colours, factors, fog distances,
+// the alpha reference) stay uniforms either way.
+#ifndef PDO_FF_SPEC
+#define color_op u_color_op
+#define alpha_op u_alpha_op
+#define stage_misc u_stage_misc
+#define alpha_test u_alpha_test
+#define ps_rgb_in u_ps_rgb_in
+#define ps_rgb_out u_ps_rgb_out
+#define ps_a_in u_ps_a_in
+#define ps_a_out u_ps_a_out
+#define ps_final u_ps_final
+#define fog_mode u_fog_mode
+#endif
+
 
 vec4 tc_for(int set)
 {

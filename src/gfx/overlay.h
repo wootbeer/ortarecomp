@@ -18,6 +18,14 @@ bool pdo_overlay_event(const SDL_Event *ev);
 
 /* The menu is open: the game waits. */
 bool pdo_overlay_open(void);
+/* The Touch controls page is shown (in the game or the launcher): Android
+ * shows its on-screen controls behind it as they are set. */
+bool pdo_overlay_on_touch_page(void);
+
+/* Where the layer (PDO_OVERLAY_W x PDO_OVERLAY_H) is shown, in the window's
+ * pixels: the game's renderer and the launcher say so each frame, so that a
+ * click or a tap (SDL makes touches clicks) finds the line under it. */
+void pdo_overlay_set_rect(float x, float y, float w, float h);
 
 /* Count a presented frame (for the frame counter). */
 void pdo_overlay_frame(void);

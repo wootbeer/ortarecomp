@@ -975,9 +975,15 @@ void pdo_parallel(uint32_t count, uint32_t chunk, uint32_t min_count,
     pool.count = count;
     pool.chunk = chunk;
     SDL_SetAtomicInt(&pool.next, 0);
-    for (int i = 0; i < pool.workers; i++)
+    /* Only as many workers as there are chunks besides the caller's own:
+     * one woken with nothing to do costs a wake and a sleep (on phones,
+     * power) for nothing. */
+    int wake = (int)((count + chunk - 1) / chunk) - 1;
+    if (wake > pool.workers)
+        wake = pool.workers;
+    for (int i = 0; i < wake; i++)
         SDL_SignalSemaphore(pool.go);
     run_chunks();
-    for (int i = 0; i < pool.workers; i++)
+    for (int i = 0; i < wake; i++)
         SDL_WaitSemaphore(pool.done);
 }

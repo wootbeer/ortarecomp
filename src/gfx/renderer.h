@@ -21,6 +21,13 @@
 #include <stdint.h>
 
 bool pdo_gfx_init(int width, int height);
+/* A pipeline with GPU vertex programs (or, fixed_function, GPU fixed-function
+ * vertices) failed to build on this GPU: those vertices go to the CPU. */
+bool pdo_gfx_vertex_shader_failed(bool fixed_function);
+/* The game thread: whether a vertex program's draws should come with the
+ * CPU's vertices too, its own shader's pipelines not all made yet (the
+ * renderer draws from those meanwhile, not by vsh.vert's interpreter). */
+bool pdo_gfx_vsh_needs_cpu(int32_t program);
 
 /* Threads: the game runs on a thread of its own and the main thread, which
  * owns the window, does all the drawing. On the main thread, before the
@@ -115,6 +122,9 @@ typedef struct pdo_pipeline_state {
     /* renderer only: with gpu_vsh 1, the program's own shader (its
      * gfx/vsh_spec.h key, low and high halves); 0 the interpreter */
     uint32_t vsh_spec[2];
+    /* renderer only: the draw's fragment setup's own shader (gfx/vsh_spec.h
+     * pdo_fs_spec_key, low and high halves); 0 ff.frag's interpreter */
+    uint32_t fs_spec[2];
 } pdo_pipeline_state;
 
 typedef struct pdo_draw {
@@ -197,6 +207,12 @@ typedef struct pdo_gpu_vsh {
                                         * D3DVSDT type (0: absent, reads 0, 0, 0, 1) */
     float    vp_scale[4], vp_offset[4];/* the program's viewport transform; offset w:
                                         * the depth scale */
+    /* A point list (1; 2 with point sprites' texture coordinates): each
+     * point a square of its oPts pixels, within point_min and point_max
+     * (0: none), in a viewport point_vp[] pixels wide and high; the
+     * indices are point * 4 + corner (shaders/vsh.vert). */
+    int      points;
+    float    point_min, point_max, point_vp[2];
 } pdo_gpu_vsh;
 
 /* A draw of nv vertices made by g; idx index them from 0. cpu, if not
@@ -236,6 +252,8 @@ typedef struct pdo_fvf_uniforms {
 
 /* Reversed depth (renderer.c): the depth buffer holds 1 - z. */
 bool pdo_gfx_depth_reversed(void);
+/* Shaders are being made for draws that wait for them: the overlay's note. */
+bool pdo_gfx_building(void);
 
 enum { PDO_FVF_PRE = 1, PDO_FVF_DIFFUSE = 2, PDO_FVF_SPECULAR = 4, PDO_FVF_NORMAL = 8,
        PDO_FVF_LIT = 16, PDO_FVF_FOGTABLE = 32 };

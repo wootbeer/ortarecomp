@@ -13,10 +13,20 @@
 static char data_dir[PDO_PATH_MAX];
 char pdo_log_file[PDO_PATH_MAX];
 
+/* Depth: 32-bit float, reversed, for precision past the console's, on PC;
+ * on Android the game's own 24 bits: with 4x MSAA a sample is half the
+ * size in the tile memory, measured a few frames a second faster on the
+ * RP6 at 2x (52 against 49), and no z-fighting seen. */
+#ifdef __ANDROID__
+#define PDO_DEPTH_REVERSED_DEFAULT false
+#else
+#define PDO_DEPTH_REVERSED_DEFAULT true
+#endif
+
 static pdo_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
                                   .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
-                                  .skip_logos = true, .rumble = 100, .hrtf = true, .depth_reversed = true, .pic_contrast = 100,
+                                  .skip_logos = true, .rumble = 100, .touch_size = 100, .touch_opacity = 30, .hrtf = true, .depth_reversed = PDO_DEPTH_REVERSED_DEFAULT, .pic_contrast = 100,
                                   .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
 
 pdo_settings *pdo_settings_get(void)
@@ -204,6 +214,15 @@ bool pdo_config_load(pdo_config *cfg)
             settings.skip_launcher = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "rumble") == 0)
             settings.rumble = clamp_int(SDL_atoi(eq + 1), 0, 100);
+        else if (strcmp(line, "touch_buttons") == 0)
+            settings.touch_buttons = strcmp(eq + 1, "always") == 0 ? PDO_TOUCH_ALWAYS
+                                   : strcmp(eq + 1, "off") == 0 ? PDO_TOUCH_OFF : PDO_TOUCH_AUTO;
+        else if (strcmp(line, "touch_size") == 0)
+            settings.touch_size = clamp_int(SDL_atoi(eq + 1), 90, 130);
+        else if (strcmp(line, "touch_opacity") == 0)
+            settings.touch_opacity = clamp_int(SDL_atoi(eq + 1), 10, 100);
+        else if (strcmp(line, "gpu_driver") == 0)
+            SDL_strlcpy(settings.gpu_driver, eq + 1, sizeof settings.gpu_driver);
         else if (strcmp(line, "depth_reversed") == 0)
             settings.depth_reversed = SDL_atoi(eq + 1) != 0;
         else if (strcmp(line, "picture_crt") == 0)
@@ -269,6 +288,10 @@ bool pdo_config_save(const pdo_config *cfg)
                  "skip_logos=%d\n"
                  "skip_launcher=%d\n"
                  "rumble=%d\n"
+                 "touch_buttons=%s\n"
+                 "touch_size=%d\n"
+                 "touch_opacity=%d\n"
+                 "gpu_driver=%s\n"
                  "depth_reversed=%d\n"
                  "picture_crt=%d\n"
                  "picture_brightness=%d\n"
@@ -293,7 +316,9 @@ bool pdo_config_save(const pdo_config *cfg)
                  settings.fps30 ? 30 : 60,
                  settings.shadow_original ? "low" : "high",
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
-                 settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble, settings.depth_reversed,
+                 settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble,
+                 settings.touch_buttons == PDO_TOUCH_ALWAYS ? "always" : settings.touch_buttons == PDO_TOUCH_OFF ? "off" : "auto",
+                 settings.touch_size, settings.touch_opacity, settings.gpu_driver, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
                  settings.pic_saturation, settings.audio_out == PDO_AUDIO_HEADPHONES ? "headphones"
                  : settings.audio_out == PDO_AUDIO_SURROUND ? "surround" : "speakers",
@@ -302,6 +327,26 @@ bool pdo_config_save(const pdo_config *cfg)
         return false;
     n += (int)pdo_input_save(text + n, sizeof text - (size_t)n);
     return SDL_SaveFile(path, text, (size_t)n);
+}
+
+/* The settings in the log: at the start, and again when the menu closes
+ * with any of them changed (a log's start alone left changes made in
+ * play out of it). */
+void pdo_settings_log(void)
+{
+    static char last[512];
+    char line[512];
+    const pdo_settings *s = pdo_settings_get();
+    snprintf(line, sizeof line, "%gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, "
+             "fixed function on %s, aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
+             s->anisotropy, s->bloom, s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
+             s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
+             s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
+             s->fps30 ? 30 : 60, s->save_slot);
+    if (strcmp(line, last)) {
+        SDL_Log("settings%s: %s", last[0] ? " changed" : "", line);
+        SDL_strlcpy(last, line, sizeof last);
+    }
 }
 
 bool pdo_settings_save(void)

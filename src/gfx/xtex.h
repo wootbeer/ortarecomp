@@ -37,6 +37,11 @@ void pdo_xtex_level(const pdo_xtex_info *info, uint32_t level, pdo_xtex_info *ou
 /* Decode one level (info from pdo_xtex_describe or pdo_xtex_level) into tightly packed RGBA8 (width*height*4 bytes). Unknown
  * formats become magenta so they are easy to spot on screen. */
 void pdo_xtex_decode(const pdo_xtex_info *info, const uint8_t *src, uint8_t *rgba);
+/* 1, 2 or 3 for DXT1, DXT3 and DXT5, which the GPU's BC1, BC2 and BC3 read
+ * as they are (blocks in order, not swizzled); else 0. */
+int pdo_xtex_bc(const pdo_xtex_info *info);
+/* A level's bytes as stored: blocks for DXT. */
+uint32_t pdo_xtex_bc_bytes(const pdo_xtex_info *info);
 
 const char *pdo_xtex_format_name(uint32_t format);
 

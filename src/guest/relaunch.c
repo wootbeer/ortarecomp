@@ -15,7 +15,8 @@
  * hooks were written for one boot per process (timers, threads blocked in
  * waits, the heap, caches keyed by guest addresses), and a restart resets
  * all of it. The window closes and opens again; settings, the window's
- * place and the log carry on (the log is appended to).
+ * place and the log carry on (the log is appended to). On Android the
+ * activity starts again the same way (OrtaActivity.restartWith).
  */
 
 #include "guest/guest.h"
@@ -35,6 +36,9 @@
 #include <windows.h>
 #else
 #include <unistd.h>
+#endif
+#ifdef __ANDROID__
+#include <jni.h>
 #endif
 
 #define PAGE_SIZE   4096u
@@ -215,6 +219,30 @@ static void restart_on(pdo_program program, const char *data_file)
         CloseHandle(pi.hThread);
         CloseHandle(pi.hProcess);
         ExitProcess(0);
+    }
+#elif defined(__ANDROID__)
+    {
+        /* An app cannot exec itself: OrtaActivity.restartWith hands the
+         * arguments (without argv[0]) to RelaunchActivity, in a process of
+         * its own, which starts the game again once this process ends. */
+        JNIEnv *env = (JNIEnv *)SDL_GetAndroidJNIEnv();
+        jobject activity = (jobject)SDL_GetAndroidActivity();
+        jclass cls = activity ? (*env)->GetObjectClass(env, activity) : NULL;
+        jmethodID mid = cls ? (*env)->GetStaticMethodID(env, cls, "restartWith", "([Ljava/lang/String;)V") : NULL;
+        jclass string_cls = (*env)->FindClass(env, "java/lang/String");
+        jobjectArray jargs = mid && string_cls ? (*env)->NewObjectArray(env, n - 1, string_cls, NULL) : NULL;
+
+        if (jargs) {
+            for (int i = 1; i < n; i++) {
+                jstring a = (*env)->NewStringUTF(env, args[i]);
+                (*env)->SetObjectArrayElement(env, jargs, i - 1, a);
+                (*env)->DeleteLocalRef(env, a);
+            }
+            (*env)->CallStaticVoidMethod(env, cls, mid, jargs);
+        }
+        if ((*env)->ExceptionCheck(env))
+            (*env)->ExceptionClear(env);
+        SDL_Log("launch: cannot start %s again", pdo_program_name(program));
     }
 #else
     /* The same process, a new image: Steam and the Deck see no exit. */

@@ -27,6 +27,7 @@ typedef struct ui {
     SDL_Renderer *renderer;
     Uint64        last_draw;
     bool          quit_requested;
+    bool          borrowed;     /* the launcher's window: left open after */
 } ui;
 
 static void SDLCALL dialog_cb(void *userdata, const char *const *files, int filter)
@@ -54,7 +55,7 @@ static void draw(ui *u, double fraction)
     if (!u->renderer)
         return;
     SDL_GetRenderOutputSize(u->renderer, &w, &h);
-    SDL_SetRenderDrawColor(u->renderer, 0x14, 0x10, 0x1c, 0xff);
+    SDL_SetRenderDrawColor(u->renderer, 6, 9, 16, 0xff);   /* the launcher's backdrop */
     SDL_RenderClear(u->renderer);
     if (fraction >= 0) {
         bar.x = w * 0.1f;
@@ -176,22 +177,32 @@ static void warn_unverified(ui *u, const pdo_game_check *check)
     SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_WARNING, WINDOW_TITLE, text, u->window);
 }
 
-bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check)
+bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check, SDL_Window *window, SDL_Renderer *renderer)
 {
     ui u;
     char problem[1024] = "";
+    char title[256];
     bool ok = false;
 
     SDL_zero(u);
+    if (window && renderer) {
+        u.window = window;
+        u.renderer = renderer;
+        u.borrowed = true;
+    } else
 #ifdef __ANDROID__
     if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, 640, 360, SDL_WINDOW_FULLSCREEN, &u.window, &u.renderer))
 #else
     if (!SDL_CreateWindowAndRenderer(WINDOW_TITLE, 640, 360, 0, &u.window, &u.renderer))
 #endif
         SDL_Log("setup: no window (%s); dialogs will be parentless", SDL_GetError());
+    SDL_strlcpy(title, u.window ? SDL_GetWindowTitle(u.window) : WINDOW_TITLE, sizeof title);
     draw(&u, -1);
 
-    {
+    /* Files found on their own only on a first start: from the launcher
+     * the player asked to choose, and the search would find the files
+     * already in use (the app's game folder) and return at once. */
+    if (!u.borrowed) {
         char found[PDO_PATH_MAX], err[1024] = "";
         bool is_iso;
 
@@ -203,7 +214,7 @@ bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check)
                 ok = pdo_assets_import_iso(found, dst, progress_cb, &u, check, err, sizeof err);
                 if (ok)
                     SDL_strlcpy(cfg->game_dir, dst, sizeof cfg->game_dir);
-                SDL_SetWindowTitle(u.window, WINDOW_TITLE);
+                SDL_SetWindowTitle(u.window, title);
             } else {
                 ok = pdo_assets_check_dir(found, check, err, sizeof err);
                 if (ok)
@@ -230,7 +241,7 @@ bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check)
             ok = pdo_assets_import_iso(path, dst, progress_cb, &u, check, err, sizeof err);
             if (ok)
                 SDL_strlcpy(cfg->game_dir, dst, sizeof cfg->game_dir);
-            SDL_SetWindowTitle(u.window, WINDOW_TITLE);
+            SDL_SetWindowTitle(u.window, title);
         } else {
             ok = pdo_assets_check_dir(path, check, err, sizeof err);
             if (ok)
@@ -246,6 +257,8 @@ bool pdo_setup_run(pdo_config *cfg, pdo_game_check *check)
         if (!pdo_config_save(cfg))
             SDL_Log("setup: could not save settings: %s", SDL_GetError());
     }
+    if (u.borrowed)
+        return ok;
     if (u.renderer)
         SDL_DestroyRenderer(u.renderer);
     if (u.window)

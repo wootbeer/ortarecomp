@@ -17,14 +17,44 @@
 // registers plain variables. Both runs then read the same program; only
 // a draw paired with another program (prev_prog) needs the interpreter.
 
+#ifdef PDO_VSH_COMPUTE
+// The vertex pre-pass (renderer.c, vout_prepass): a program's own code run
+// once a vertex of a game frame, as a compute shader, its outputs written
+// for the draws (vout.vert) -- however often the frame is shown, and
+// blended with the frame before's outputs there. This frame's streams and
+// constants alone. Draw: interp.x the vertex count, interp.y where the
+// outputs start in vout.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Streams { uint blob[]; };
+#define pblob blob
+struct VOut { vec4 pos; vec4 tc[4]; uint d0, d1; float fog, psize; };
+layout(set = 1, binding = 0, std430) writeonly buffer Outs { VOut vout[]; };
+#define UBO_SET 2
+#else
 layout(set = 0, binding = 0, std430) readonly buffer Streams { uint blob[]; };
 layout(set = 0, binding = 1, std430) readonly buffer Programs { uvec4 prog[]; };
 layout(set = 0, binding = 2, std430) readonly buffer Constants { vec4 cbuf[]; };
 // Frame interpolation: the previous game frame's streams and constants.
 layout(set = 0, binding = 3, std430) readonly buffer PrevStreams { uint pblob[]; };
 layout(set = 0, binding = 4, std430) readonly buffer PrevConstants { vec4 pcbuf[]; };
+#define UBO_SET 1
+#endif
 
-layout(set = 1, binding = 0, std140) uniform Draw {
+// The draw's 192 constants and its partner's in the frame before (kp,
+// blending), pushed with each draw (renderer.c, push_consts): read from a
+// uniform block at fixed places, not from the frame's whole storage buffer
+// (cbuf, pcbuf: bound still, unread) -- a phone GPU keeps them on chip.
+// Two blocks of 3 KiB: SDL binds a uniform block 4 KiB wide (one of 6 KiB
+// read the earlier frame's constants past its end, and vertices flew in
+// the in-between frames).
+layout(set = UBO_SET, binding = 1, std140) uniform Consts { vec4 kc[192]; };
+#ifdef PDO_VSH_COMPUTE
+#define kp kc
+#else
+layout(set = UBO_SET, binding = 2, std140) uniform PrevConsts { vec4 kp[192]; };
+#endif
+
+layout(set = UBO_SET, binding = 0, std140) uniform Draw {
     ivec4 info;          // program base (uvec4 units), instructions, constant base (vec4 units),
                          // reversed depth (renderer.c)
     ivec4 inputs[16];    // per v register: byte base in blob, stride, offset, D3DVSDT type (0: absent)
@@ -35,12 +65,19 @@ layout(set = 1, binding = 0, std140) uniform Draw {
     // match too, z 1 to tint it (PDO_INTERP_TINT: it could not pair);
     // prev_in its v registers' byte bases; blend_t.x how far from
     // the previous frame (1: this frame, as drawn without interpolation).
+    // w: a point list's largest point size (float bits; 0 none).
     ivec4 interp;
     ivec4 prev_in[4];
+    // y: a point list (1; 2 with point sprites' texture coordinates), each
+    // point drawn as a square of its oPts pixels: four vertices a point,
+    // vertex index point * 4 + corner; z, w the viewport's width and
+    // height in the game's pixels; vp_scale.w the smallest point size.
     vec4  blend_t;
     // Paired with a draw on another program: its base and count (y 0: the
-    // same program); z and w 0. Each program then runs on its own frame's constants and
-    // streams, and the outputs are blended.
+    // same program); w 0. Each program then runs on its own frame's constants and
+    // streams, and the outputs are blended. z 1: blending the same program,
+    // run it once on blended constants and streams instead (half the work;
+    // renderer.c, interp_once).
     ivec4 prev_prog;
     // The paired draw's viewport transform (c[58], c[59]): its positions
     // are in its own pixels (the game renders a boost's and a brake's end
@@ -49,6 +86,7 @@ layout(set = 1, binding = 0, std140) uniform Draw {
     vec4  prev_vp_offset;
 };
 
+#ifndef PDO_VSH_COMPUTE
 layout(location = 0) out vec4 v_diffuse;
 layout(location = 1) out vec4 v_specular;
 layout(location = 2) out vec4 v_tc0;
@@ -56,9 +94,11 @@ layout(location = 3) out vec4 v_tc1;
 layout(location = 4) out vec4 v_tc2;
 layout(location = 5) out vec4 v_tc3;
 layout(location = 6) out float v_fog;
+#endif
 
 // Reads from this frame's streams, or the previous frame's (from_prev).
 bool from_prev;
+int vidx;       // the vertex: gl_VertexIndex, or its point's in a point list
 uint word(uint i) { return from_prev ? pblob[i] : blob[i]; }
 uint rd8(uint a)  { return (word(a >> 2) >> ((a & 3u) * 8u)) & 0xFFu; }
 uint rd16(uint a) { return rd8(a) | (rd8(a + 1u) << 8); }
@@ -75,9 +115,26 @@ vec4 fetch_at(int r, int base)
     ivec4 d = inputs[r];
     vec4 o = vec4(0.0, 0.0, 0.0, 1.0);
     uint t = uint(d.w), n = t >> 4;
-    uint a = uint(base) + uint(gl_VertexIndex) * uint(d.y) + uint(d.z);
+    uint a = uint(base) + uint(vidx) * uint(d.y) + uint(d.z);
     if (t == 0u) return o;
     uint k = t & 15u;
+    // Whole words where the data is aligned (the usual case): one load a
+    // word, not one a byte (a phone GPU spent much of a scene's vertex work
+    // on these loads). The same values as the byte-wise reads below.
+    if (t == 0x40u && (a & 3u) == 0u) {             // D3DCOLOR: B, G, R, A
+        vec4 c = unpackUnorm4x8(word(a >> 2));
+        return vec4(c.z, c.y, c.x, c.w);
+    }
+    if ((k == 5u || k == 1u) && (a & 1u) == 0u) {   // SHORTn, NORMSHORTn
+        uint w0 = word(a >> 2), w1 = n > 1u ? word((a >> 2) + 1u) : 0u, w2 = n > 2u ? word((a >> 2) + 2u) : 0u;
+        uint h = (a >> 1) & 1u;                     // starting in a word's upper half
+        for (uint i = 0u; i < n && i < 4u; i++) {
+            uint j = i + h, w = j < 2u ? w0 : j < 4u ? w1 : w2;
+            float v = float(int((j & 1u) != 0u ? w : w << 16) >> 16);
+            o[i] = k == 5u ? v : max(v / 32767.0, -1.0);
+        }
+        return o;
+    }
     if (k == 2u) {                                  // FLOATn
         for (uint i = 0u; i < n && i < 4u; i++) o[i] = uintBitsToFloat(rd32(a + 4u * i));
     } else if (t == 0x40u) {                        // D3DCOLOR: B, G, R, A
@@ -144,10 +201,10 @@ vec4 R[13];                     // run_spec leaves oPos in R[12]
 vec4 cread(int i)
 {
     if (mode == 1)
-        return pcbuf[interp.x + i];
+        return kp[i];
     if (mode == 2 || blend_t.x >= 1.0 || interp.x < 0)
-        return cbuf[info.z + i];
-    return mix(pcbuf[interp.x + i], cbuf[info.z + i], blend_t.x);
+        return kc[i];
+    return mix(kp[i], kc[i], blend_t.x);
 }
 
 // A zero the compiler cannot see through (prev_prog.w is always 0): with
@@ -165,11 +222,11 @@ vec4 operand(uint w, int cidx)
     if (((w >> 8) & 1u) == 0u)
         s = R[w & 0xFFu];
     else if (mode == 1)
-        s = pcbuf[interp.x + cidx];
+        s = kp[cidx];
     else if (mode == 2 || blend_t.x >= 1.0 || interp.x < 0)
-        s = cbuf[info.z + cidx];
+        s = kc[cidx];
     else
-        s = mix(pcbuf[interp.x + cidx], cbuf[info.z + cidx], blend_t.x);
+        s = mix(kp[cidx], kc[cidx], blend_t.x);
     vec4 v = vec4(s[(w >> 12) & 3u], s[(w >> 14) & 3u], s[(w >> 16) & 3u], s[(w >> 18) & 3u]);
     return ((w >> 9) & 1u) != 0u ? -v : v;
 }
@@ -264,10 +321,41 @@ vec4 to_clip(vec4 p, vec4 sc, vec4 of)
     return c;
 }
 
+#ifdef PDO_VSH_COMPUTE
 void main()
 {
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(interp.x))
+        return;
+    vidx = int(i);
+    mode = 2;                   // this frame's alone
+    run_spec();
+    VOut o;
+    o.pos = to_clip(R[12], vp_scale, vp_offset);
+    for (int t = 0; t < 4; t++) o.tc[t] = O[9 + t];
+    // Colors as the CPU packs them: NaN as 0, clamped, to 8 bits.
+    o.d0 = packUnorm4x8(mix(clamp(O[3], 0.0, 1.0), vec4(0.0), isnan(O[3])));
+    o.d1 = packUnorm4x8(mix(clamp(O[4], 0.0, 1.0), vec4(0.0), isnan(O[4])));
+    o.fog = O[5].x;
+    o.psize = O[6].x;
+    vout[uint(interp.y) + i] = o;
+}
+#else
+void main()
+{
+    vidx = blend_t.y != 0.0 ? gl_VertexIndex >> 2 : gl_VertexIndex;
     bool blending = interp.x >= 0 && blend_t.x < 1.0;
-    if (blending) {
+    if (blending && prev_prog.z != 0 && prev_prog.y == 0) {
+        // Once, on both frames' constants and streams blended (mode 0):
+        // for the linear math that places vertices (a matrix, bones'
+        // matrices weighted) the same as blending the two runs.
+#ifdef PDO_VSH_SPEC
+        run_spec();
+#else
+        run(info.x, info.y);
+#endif
+        gl_Position = to_clip(R[12], mix(prev_vp_scale, vp_scale, blend_t.x), mix(prev_vp_offset, vp_offset, blend_t.x));
+    } else if (blending) {
         // Each frame's run as drawn -- the earlier frame's program (another
         // one across a switch) on its constants and streams, then this
         // frame's -- each through its own viewport, and the outputs blend
@@ -303,6 +391,18 @@ void main()
 #endif
         gl_Position = to_clip(R[12], vp_scale, vp_offset);
     }
+    if (blend_t.y != 0.0) {
+        // A point's square, as draw_points (d3d_hle.c) makes it: oPts
+        // pixels (within the smallest and largest sizes) around it.
+        int c = gl_VertexIndex & 3;
+        float sx = float(c & 1), sy = float(c >> 1);
+        float ps = max(O[6].x, vp_scale.w), mx = intBitsToFloat(interp.w);
+        if (mx > 0.0) ps = min(ps, mx);
+        gl_Position.x += (sx * 2.0 - 1.0) * (ps / blend_t.z * gl_Position.w);
+        gl_Position.y -= (sy * 2.0 - 1.0) * (ps / blend_t.w * gl_Position.w);
+        if (blend_t.y >= 2.0)
+            for (int i = 9; i <= 12; i++) O[i] = vec4(sx, sy, 0.0, 1.0);
+    }
     // Colors as the CPU packs them: NaN as 0, clamped, to 8 bits.
     vec4 d0 = mix(clamp(O[3], 0.0, 1.0), vec4(0.0), isnan(O[3]));
     vec4 d1 = mix(clamp(O[4], 0.0, 1.0), vec4(0.0), isnan(O[4]));
@@ -314,3 +414,4 @@ void main()
     v_tc3 = O[12];
     v_fog = O[5].x;
 }
+#endif

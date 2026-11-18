@@ -25,6 +25,13 @@ val keystoreProperties = Properties().apply {
 }
 val hasReleaseKeystore = keystoreProperties.getProperty("storeFile") != null
 
+// The version is the PC release's, from CMakeLists.txt (project(OrtaRecomp VERSION a.b.c)):
+// versionName a.b.c, versionCode a*10000 + b*100 + c, so each release's is higher than the last.
+val ortaVersion: String = Regex("""project\(OrtaRecomp VERSION ([0-9]+\.[0-9]+\.[0-9]+)""")
+    .find(rootProject.file("../CMakeLists.txt").readText())?.groupValues?.get(1)
+    ?: throw GradleException("No project(OrtaRecomp VERSION a.b.c) in CMakeLists.txt")
+val ortaVersionCode: Int = ortaVersion.split(".").map { it.toInt() }.let { it[0] * 10000 + it[1] * 100 + it[2] }
+
 android {
     namespace = "io.github.wootbeer.ortarecomp"
     compileSdk = 35
@@ -35,9 +42,8 @@ android {
         // Android 11: memfd_create in the C library (the guest's memory, xboxrecomp's platform layer).
         minSdk = 30
         targetSdk = 35
-        // The same version name as the PC release it matches.
-        versionCode = 1
-        versionName = "0.1.12"
+        versionCode = ortaVersionCode
+        versionName = ortaVersion
 
         ndk {
             abiFilters += "arm64-v8a"
@@ -49,9 +55,11 @@ android {
                 arguments += listOf("-DPDO_RELEASE=ON", "-DANDROID_STL=c++_shared")
                 if (desktopDir != null) {
                     arguments += "-DPDO_GEN_DIR=$desktopDir/gen"
+                    arguments += "-DPD1_GEN_DIR=$desktopDir/gen-pd1"
                 }
-                // libmain.so, the game with SDL linked in; nothing else the root project defines.
-                targets += listOf("OrtaRecomp")
+                // libmain.so, the game with SDL linked in; and libadrenotools' hooks for a
+                // custom GPU driver (src/android/gpu_driver/), loaded from the APK's library folder.
+                targets += listOf("OrtaRecomp", "hook_impl", "main_hook")
             }
         }
     }
@@ -82,6 +90,14 @@ android {
             if (hasReleaseKeystore) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+    }
+
+    // libadrenotools loads its hooks from nativeLibraryDir, which holds the libraries only when
+    // they are unpacked from the APK at install.
+    packaging {
+        jniLibs {
+            useLegacyPackaging = true
         }
     }
 

@@ -78,8 +78,8 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    wrong-pair check, lazy bounds.
 2. A full play on the release build with no `[ICALL] Failed` in the log.
 3. First-time pipeline stalls (kept in `pipelines.bin` after); programs'
-   own are made in the background. Next: a Vulkan pipeline cache
-   (`patches/SDL/0002`), for Android and low-end chips first.
+   own are made in the background; the driver's own compile is kept in
+   `pipelines.vkcache` (Vulkan pipeline cache, `patches/SDL/0002`).
    Issue 10 (dirty disc at the episode 7 boss after a long session): heap
    overflow area (patch 0041), to confirm in a full play on Windows.
 4. Steam Deck movies at 20 fps (issue 11). On Windows the same was MSVC
@@ -87,9 +87,14 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    fixed with /d2OptimizeHugeFunctions (v0.1.6). The Deck builds with GCC,
    which has no such limit: if it persists, F11 during a movie shows which
    thread is busy.
-5. Android (`android/`, `android/PLAN.md`): plays on a Retroid Pocket 6
-   at 60 fps once its shaders are made. Next: pipeline cache, touch
-   controls, the setup screen, Lossless Scaling, pd1.
+5. Android (`android/`, `android/PLAN.md`): touch controls, pd1, other
+   GPUs' fallbacks and a custom GPU driver (Turnip, libadrenotools) are in;
+   on the RP6 with Turnip, 4x with 4x MSAA holds 60 fps, and interpolation
+   at 120 Hz mostly holds 120 (the vertex pre-pass, PDO_VOUT). Lossless Scaling
+   was tried and taken out (too slow on Adreno). The game file picker now
+   draws in the launcher's window. Signing and the version are in. Next: the APK on the release; then which of the
+   Android renderer work helps on PC (setups' own fragment shaders,
+   background pipelines, the CPU stand-in), and later Concept of Love.
 6. Gunfire (issue 15): the mixbins' -6 dB headroom, the reverb send by
    distance and the HRTF filters (taps / 512, chosen by ear against the
    console) are in; up to 12 machine-gun copies at once are the game's own.

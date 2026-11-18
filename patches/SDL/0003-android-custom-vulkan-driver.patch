@@ -1,0 +1,56 @@
+diff --git a/src/video/android/SDL_androidvulkan.c b/src/video/android/SDL_androidvulkan.c
+index cd946fe..caf3d18 100644
+--- a/src/video/android/SDL_androidvulkan.c
++++ b/src/video/android/SDL_androidvulkan.c
+@@ -36,6 +36,17 @@
+ #include "SDL_androidvulkan.h"
+ 
+ 
++/* Orta Recomp (patches/SDL/0003): a Vulkan library the app opened itself
++ * (a custom GPU driver, through libadrenotools), used in place of
++ * libvulkan.so. Set before the first Vulkan window or GPU device. */
++static void *pdo_vulkan_library;
++
++void PDO_SetAndroidVulkanLibrary(void *handle);
++void PDO_SetAndroidVulkanLibrary(void *handle)
++{
++    pdo_vulkan_library = handle;
++}
++
+ bool Android_Vulkan_LoadLibrary(SDL_VideoDevice *_this, const char *path)
+ {
+     VkExtensionProperties *extensions = NULL;
+@@ -54,7 +65,12 @@ bool Android_Vulkan_LoadLibrary(SDL_VideoDevice *_this, const char *path)
+     if (!path) {
+         path = "libvulkan.so";
+     }
+-    _this->vulkan_config.loader_handle = SDL_LoadObject(path);
++    if (pdo_vulkan_library) {
++        _this->vulkan_config.loader_handle = pdo_vulkan_library;
++        path = "custom GPU driver";
++    } else {
++        _this->vulkan_config.loader_handle = SDL_LoadObject(path);
++    }
+     if (!_this->vulkan_config.loader_handle) {
+         return false;
+     }
+@@ -97,7 +113,8 @@ bool Android_Vulkan_LoadLibrary(SDL_VideoDevice *_this, const char *path)
+     return true;
+ 
+ fail:
+-    SDL_UnloadObject(_this->vulkan_config.loader_handle);
++    if (_this->vulkan_config.loader_handle != pdo_vulkan_library)
++        SDL_UnloadObject(_this->vulkan_config.loader_handle);
+     _this->vulkan_config.loader_handle = NULL;
+     return false;
+ }
+@@ -105,7 +122,8 @@ fail:
+ void Android_Vulkan_UnloadLibrary(SDL_VideoDevice *_this)
+ {
+     if (_this->vulkan_config.loader_handle) {
+-        SDL_UnloadObject(_this->vulkan_config.loader_handle);
++        if (_this->vulkan_config.loader_handle != pdo_vulkan_library)   /* the app's: it stays open */
++            SDL_UnloadObject(_this->vulkan_config.loader_handle);
+         _this->vulkan_config.loader_handle = NULL;
+     }
+ }

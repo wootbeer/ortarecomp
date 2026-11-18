@@ -17,6 +17,10 @@
 #include "guest/vsh.h"      /* pdo_parallel */
 
 #include <SDL3/SDL.h>
+#ifdef __ANDROID__
+#include <sys/system_properties.h>
+#include "android/android_gpu.h"
+#endif
 
 #include <stddef.h>
 #include <stdio.h>
@@ -55,7 +59,7 @@ static SDL_GPUTexture *frame_color, *frame_depth, *white;
 static SDL_GPUTextureFormat depth_format;
 static int frame_w, frame_h;
 static uint64_t frames;
-static SDL_GPUShader *vs, *fs, *fs_ps, *vsh_vs, *fvf_vs;
+static SDL_GPUShader *vs, *fs, *fs_ps, *vsh_vs, *fvf_vs, *vout_vs;
 
 /* Overlay settings in force: every render target is rscale times the game's
  * size (viewports and copies scaled to match), drawn with nsamples samples
@@ -85,6 +89,16 @@ static uint32_t target_px(uint32_t v, bool depth_only)
 static SDL_GPUSampleCount sample_count = SDL_GPU_SAMPLECOUNT_1;
 static SDL_GPUTexture *frame_ms;
 static bool frame_stale;
+/* Multisampling on a tiled GPU (phones): a pass resolves its samples and
+ * keeps nothing else; the next one draws the resolved picture back in
+ * (begin_pass's seed). Storing and loading every sample at each pass
+ * moved four or eight times the picture through memory, what a tiler is
+ * slowest at; the seed reads it once. Edges drawn in an earlier pass go on
+ * as resolved there. Off: on the RP6 (Adreno 740, 2x, 4x MSAA) it made no
+ * difference to the frame rate, and storing the samples is exact.
+ * PDO_MSAA_RESOLVE_ONLY=1 (Android: debug.ortarecomp.msaa_resolve_only). */
+static bool msaa_resolve_only;
+static void prof_start(void);         /* the GPU profile, if asked for */
 static volatile bool paused;        /* the overlay menu holds the game */
 /* The overlay's holds, for the vblank clock (d3d_hle.c) to stop with the
  * game: when the current one began (ms, | 1 so never 0; 0: none), and the
@@ -181,6 +195,19 @@ typedef struct command {
     float mvel[32];
     uint32_t pair_prev;     /* the paired draw in the frame before (match_frames) */
     uint8_t  consts_read[24]; /* vertex programs: a bit per c register read (pdo_gpu_vsh) */
+    uint32_t in_bytes[16];    /* vertex programs: the size of the stream each v register reads */
+    /* Its fragment setup's key and shader once known (fs_key_of): a frame
+     * interpolated is drawn twice or more, the setup never changes. */
+    uint64_t fkey;
+    SDL_GPUShader *sfs;
+    /* Its corners on screen (draw_corners) once worked out, for pairing:
+     * 0 not yet, 1 known, 2 none. */
+    uint8_t  corners_state;
+    float    corners[8];
+    /* Vertex programs: where the vertex pre-pass put its vertices' outputs
+     * in the frame's gvout (-1: not made there), and how many (vout_prepass) */
+    int32_t  vout_base;
+    uint32_t vout_n;
     float    anchor[8];       /* vertex programs: oPos of the first and last vertex (pdo_gpu_vsh) */
     bool     anchored;
     bool strayed;           /* its vertices strayed over a fifth of its size from its partner's */
@@ -246,10 +273,13 @@ typedef struct frame_data {
      * used for every frame shown from it. */
     SDL_GPUBuffer *gvb, *gib, *gblob, *gconst;
     Uint32 gvb_size, gib_size, gblob_size, gconst_size;
+    SDL_GPUBuffer *gvout;       /* the vertex pre-pass's outputs (vout_prepass) */
+    Uint32 gvout_size;
+    bool vout_done;             /* the pre-pass ran for it (once, however often it is shown) */
     bool on_gpu;
 } frame_data;
 
-static frame_data pool[5];
+static frame_data pool[6];   /* recording, handed over, being paired, and the two drawn */
 /* F: the frame being recorded (rec_F) -- one for all the game's threads,
  * which take turns under the guest CPU lock: kept per thread, a second
  * game thread that draws went on with a slot of its own from long before,
@@ -278,6 +308,7 @@ void pdo_gfx_take_frame_counts(uint32_t *drawn, uint32_t *dropped)
 }
 static frame_data *held_cur;        /* the main thread's newest */
 static frame_data *held_prev;       /* and the one before it */
+static frame_data *held_next;       /* the newest, being paired with held_cur (pair_main) */
 static bool game_done;              /* the game thread has ended */
 static int init_w, init_h, init_state;  /* pdo_gfx_init asked of the main thread:
                                          * 1 asked, 2 done, 3 failed */
@@ -305,6 +336,95 @@ static void *grow(void *p, uint32_t *cap, uint32_t need, size_t elem)
     return SDL_realloc(p, (size_t)*cap * elem);
 }
 
+/* What the GPU can do. SDL's Vulkan device asks for depth clamping and
+ * anisotropic filtering and turns down a GPU without them (some Mali
+ * drivers lack depth clamping): such a GPU gets a device without them
+ * (create_device), its pipelines clip depth instead of clamping it, and
+ * its samplers do without anisotropy. */
+static bool gpu_depth_clamp = true, gpu_anisotropy = true;
+/* A pipeline with vsh.vert or fvf.vert failed to build: vertices of that
+ * kind go to the CPU from then on (pdo_gfx_vertex_shader_failed). */
+static bool gpu_vsh_failed, gpu_fvf_failed;
+
+static SDL_GPUGraphicsPipeline *create_pipeline(SDL_GPUGraphicsPipelineCreateInfo *pi)
+{
+    if (!gpu_depth_clamp)
+        pi->rasterizer_state.enable_depth_clip = true;
+    return SDL_CreateGPUGraphicsPipeline(dev, pi);
+}
+
+/* The device: first with what SDL asks for except clip distances and
+ * indirect draws' first instance, which nothing here uses (and some
+ * phones lack); then, if no GPU takes that, without depth clamping and
+ * anisotropy too. */
+static SDL_GPUDevice *create_device(void)
+{
+    /* PDO_GPU_BASIC=1: straight to the second, to see on any GPU what a
+     * phone without those features gets. */
+    const char *basic = SDL_getenv("PDO_GPU_BASIC");
+
+    for (int attempt = basic && *basic == '1'; attempt < 2; attempt++) {
+        SDL_PropertiesID pr = SDL_CreateProperties();
+        SDL_GPUDevice *d;
+
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_SHADERS_SPIRV_BOOLEAN, true);
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_DEBUGMODE_BOOLEAN, false);
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_CLIP_DISTANCE_BOOLEAN, false);
+        SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_INDIRECT_DRAW_FIRST_INSTANCE_BOOLEAN, false);
+        if (attempt) {
+            SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_DEPTH_CLAMPING_BOOLEAN, false);
+            SDL_SetBooleanProperty(pr, SDL_PROP_GPU_DEVICE_CREATE_FEATURE_ANISOTROPY_BOOLEAN, false);
+        }
+        d = SDL_CreateGPUDeviceWithProperties(pr);
+        SDL_DestroyProperties(pr);
+        if (d) {
+            if (attempt) {
+                gpu_depth_clamp = gpu_anisotropy = false;
+                SDL_Log("gfx: this GPU lacks depth clamping or anisotropic filtering: the device is made without both");
+            }
+            return d;
+        }
+        SDL_Log("gfx: no GPU device%s (%s)", attempt ? " without depth clamping and anisotropy either" : "",
+                SDL_GetError());
+    }
+    return NULL;
+}
+
+/* Pipelines that failed to build, not tried again at every draw (a driver
+ * that cannot link a shader fails each time, and slowly). */
+static pdo_pipeline_state *failed_ps;
+static uint32_t nfailed, cap_failed;
+
+static bool pipeline_failed(const pdo_pipeline_state *ps)
+{
+    for (uint32_t i = 0; i < nfailed; i++)
+        if (!memcmp(&failed_ps[i], ps, sizeof *ps))
+            return true;
+    return false;
+}
+
+static void note_failed(const pdo_pipeline_state *ps, bool spec)
+{
+    if (pipeline_failed(ps))
+        return;
+    failed_ps = grow(failed_ps, &cap_failed, nfailed + 1, sizeof *failed_ps);
+    failed_ps[nfailed++] = *ps;
+    if (nfailed <= 16)
+        SDL_Log("gfx: a pipeline failed to build (%s; %u so far): its draws are %s", 
+                spec ? "a vertex program's own shader" : ps->gpu_vsh == 1 ? "vertex programs on the GPU"
+                : ps->gpu_vsh == 2 ? "fixed-function vertices on the GPU" : "vertices from the CPU", nfailed,
+                spec ? "left to the interpreter" : ps->gpu_vsh ? "drawn from the CPU from now on" : "skipped");
+    if (!spec && ps->gpu_vsh == 1)
+        gpu_vsh_failed = true;
+    else if (!spec && ps->gpu_vsh == 2)
+        gpu_fvf_failed = true;
+}
+
+bool pdo_gfx_vertex_shader_failed(bool fixed_function)
+{
+    return fixed_function ? gpu_fvf_failed : gpu_vsh_failed;
+}
+
 /* Forget a frame's commands and what they recorded. */
 static void reset_frame(frame_data *f)
 {
@@ -315,6 +435,7 @@ static void reset_frame(frame_data *f)
     f->nups = 0;
     f->progs_new = f->gamma_new = false;
     f->on_gpu = false;
+    f->vout_done = false;
     f->movie = false;
 }
 
@@ -591,12 +712,25 @@ void pdo_gfx_draw_vsh(const pdo_draw *d, const pdo_gpu_vsh *g, uint32_t nv,
             continue;
         }
         c->vu.inputs[r][0] = (int32_t)sbase[st];
+        c->in_bytes[r] = g->stream_bytes[st];
         c->vu.inputs[r][1] = g->input[r][1];
         c->vu.inputs[r][2] = g->input[r][2];
         c->vu.inputs[r][3] = g->input[r][3];
     }
     memcpy(c->vu.scale, g->vp_scale, sizeof c->vu.scale);
     memcpy(c->vu.offset, g->vp_offset, sizeof c->vu.offset);
+    c->vu.blend_t[1] = (float)g->points;
+    c->vout_base = -1;
+    c->vout_n = g->points ? nv / 4 : nv;
+    if (g->points) {
+        int32_t mx;
+        memcpy(&mx, &g->point_max, sizeof mx);
+        c->vu.blend_t[2] = g->point_vp[0];
+        c->vu.blend_t[3] = g->point_vp[1];
+        c->vu.scale[3] = g->point_min;
+        c->vu.interp[3] = mx;
+        c->draw.ps.cull = 0;            /* points have no facing */
+    }
 
     F->indices = grow(F->indices, &F->cap_indices, F->nindices + ni, sizeof *F->indices);
     memcpy(F->indices + F->nindices, idx, ni * sizeof *idx);
@@ -710,13 +844,13 @@ static int npipelines;
 #define PIPE_SLOTS (MAX_PIPELINES * 2)
 static uint16_t pipe_slot[PIPE_SLOTS];
 
+static uint64_t hash_bytes(const uint8_t *p, size_t n);
+
+/* A word at a time (hash_bytes): looked up several times a draw, a byte at
+ * a time it was a measurable share of recording. In memory only. */
 static uint32_t pipe_hash(const pdo_pipeline_state *ps)
 {
-    const uint8_t *b = (const uint8_t *)ps;
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < sizeof *ps; i++)
-        h = (h ^ b[i]) * 16777619u;
-    return h;
+    return (uint32_t)hash_bytes((const uint8_t *)ps, sizeof *ps);
 }
 
 static SDL_GPUGraphicsPipeline *find_pipeline(const pdo_pipeline_state *ps)
@@ -747,14 +881,67 @@ typedef struct { int32_t base; uint32_t count; uint64_t key; int state; } spec_p
 #define SPEC_PROG_SLOTS 4096u
 static spec_prog spec_progs[SPEC_PROG_SLOTS];   /* by base; state 0 empty, 1 asked, 2 ready, -1 none */
 static uint32_t spec_draws, interp_draws;       /* GPU program draws each way, for the log */
-static uint32_t bg_made;                        /* their pipelines made in the background (bg_ask) */
+static uint32_t fs_spec_draws, fs_interp_draws; /* draws by their setup's own shader or ff.frag's interpreter */
+static uint32_t cpu_stand_in_draws;             /* program draws from the CPU's vertices meanwhile */
+
+/* Vertex programs (by their place in progs) whose draws all have their own
+ * shader's pipeline ready. Until then the game thread makes their vertices
+ * on the CPU as well (pdo_gfx_vsh_needs_cpu), and a draw whose pipeline is
+ * not made yet is drawn from those, not by the interpreter (vsh.vert): on
+ * phones that is many times slower, under Turnip ten times so (3-20 fps
+ * while a new boss's pipelines were made), where the CPU's are the game's
+ * own vertices, made in parallel. A slot holds one program; one that
+ * collides only makes the other unsettled again. */
+#define SETTLE_SLOTS 4096
+static SDL_AtomicInt settled[SETTLE_SLOTS];     /* the program's place + 1 when settled */
+
+static uint32_t unsettled, settle_clashes;    /* for the log: settled programs back on the CPU, and why */
+static void settle(int32_t program, bool yes)
+{
+    SDL_AtomicInt *a = &settled[(uint32_t)program % SETTLE_SLOTS];
+    if (yes) {
+        if (SDL_GetAtomicInt(a) != program + 1 && SDL_GetAtomicInt(a))
+            settle_clashes++;           /* another program's slot */
+        SDL_SetAtomicInt(a, program + 1);
+    } else if (SDL_GetAtomicInt(a) == program + 1) {
+        SDL_SetAtomicInt(a, 0);
+        unsettled++;                    /* one of its draws has no pipeline of its own */
+    }
+}
+
+bool pdo_gfx_vsh_needs_cpu(int32_t program)
+{
+    if (program < 0 || !pdo_vsh_spec_enabled())
+        return false;
+    return SDL_GetAtomicInt(&settled[(uint32_t)program % SETTLE_SLOTS]) != program + 1;
+}
+static uint32_t bg_made;
+static uint32_t in_place_draws;   /* fs_wait: draws on a target drawn once, their pipeline made in place */                        /* their pipelines made in the background (bg_ask) */
 static Uint64 bg_ns;                            /* ... and the time that took, for the log */
 /* Programs' own pipelines made in the background (bg_main, below). */
-typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs; SDL_GPUGraphicsPipeline *p;
-                 uint32_t gen; bool save; } bg_job;
+typedef struct { pdo_pipeline_state ps; SDL_GPUShader *vs, *fs; SDL_GPUGraphicsPipeline *p;
+                 uint32_t gen; bool save, urgent, heavy; } bg_job;
 static SDL_Mutex *bg_lock;
 static SDL_Condition *bg_wake;
-static SDL_Thread *bg_thread;
+static SDL_Thread *bg_thread;               /* the first of the background makers */
+/* Several makers: under Turnip one pipeline took 20 s, and the rest waited
+ * behind it. One while the CPU has few cores. Only one makes a pipeline
+ * with a program's own vertex shader at a time, the others the rest
+ * (draws wait for the interpreters' ones: those first): Turnip compiling
+ * several of those large shaders at once ran the RP6 out of memory (it
+ * aborted in the driver). */
+#define BG_MAX_THREADS 3       /* 4 ran Turnip out of memory on the RP6 (with the fragment
+                                  interpreter's pipelines, since not made with a custom driver) */
+#define BG_MAX_HEAVY 2         /* programs' own at once: 1 left ten slow seconds at a fresh start */
+static uint32_t bg_programs_busy;             /* programs' pipelines being made (under bg_lock) */
+/* Pipelines a draw needs and nothing has made yet: made in the background
+ * too, ahead of the rest, the draw left out until then, rather than made
+ * on this thread while the screen waits (a boost's end under Turnip froze
+ * it 5 s). On from the start on Android; elsewhere once a pipeline made
+ * here took over 50 ms. PDO_SYNC_PIPELINES=1 keeps them here, 0 makes them
+ * in the background on any GPU. */
+static bool pipelines_async;
+static uint32_t async_skipped;
 static bg_job *bg_todo, *bg_done;
 static uint32_t bg_ntodo, bg_cap_todo, bg_ndone, bg_cap_done;
 static uint32_t pipe_gen;                 /* the quality settings pipelines are made for */
@@ -779,7 +966,7 @@ static SDL_GPUShader *spec_shader_of(uint64_t key)
             return spec_shaders[i].s;
     if (!pdo_vsh_spec_find(key, &spv, &bytes))
         return NULL;
-    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 5);
+    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 5);
     if (!sh) {
         SDL_Log("gfx: vertex program %016llx: no shader (%s)", (unsigned long long)key, SDL_GetError());
         return NULL;
@@ -798,6 +985,95 @@ static SDL_GPUShader *spec_shader_of(uint64_t key)
     spec_shaders[nspec_shaders].s = sh;
     nspec_shaders++;
     return sh;
+}
+
+/* Fragment setups' shaders (vsh_spec.h pdo_fs_spec_*), by key: ready (s),
+ * being made (state 0), or not to be had (-1). Render thread. */
+#define FS_SLOTS 4096
+static struct { uint64_t key; SDL_GPUShader *s; int state; } fs_cache[FS_SLOTS];
+static uint32_t fs_cached;
+
+/* The shader of a fragment setup's key: made from its SPIR-V when made or
+ * on disk (saved pipelines ask before the setup is met), else NULL. */
+static SDL_GPUShader *fs_shader_of(uint64_t key, const int32_t *blob)
+{
+    uint32_t h = (uint32_t)(key ^ key >> 32) % FS_SLOTS;
+    const uint32_t *spv;
+    size_t bytes;
+    int st;
+
+    for (uint32_t n = 0; n < FS_SLOTS; n++, h = (h + 1) % FS_SLOTS) {
+        if (fs_cache[h].key == key) {
+            if (fs_cache[h].state != 0 || !blob)
+                return fs_cache[h].s;
+            break;
+        }
+        if (!fs_cache[h].key) {
+            if (fs_cached >= FS_SLOTS * 3 / 4)
+                return NULL;            /* full: the interpreter for the rest */
+            fs_cache[h].key = key;
+            fs_cache[h].state = 0;
+            fs_cached++;
+            break;
+        }
+    }
+    if (blob) {
+        st = pdo_fs_spec_get(key, blob, &spv, &bytes);
+        if (st == 0)
+            return NULL;
+    } else {
+        st = pdo_vsh_spec_find(key, &spv, &bytes) ? 1 : 0;
+        if (!st)
+            return NULL;
+    }
+    if (st == 1) {
+        fs_cache[h].s = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1, 0);
+        if (!fs_cache[h].s)
+            SDL_Log("gfx: fragment setup %016llx: no shader (%s)", (unsigned long long)key, SDL_GetError());
+    }
+    fs_cache[h].state = fs_cache[h].s ? 1 : -1;
+    return fs_cache[h].s;
+}
+
+/* A draw's fragment setup: its key when its shader is ready (else 0, and
+ * asked for the first time). */
+/* fs_key_of: the setup's shader is still being made (it will come). */
+static bool fs_pending;
+
+/* A setup's shader: 1 made, -1 failed, 0 being made or not asked for. */
+static int fs_shader_state(uint64_t key)
+{
+    uint32_t h = (uint32_t)(key ^ key >> 32) % FS_SLOTS;
+    for (uint32_t n = 0; n < FS_SLOTS && fs_cache[h].key; n++, h = (h + 1) % FS_SLOTS)
+        if (fs_cache[h].key == key)
+            return fs_cache[h].state;
+    return -1;                  /* not kept (the cache is full): it will not come */
+}
+
+/* Pipelines of the fragment interpreter (ff.frag as it is) are not made
+ * for a draw whose setup has, or will soon have, its own shader: the draw
+ * waits for its own pipeline instead. Turnip took up to 20 s and hundreds
+ * of MB over each of them (it ran the RP6 out of memory twice with only two
+ * being made), for a pipeline used for the half second its own takes. On
+ * with a custom driver; PDO_FS_WAIT=1/0 (or debug.ortarecomp.fs_wait) to
+ * choose. */
+static bool fs_wait;
+static bool fs_wait_chosen;     /* PDO_FS_WAIT (or the property) given: kept as it says */
+
+static uint64_t fs_key_of(const pdo_ff_uniforms *u, bool combiners, SDL_GPUShader **sh)
+{
+    int32_t blob[PDO_FS_SPEC_WORDS];
+    uint64_t key;
+
+    *sh = NULL;
+    fs_pending = false;
+    if (!pdo_fs_spec_enabled())
+        return 0;
+    pdo_fs_spec_blob(u, combiners, blob);
+    key = pdo_fs_spec_key(blob);
+    *sh = fs_shader_of(key, blob);
+    fs_pending = !*sh && fs_shader_state(key) == 0;
+    return *sh ? key : 0;
 }
 
 /* The key of the program at base (count instructions, its code in progs)
@@ -896,13 +1172,31 @@ static void save_pipeline_key(const pdo_pipeline_state *ps)
  * mirrored, and shadow maps are read back un-reversed (ff.frag). */
 static bool depth_rev;
 
+/* Shaders or pipelines are being made for draws that are waiting for them
+ * (left out, or on the CPU's vertices): the overlay says so. When it last
+ * was (ms, 0 never). */
+static SDL_AtomicU32 building_ms;
+
+static void note_building(void)
+{
+    SDL_SetAtomicU32(&building_ms, (Uint32)SDL_GetTicks() | 1u);
+}
+
+bool pdo_gfx_building(void)
+{
+    Uint32 t = SDL_GetAtomicU32(&building_ms);
+    return t && (Uint32)SDL_GetTicks() - t < 700;
+}
+
 bool pdo_gfx_depth_reversed(void)
 {
     return depth_rev;
 }
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps);
-static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save);
+static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save);
+static void bg_ask_front(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs);
+static void bg_ask_urgent(const pdo_pipeline_state *ps);
 
 static void warm_pipelines(void)
 {
@@ -923,18 +1217,34 @@ static void warm_pipelines(void)
              o += sizeof(pdo_pipeline_state)) {
             pdo_pipeline_state ps;
             memcpy(&ps, data + o, sizeof ps);
-            if (ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1])) {
-                /* a program's own shader: in the background, as in play */
-                SDL_GPUShader *sv = spec_shader_of((uint64_t)ps.vsh_spec[1] << 32 | ps.vsh_spec[0]);
-                if (sv)
-                    bg_ask(&ps, sv, false);
+            if ((ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1])) || ps.fs_spec[0] || ps.fs_spec[1]) {
+                /* a program's or a setup's own shader: in the background, as in play */
+                SDL_GPUShader *sv = NULL, *sf = NULL;
+                bool vk = ps.gpu_vsh == 1 && (ps.vsh_spec[0] || ps.vsh_spec[1]);
+                bool fk = ps.fs_spec[0] || ps.fs_spec[1];
+                if (vk)
+                    sv = spec_shader_of((uint64_t)ps.vsh_spec[1] << 32 | ps.vsh_spec[0]);
+                if (fk)
+                    sf = fs_shader_of((uint64_t)ps.fs_spec[1] << 32 | ps.fs_spec[0], NULL);
+                if (fs_wait && ps.gpu_vsh == 1 && !vk)
+                    continue;   /* the vertex interpreter's: see the CPU stand-in in replay */
+                if ((!vk || sv) && (!fk || sf))
+                    bg_ask(&ps, sv, sf, false);
                 continue;
             }
-            get_pipeline(&ps);
+            if (fs_wait)
+                continue;   /* the fragment interpreter's: with a custom driver only made when a
+                               draw needs one (saved under the phone's own driver, Turnip took
+                               10-20 s and much memory over each, 158 at once, and the app was
+                               killed) */
+            if (pipelines_async)
+                bg_ask(&ps, NULL, NULL, false);     /* the game starts meanwhile */
+            else
+                get_pipeline(&ps);
         }
         warming = false;
-        SDL_Log("gfx: made %d saved pipelines in %.0f ms", npipelines - before,
-                (double)(SDL_GetTicksNS() - t0) / 1e6);
+        SDL_Log("gfx: made %d saved pipelines in %.0f ms%s", npipelines - before,
+                (double)(SDL_GetTicksNS() - t0) / 1e6, pipelines_async ? "; the rest in the background" : "");
     } else {
         SDL_Log("gfx: %s is from another build; starting it again", path);
         SDL_RemovePath(path);
@@ -954,6 +1264,7 @@ void pdo_gfx_take_pass_counts(uint32_t out[4])
 }
 
 static Uint64 swap_wait_ns;              /* waiting for a swapchain image, for the timing log */
+static SDL_AtomicU32 pair_us;            /* pairing (run_match), on whichever thread: the main loop's log */
 static Uint64 main_wait_ns, main_record_ns, main_match_ns;   /* ... and pairing frames (match_frames) */    /* the same, and recording frames: the main loop's log */
 
 uint64_t pdo_gfx_take_swap_wait_ns(void)
@@ -963,11 +1274,47 @@ uint64_t pdo_gfx_take_swap_wait_ns(void)
     return t;
 }
 
+/* The main thread's recording by part, for the log: deciding each draw's
+ * pipeline (setups' keys, lookups) and setting it and drawing (SDL). */
+static Uint64 rec_decide_ns, rec_sdl_ns;
+static uint32_t rec_draws;
+
+#define VOUT_BYTES 96           /* vout.vert's VOut: the vertex pre-pass's outputs, a vertex */
+static uint32_t vout_draws, vout_verts, vout_frames;  /* the vertex pre-pass, for the log */
+
 void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_pipelines, double *bg_ms)
 {
     *own = spec_draws;
     *interpreted = interp_draws;
     spec_draws = interp_draws = 0;
+    {
+        static Uint64 last;
+        Uint64 now = SDL_GetTicksNS();
+        if (fs_spec_draws + fs_interp_draws && now - last > 4500000000ull) {
+            uint32_t made, failed, pending;
+            double ms;
+            pdo_vsh_spec_counts(&made, &failed, &pending, &ms);
+            SDL_Log("gfx: draws by their fragment setup's own shader %u, by the interpreter %u "
+                    "(shaders made %u, failed %u, to come %u); program draws from the CPU's vertices while "
+                    "their pipeline is made %u; draws left out until theirs is made %u, "
+                    "on a target drawn once with theirs made in place %u; programs back on the CPU %u "
+                    "(slots shared %u); program draws from the vertex pre-pass %u, %u vertices made there "
+                    "(%.1f MB of outputs a game frame)", fs_spec_draws,
+                    fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped, in_place_draws,
+                    unsettled, settle_clashes, vout_draws, vout_verts,
+                    vout_frames ? (double)vout_verts * VOUT_BYTES / vout_frames / 1e6 : 0.0);
+            cpu_stand_in_draws = async_skipped = in_place_draws = unsettled = settle_clashes = 0;
+            vout_draws = vout_verts = vout_frames = 0;
+            SDL_Log("gfx: recording in %.1f s: %u draws, %.0f ms deciding them (%.1f us each), %.0f ms setting "
+                    "and drawing them (%.1f us each)", (double)(now - last) / 1e9, rec_draws, rec_decide_ns / 1e6,
+                    rec_draws ? rec_decide_ns / 1e3 / rec_draws : 0.0, rec_sdl_ns / 1e6,
+                    rec_draws ? rec_sdl_ns / 1e3 / rec_draws : 0.0);
+            rec_decide_ns = rec_sdl_ns = 0;
+            rec_draws = 0;
+            last = now;
+        }
+        fs_spec_draws = fs_interp_draws = 0;
+    }
     *bg_pipelines = bg_made;
     *bg_ms = (double)bg_ns / 1e6;
     bg_made = 0;
@@ -996,18 +1343,21 @@ uint64_t pdo_gfx_take_pipeline_ns(uint32_t *made)
     return t;
 }
 
-static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs);
+static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs,
+                                             SDL_GPUShader *spec_fs);
 static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *p, bool save);
 
 static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
 {
     SDL_GPUGraphicsPipeline *p;
-    SDL_GPUShader *spec_vs = NULL;
+    SDL_GPUShader *spec_vs = NULL, *spec_fs = NULL;
     Uint64 t0;
 
     p = find_pipeline(ps);
     if (p)
         return p;
+    if (pipeline_failed(ps))
+        return NULL;
     if (npipelines == MAX_PIPELINES)
         return pipelines[0].p;
     t0 = SDL_GetTicksNS();
@@ -1016,13 +1366,39 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
         if (!spec_vs)
             return NULL;
     }
-    p = make_pipeline(ps, spec_vs);
-    if (!p)
+    if (ps->fs_spec[0] || ps->fs_spec[1]) {
+        spec_fs = fs_shader_of((uint64_t)ps->fs_spec[1] << 32 | ps->fs_spec[0], NULL);
+        if (!spec_fs)
+            return NULL;
+    }
+    p = make_pipeline(ps, spec_vs, spec_fs);
+    if (!p) {
+        note_failed(ps, spec_vs != NULL || spec_fs != NULL);
         return NULL;
+    }
     add_pipeline(ps, p, !warming);
     if (!warming) {
-        pipeline_ns += SDL_GetTicksNS() - t0;
+        Uint64 dt = SDL_GetTicksNS() - t0;
+        pipeline_ns += dt;
         pipelines_made++;
+        if (dt > 50000000ull && !pipelines_async && !SDL_getenv("PDO_SYNC_PIPELINES")) {
+            pipelines_async = true;
+            SDL_Log("gfx: a pipeline took %.0f ms to make here: the ones draws need are made in the "
+                    "background from now on, the draw left out until then", (double)dt / 1e6);
+        }
+        /* A driver this slow is slower still over the interpreters'
+         * pipelines (AMD's on Windows: 7 s over each of the vertex
+         * interpreter's, the dragon's wings left out meanwhile; its
+         * setups' own 0.3-0.6 s): as with a custom driver on Android, draws
+         * wait for their own instead. Set once, before the pairing thread
+         * reads it again. */
+#ifndef __ANDROID__    /* there: chosen by the driver at start */
+        if (dt > 50000000ull && !fs_wait && !fs_wait_chosen) {
+            fs_wait = true;
+            SDL_Log("gfx: draws wait for their fragment setup's own pipeline from now on (no "
+                    "interpreter's in between: this driver makes pipelines slowly)");
+        }
+#endif
     }
     return p;
 }
@@ -1030,7 +1406,8 @@ static SDL_GPUGraphicsPipeline *get_pipeline(const pdo_pipeline_state *ps)
 /* The pipeline for ps, made (not looked up or kept): get_pipeline's, and
  * the background maker's for programs' own shaders (spec_vs). Reads only
  * what changes with the quality settings (pipe_gen). */
-static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs)
+static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_GPUShader *spec_vs,
+                                             SDL_GPUShader *spec_fs)
 {
     SDL_GPUGraphicsPipelineCreateInfo pi;
     SDL_GPUVertexBufferDescription vb[2];
@@ -1085,8 +1462,9 @@ static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_
         ((cw & 0xFF000000u) ? SDL_GPU_COLORCOMPONENT_A : 0));
 
     SDL_zero(pi);
-    pi.vertex_shader = ps->gpu_vsh == 1 ? (spec_vs ? spec_vs : vsh_vs) : ps->gpu_vsh == 2 ? fvf_vs : vs;
-    pi.fragment_shader = ps->combiners && fs_ps ? fs_ps : fs;
+    pi.vertex_shader = ps->gpu_vsh == 1 ? (spec_vs ? spec_vs : vsh_vs) : ps->gpu_vsh == 2 ? fvf_vs
+                     : ps->gpu_vsh == 3 ? vout_vs : vs;
+    pi.fragment_shader = spec_fs ? spec_fs : ps->combiners && fs_ps ? fs_ps : fs;
     if (!ps->gpu_vsh) {         /* vsh.vert reads its streams from storage buffers */
         pi.vertex_input_state.vertex_buffer_descriptions = vb;
         pi.vertex_input_state.num_vertex_buffers = 2;
@@ -1137,12 +1515,91 @@ static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_
     pi.target_info.has_depth_stencil_target = true;
     pi.multisample_state.sample_count = ps->single_sample ? SDL_GPU_SAMPLECOUNT_1 : sample_count;
 
-    p = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+    p = create_pipeline(&pi);
     if (!p) {
         SDL_Log("gfx: pipeline creation failed (%s)", SDL_GetError());
         return NULL;
     }
     return p;
+}
+
+/* ── The driver's own pipeline cache (Vulkan) ────────────────────────────
+ * pipelines.bin lists which pipelines to make at start; making one is
+ * still a full compile by the driver (120 ms on Adreno, up to a second or
+ * more on an AMD card with a program's own shader), at every start. A
+ * Vulkan pipeline cache keeps the driver's compiled result:
+ * pipelines.vkcache in the data folder, handed to SDL's device before any
+ * pipeline is made (patches/SDL/0002), saved again a few seconds after
+ * new pipelines stop coming, on a thread of its own. The driver checks the
+ * file's header and ignores one from another GPU or driver version. */
+bool PDO_SetGPUVulkanPipelineCache(SDL_GPUDevice *device, const void *data, size_t size);
+size_t PDO_GetGPUVulkanPipelineCacheData(SDL_GPUDevice *device, void *data, size_t size);
+
+static bool vkcache_on;
+static uint32_t vkcache_adds, vkcache_saved_adds;  /* pipelines kept, and at the last save */
+static Uint64 vkcache_last_add_ns;
+static SDL_AtomicInt vkcache_saving;
+
+static void vkcache_file(char *path, size_t n)
+{
+    snprintf(path, n, "%spipelines.vkcache", pdo_data_dir());
+}
+
+static void vkcache_load(void)
+{
+    char path[PDO_PATH_MAX];
+    size_t size = 0;
+    void *data;
+
+    if (vkcache_on || !dev || SDL_strcmp(SDL_GetGPUDeviceDriver(dev), "vulkan") != 0)
+        return;
+    vkcache_file(path, sizeof path);
+    data = SDL_LoadFile(path, &size);
+    vkcache_on = PDO_SetGPUVulkanPipelineCache(dev, data, data ? size : 0);
+    if (vkcache_on)
+        SDL_Log("gfx: driver pipeline cache: %s (%zu KB)", data ? "loaded" : "new", size / 1024);
+    SDL_free(data);
+}
+
+static int SDLCALL vkcache_save_main(void *unused)
+{
+    char path[PDO_PATH_MAX], tmp[PDO_PATH_MAX + 8];
+    size_t n;
+    void *buf;
+
+    (void)unused;
+    n = PDO_GetGPUVulkanPipelineCacheData(dev, NULL, 0);
+    buf = n ? SDL_malloc(n) : NULL;
+    if (buf) {
+        n = PDO_GetGPUVulkanPipelineCacheData(dev, buf, n);
+        vkcache_file(path, sizeof path);
+        snprintf(tmp, sizeof tmp, "%s.tmp", path);
+        if (n && SDL_SaveFile(tmp, buf, n) && SDL_RenamePath(tmp, path))
+            SDL_Log("gfx: driver pipeline cache saved (%zu KB)", n / 1024);
+        else
+            SDL_RemovePath(tmp);
+        SDL_free(buf);
+    }
+    SDL_SetAtomicInt(&vkcache_saving, 0);
+    return 0;
+}
+
+/* Render thread, once a frame: saves when pipelines were added and none
+ * for three seconds. */
+static void vkcache_maybe_save(void)
+{
+    SDL_Thread *t;
+
+    if (!vkcache_on || vkcache_adds == vkcache_saved_adds
+            || SDL_GetTicksNS() - vkcache_last_add_ns < 3 * SDL_NS_PER_SECOND
+            || !SDL_CompareAndSwapAtomicInt(&vkcache_saving, 0, 1))
+        return;
+    vkcache_saved_adds = vkcache_adds;
+    t = SDL_CreateThread(vkcache_save_main, "vkcache", NULL);
+    if (t)
+        SDL_DetachThread(t);
+    else
+        SDL_SetAtomicInt(&vkcache_saving, 0);
 }
 
 /* Keeps a made pipeline (and the key in pipelines.bin when save). */
@@ -1156,6 +1613,8 @@ static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *
     pipelines[npipelines].p = p;
     index_pipeline(npipelines);
     npipelines++;
+    vkcache_adds++;
+    vkcache_last_add_ns = SDL_GetTicksNS();
     if (save)
         save_pipeline_key(ps);
 }
@@ -1173,32 +1632,51 @@ static void add_pipeline(const pdo_pipeline_state *ps, SDL_GPUGraphicsPipeline *
 static int SDLCALL bg_main(void *unused)
 {
     (void)unused;
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);  /* the game's and the render thread's cores first */
     SDL_LockMutex(bg_lock);
     for (;;) {
         bg_job j;
         Uint64 t0;
-        while (!bg_ntodo)
+        uint32_t k;
+        for (;;) {      /* in order (urgent ones are first), a program's only if none is being made */
+            for (k = 0; k < bg_ntodo && bg_todo[k].heavy && bg_programs_busy >= BG_MAX_HEAVY; k++)
+                ;
+            if (k < bg_ntodo)
+                break;
             SDL_WaitCondition(bg_wake, bg_lock);
-        j = bg_todo[0];
-        memmove(bg_todo, bg_todo + 1, --bg_ntodo * sizeof *bg_todo);
+        }
+        j = bg_todo[k];
+        memmove(bg_todo + k, bg_todo + k + 1, (--bg_ntodo - k) * sizeof *bg_todo);
+        if (j.heavy)
+            bg_programs_busy++;
         SDL_UnlockMutex(bg_lock);
         t0 = SDL_GetTicksNS();
         SDL_SetAtomicU32(&bg_busy_since_ms, (Uint32)(t0 / 1000000) | 1u);
-        j.p = make_pipeline(&j.ps, j.vs);
+        j.p = make_pipeline(&j.ps, j.vs, j.fs);
         SDL_SetAtomicU32(&bg_busy_since_ms, 0);
         SDL_LockMutex(bg_lock);
+        if (j.heavy) {
+            bg_programs_busy--;
+            SDL_BroadcastCondition(bg_wake);    /* the next program's may start */
+        }
         bg_ns += SDL_GetTicksNS() - t0;
-        if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 32)
-            SDL_Log("gfx: a program's pipeline took %.0f ms to make%s (%u more waiting)",
-                    (double)(SDL_GetTicksNS() - t0) / 1e6, j.p ? "" : ", and failed", bg_ntodo);
+        if (SDL_GetTicksNS() - t0 > 250000000ull && bg_slow_logs++ < 300)
+            SDL_Log("gfx: a %s pipeline%s took %.0f ms to make%s (%u more waiting)",
+                    j.urgent ? "needed" : j.heavy ? "program's" : "fragment setup's",
+                    j.ps.gpu_vsh == 1 && !j.ps.vsh_spec[0] && !j.ps.vsh_spec[1] ? " (vertex interpreter)"
+                    : !j.ps.fs_spec[0] && !j.ps.fs_spec[1] ? " (fragment interpreter)" : "",
+                    (double)(SDL_GetTicksNS() - t0) / 1e6,
+                    j.p ? "" : ", and failed", bg_ntodo);
         bg_done = grow(bg_done, &bg_cap_done, bg_ndone + 1, sizeof *bg_done);
         bg_done[bg_ndone++] = j;
     }
     return 0;
 }
 
+static bool bg_front;   /* bg_ask_front: the next job goes first */
+
 /* Asks for ps's pipeline (ps names a program's own shader, vs). */
-static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save)
+static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs, bool save)
 {
     bg_job j;
 
@@ -1206,25 +1684,53 @@ static void bg_ask(const pdo_pipeline_state *ps, SDL_GPUShader *vs, bool save)
         if (!memcmp(&bg_asked[i], ps, sizeof *ps))
             return;
     if (!bg_thread) {
+        int n = SDL_GetNumLogicalCPUCores() >= 6 ? BG_MAX_THREADS : 1;
         bg_lock = SDL_CreateMutex();
         bg_wake = SDL_CreateCondition();
         if (bg_lock && bg_wake)
             bg_thread = SDL_CreateThread(bg_main, "pipelines", NULL);
         if (!bg_thread)
             return;
+        for (int i = 1; i < n; i++)
+            if (!SDL_CreateThread(bg_main, "pipelines", NULL))
+                break;
     }
     bg_asked = grow(bg_asked, &bg_cap_asked, bg_nasked + 1, sizeof *bg_asked);
     bg_asked[bg_nasked++] = *ps;
     SDL_zero(j);
     j.ps = *ps;
     j.vs = vs;
+    j.fs = fs;
     j.gen = pipe_gen;
     j.save = save;
+    j.urgent = (!vs && !fs) || bg_front;
+    j.heavy = vs != NULL;     /* a program's own vertex shader: the large ones */
     SDL_LockMutex(bg_lock);
     bg_todo = grow(bg_todo, &bg_cap_todo, bg_ntodo + 1, sizeof *bg_todo);
-    bg_todo[bg_ntodo++] = j;
+    if (j.urgent) {         /* a draw waits for it: ahead of the programs' own */
+        memmove(bg_todo + 1, bg_todo, bg_ntodo * sizeof *bg_todo);
+        bg_todo[0] = j;
+        bg_ntodo++;
+    } else {
+        bg_todo[bg_ntodo++] = j;
+    }
     SDL_SignalCondition(bg_wake);
     SDL_UnlockMutex(bg_lock);
+}
+
+/* A pipeline with a setup's own shader that a draw waits for (fs_wait):
+ * ahead of the programs' own, as an interpreter's would be. */
+static void bg_ask_front(const pdo_pipeline_state *ps, SDL_GPUShader *vs, SDL_GPUShader *fs)
+{
+    bg_front = true;
+    bg_ask(ps, vs, fs, true);
+    bg_front = false;
+}
+
+/* A pipeline of the interpreters' (no shader of its own) a draw needs. */
+static void bg_ask_urgent(const pdo_pipeline_state *ps)
+{
+    bg_ask(ps, NULL, NULL, true);
 }
 
 /* Keeps what the background made since the last call (render thread). */
@@ -1240,8 +1746,11 @@ static void bg_collect(void)
                 bg_asked[k] = bg_asked[--bg_nasked];
                 break;
             }
-        if (!j->p)
+        if (!j->p) {
+            if (j->gen == pipe_gen)
+                note_failed(&j->ps, true);
             continue;
+        }
         if (j->gen != pipe_gen || find_pipeline(&j->ps)) {
             SDL_ReleaseGPUGraphicsPipeline(dev, j->p);
             continue;
@@ -1271,7 +1780,7 @@ static SDL_GPUSampler *get_sampler(const pdo_tex_ref *t)
      * textures the game filters smoothly; point-filtered ones (menus, text)
      * stay as they are. Its level is part of the key: a change takes effect
      * with the next sampler looked up. */
-    int aniso = t->min_filter >= 2 ? pdo_settings_get()->anisotropy : 1;
+    int aniso = t->min_filter >= 2 && gpu_anisotropy ? pdo_settings_get()->anisotropy : 1;
     uint32_t alevel = aniso >= 16 ? 4 : aniso >= 8 ? 3 : aniso >= 4 ? 2 : aniso >= 2 ? 1 : 0;
     uint32_t key = (uint32_t)t->min_filter | (uint32_t)t->mag_filter << 8 |
                    (uint32_t)t->address_u << 16 | (uint32_t)(t->address_v & 7) << 24 | alevel << 27 |
@@ -1314,11 +1823,21 @@ typedef struct gtex {
     uint64_t staged_in;     /* hand_over: number of the frame with an upload of it
                                (a number: frame_datas are reused, addresses repeat) */
     uint64_t last_used;
+    uint32_t stable;        /* check_textures: frames its full hash has not changed */
+    uint64_t sample;        /* ... and the hash of a few samples of it, the last frame */
     uint32_t w, h;
+    int      bc;            /* 1-3: DXT1/3/5 kept as BC1-BC3 on the GPU, not decoded (bc_textures) */
     SDL_GPUTexture *tex;
 } gtex;
 
 static gtex textures[MAX_TEXTURES];
+/* DXT1/3/5 textures go to the GPU as they are, as BC1-BC3, when it reads
+ * those (desktop GPUs, and the RP6's Adreno): decoded to RGBA they were
+ * four to eight times the bytes for every texel the GPU reads, on phones
+ * the 3D scene's largest cost, and the decoding was CPU time. The GPU's
+ * BC decoding is DXT's (S3TC), within a step of rounding in the blends.
+ * PDO_BC_TEXTURES=0 decodes them on the CPU as before. */
+static bool bc_textures;
 static int ntextures;
 
 /* A texture's bytes, to notice when the game rewrites them: it runs over
@@ -1370,7 +1889,29 @@ typedef struct rtarget {
     bool stale;
     bool depth_only;          /* a shadow map: keyed by its depth surface,
                                  single-sampled, depth readable by shaders */
+    uint64_t drawn_cur, drawn_prev;     /* the last two frames (replay_frames) it was drawn to */
 } rtarget;
+
+static uint64_t replay_frames;          /* frames recorded (replay) */
+
+/* Notes that t is drawn to in this frame. */
+static void target_drawn(rtarget *t)
+{
+    if (t && t->drawn_cur != replay_frames) {
+        t->drawn_prev = t->drawn_cur;
+        t->drawn_cur = replay_frames;
+    }
+}
+
+/* t (NULL: the screen) was drawn to in one of the last few frames before
+ * this one, so it is drawn again soon: a draw on it can be left out while
+ * its pipeline is made. One drawn first, or once (a picture made at a
+ * scene's start, a line of text), would keep the hole: its pipeline is made
+ * in place (HakuX does the same, facts only). */
+static bool target_redrawn(const rtarget *t)
+{
+    return !t || (t->drawn_prev && replay_frames - t->drawn_prev <= 3);
+}
 
 static rtarget targets[MAX_TARGETS];
 static int ntargets;
@@ -1653,8 +2194,9 @@ void pdo_gfx_copy_rect(const pdo_surface *src, const pdo_surface *dst,
 
 typedef struct pending_upload {
     gtex    *t;
-    uint32_t offset;   /* in the frame's texture transfer buffer */
+    uint32_t offset;   /* in the frame's texture transfer buffer (16-byte aligned for BC) */
     uint32_t level, w, h;
+    uint32_t bytes;
 } pending_upload;
 
 #define MAX_UPLOADS 2048
@@ -1666,6 +2208,8 @@ static struct tex_check {
     pdo_xtex_info  info;
     uint32_t       levels, bytes;
     uint64_t       hash;
+    uint64_t       sample;  /* a few samples' hash (check_textures) */
+    bool           skip;    /* not hashed in full this frame: stable, samples as before */
 } *checks;
 static uint32_t nchecks, cap_checks;
 
@@ -1746,12 +2290,21 @@ static tex_slot texture_for(const pdo_tex_ref *t)
         SDL_zero(ti);
         ti.type = SDL_GPU_TEXTURETYPE_2D;
         ti.format = SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
+        if (bc_textures && info.known && (g->bc = pdo_xtex_bc(&info)) != 0)
+            ti.format = g->bc == 1 ? SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM : g->bc == 2
+                        ? SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM : SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM;
         ti.usage = SDL_GPU_TEXTUREUSAGE_SAMPLER;
         ti.width = info.width;
         ti.height = info.height;
         ti.layer_count_or_depth = 1;
         ti.num_levels = levels;
         g->tex = SDL_CreateGPUTexture(dev, &ti);
+        if (g->bc) {
+            static uint32_t n_bc;
+            if (n_bc++ < 4)
+                SDL_Log("gfx: texture %08x %ux%u (%u levels) kept as BC%d", t->data, info.width, info.height,
+                        levels, g->bc);
+        }
     }
     g->last_used = frames;
     /* Hashed with the rest of the frame's textures, on the worker threads
@@ -1787,12 +2340,43 @@ static void hash_blocks(void *ctx, uint32_t first, uint32_t end)
 /* Hash this frame's textures (in parallel: on the game thread it was a
  * large share of the frame), then decode the ones that changed into
  * *staging and note their uploads. */
+/* Four samples of 1 KB across a texture's bytes (its start, thirds, end). */
+static uint64_t sample_hash(const uint8_t *p, uint32_t n)
+{
+    uint32_t k = n < 1024 ? n : 1024;
+    uint64_t h = hash_bytes(p, k);
+    if (n > 4096) {
+        h = rotl64(h, 23) ^ hash_bytes(p + (n / 3 & ~15u), k);
+        h = rotl64(h, 23) ^ hash_bytes(p + (2 * (n / 3) & ~15u), k);
+        h = rotl64(h, 23) ^ hash_bytes(p + n - k, k);
+    }
+    return h;
+}
+
+/* A texture whose full hash has not changed for STABLE_FRAMES frames is
+ * hashed in full one frame in four (its own, staggered), and every frame
+ * only four samples of it: when they change it is hashed in full at once.
+ * A texture loaded over another rewrites the samples; a small change
+ * inside a long-stable texture is seen within four frames. Every texture
+ * every frame was hundreds of MB of the game's memory read a second
+ * (the battery, on a phone). PDO_TEX_ALWAYS=1 still checks everything. */
+#define STABLE_FRAMES 120
+
 static void check_textures(uint8_t **staging, uint32_t *staging_len, uint32_t *staging_cap,
                            pending_upload *ups, int *nups)
 {
+    static uint32_t round;
+
+    round++;
     nblocks = 0;
+    for (uint32_t i = 0; i < nchecks; i++) {
+        gtex *g = checks[i].g;
+        checks[i].sample = checks[i].bytes ? sample_hash(checks[i].src, checks[i].bytes) : 0;
+        checks[i].skip = g->uploaded && !tex_always && g->stable >= STABLE_FRAMES
+                         && checks[i].sample == g->sample && ((round + (uint32_t)(g - textures)) & 3u) != 0;
+    }
     for (uint32_t i = 0; i < nchecks; i++)
-        for (uint32_t o = 0; o < checks[i].bytes; o += HASH_BLOCK) {
+        for (uint32_t o = 0; o < checks[i].bytes && !checks[i].skip; o += HASH_BLOCK) {
             blocks = grow(blocks, &cap_blocks, nblocks + 1, sizeof *blocks);
             blocks[nblocks].check = i;
             blocks[nblocks].offset = o;
@@ -1805,6 +2389,16 @@ static void check_textures(uint8_t **staging, uint32_t *staging_len, uint32_t *s
     for (uint32_t b = 0; b < nblocks; b++) {     /* in order, per texture */
         uint64_t *h = &checks[blocks[b].check].hash;
         *h = rotl64(*h, 23) * 0x9E3779B97F4A7C15ull ^ blocks[b].hash;
+    }
+    for (uint32_t i = 0; i < nchecks; i++) {
+        gtex *g = checks[i].g;
+        if (checks[i].skip)
+            checks[i].hash = g->hash;           /* as it was */
+        else if (g->uploaded && checks[i].hash == g->hash)
+            g->stable += g->stable < STABLE_FRAMES;
+        else
+            g->stable = 0;
+        g->sample = checks[i].sample;
     }
     for (uint32_t i = 0; i < nchecks; i++) {
         gtex *g = checks[i].g;
@@ -1821,17 +2415,23 @@ static void check_textures(uint8_t **staging, uint32_t *staging_len, uint32_t *s
             pdo_xtex_info li;
             uint32_t off, need;
             pdo_xtex_level(&info, l, &li, &off);
-            need = li.width * li.height * 4;
+            need = g->bc ? pdo_xtex_bc_bytes(&li) : li.width * li.height * 4;
+            if (g->bc)
+                *staging_len = (*staging_len + 15) & ~15u;     /* a buffer-to-image copy's alignment */
             if (*staging_len + need > *staging_cap) {
                 *staging_cap = (*staging_len + need) * 2;
                 *staging = SDL_realloc(*staging, *staging_cap);
             }
-            pdo_xtex_decode(&li, src + off, *staging + *staging_len);
+            if (g->bc)
+                memcpy(*staging + *staging_len, src + off, need);
+            else
+                pdo_xtex_decode(&li, src + off, *staging + *staging_len);
             ups[*nups].t = g;
             ups[*nups].offset = *staging_len;
             ups[*nups].level = l;
             ups[*nups].w = li.width;
             ups[*nups].h = li.height;
+            ups[*nups].bytes = need;
             (*nups)++;
             *staging_len += need;
         }
@@ -1892,6 +2492,12 @@ static void apply_vsync(void)
 {
     static int applied = -1;
     int want = pdo_settings_get()->vsync;
+#ifdef __ANDROID__
+    /* A phone's compositor shows a frame per refresh at most: Fast or Off
+     * only made frames never seen (interpolating, 400-650 a second on the
+     * RP6's 120 Hz screen, its GPU and battery spent on them). */
+    want = 0;
+#endif
     static const SDL_GPUPresentMode modes[] = { SDL_GPU_PRESENTMODE_VSYNC, SDL_GPU_PRESENTMODE_MAILBOX,
                                                 SDL_GPU_PRESENTMODE_IMMEDIATE };
     static const char *names[] = { "on", "fast (mailbox)", "off (immediate)" };
@@ -1948,7 +2554,7 @@ static void make_seed_pipeline(void)
     pi.target_info.depth_stencil_format = depth_format;
     pi.target_info.has_depth_stencil_target = true;
     pi.multisample_state.sample_count = sample_count;
-    seed_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+    seed_pipeline = create_pipeline(&pi);
     if (!seed_pipeline)
         SDL_Log("gfx: cannot create the multisample seed pass (%s)", SDL_GetError());
 }
@@ -2050,14 +2656,14 @@ static bool init_present(void)
     pi.primitive_type = SDL_GPU_PRIMITIVETYPE_TRIANGLELIST;
     pi.target_info.color_target_descriptions = &ct;
     pi.target_info.num_color_targets = 1;
-    present_pipeline = pvs && pfs ? SDL_CreateGPUGraphicsPipeline(dev, &pi) : NULL;
+    present_pipeline = pvs && pfs ? create_pipeline(&pi) : NULL;
     SDL_ReleaseGPUShader(dev, pfs);
     screen_fs = make_shader(screen_frag_spv, sizeof screen_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
     screen_vs = pvs;
     if (have_swapchain && screen_fs) {
         ct.format = SDL_GetGPUSwapchainTextureFormat(dev, window);
         pi.fragment_shader = screen_fs;
-        screen_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        screen_pipeline = create_pipeline(&pi);
         ct.blend_state.enable_blend = true;
         ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_SRC_ALPHA;
         ct.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
@@ -2065,7 +2671,7 @@ static bool init_present(void)
         ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
         ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_ADD;
-        overlay_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        overlay_pipeline = create_pipeline(&pi);
         /* max(caption, picture): white words show, their black goes */
         ct.blend_state.src_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.dst_color_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
@@ -2073,7 +2679,7 @@ static bool init_present(void)
         ct.blend_state.src_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.dst_alpha_blendfactor = SDL_GPU_BLENDFACTOR_ONE;
         ct.blend_state.alpha_blend_op = SDL_GPU_BLENDOP_MAX;
-        caption_pipeline = SDL_CreateGPUGraphicsPipeline(dev, &pi);
+        caption_pipeline = create_pipeline(&pi);
         if (!screen_pipeline || !overlay_pipeline)
             SDL_Log("gfx: cannot create the window pass (%s)", SDL_GetError());
     }
@@ -2227,8 +2833,11 @@ static bool init_here(int width, int height)
     if (pdo_settings_get()->lsfg_multiplier >= 2 && !getenv("PDO_BENCHMARK"))
         dev = pdo_lsfg_create_device();
 #endif
+#ifdef __ANDROID__
+    pdo_android_gpu_driver_device();    /* a custom driver's guard: until frames are shown */
+#endif
     if (!dev)
-        dev = SDL_CreateGPUDevice(SDL_GPU_SHADERFORMAT_SPIRV, false, NULL);
+        dev = create_device();
     if (!dev) {
         SDL_Log("gfx: no GPU device (%s)", SDL_GetError());
         return false;
@@ -2241,7 +2850,68 @@ static bool init_here(int width, int height)
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_NAME_STRING, "unknown GPU"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_NAME_STRING, "driver"),
                 SDL_GetStringProperty(pr, SDL_PROP_GPU_DEVICE_DRIVER_VERSION_STRING, "?"));
+        /* Whether the GPU reads the Xbox's compressed formats itself (they are
+         * decoded on the CPU into RGBA, four to eight times the bytes). */
+        {
+            const char *e = SDL_getenv("PDO_BC_TEXTURES");
+            bc_textures = !(e && e[0] == '0');
+            for (int f = 0; f < 3 && bc_textures; f++)
+                bc_textures = SDL_GPUTextureSupportsFormat(dev, f == 0 ? SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM
+                                                           : f == 1 ? SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM
+                                                           : SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM,
+                                                           SDL_GPU_TEXTURETYPE_2D, SDL_GPU_TEXTUREUSAGE_SAMPLER);
+            SDL_Log("gfx: DXT textures %s", bc_textures ? "kept compressed on the GPU (BC1-BC3)"
+                    : "decoded on the CPU");
+        }
+        SDL_Log("gfx: compressed textures on this GPU: BC1 %s, BC2 %s, BC3 %s",
+                SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC1_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no",
+                SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC2_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no",
+                SDL_GPUTextureSupportsFormat(dev, SDL_GPU_TEXTUREFORMAT_BC3_RGBA_UNORM, SDL_GPU_TEXTURETYPE_2D,
+                                             SDL_GPU_TEXTUREUSAGE_SAMPLER) ? "yes" : "no");
     }
+    {
+        const char *e = SDL_getenv("PDO_MSAA_RESOLVE_ONLY");
+#ifdef __ANDROID__
+        /* adb shell setprop debug.ortarecomp.msaa_resolve_only 0 (or 1) to
+         * compare, as an app has no environment of its own to set. */
+        char prop[PROP_VALUE_MAX] = "";
+        __system_property_get("debug.ortarecomp.msaa_resolve_only", prop);
+        if (!e || !*e)
+            e = prop;
+#endif
+        if (e && *e)
+            msaa_resolve_only = *e == '1';
+        if (msaa_resolve_only)
+            SDL_Log("gfx: multisampling resolves each pass and keeps no samples (tiled GPU)");
+    }
+    prof_start();
+    {
+        const char *e = SDL_getenv("PDO_SYNC_PIPELINES");
+#ifdef __ANDROID__
+        pipelines_async = true;
+#endif
+        if (e && *e)
+            pipelines_async = *e == '0';    /* 0: in the background anywhere, 1: here */
+    }
+    {
+        const char *e = SDL_getenv("PDO_FS_WAIT");
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        __system_property_get("debug.ortarecomp.fs_wait", prop);
+        if (!e || !*e)
+            e = prop;
+        fs_wait = pdo_android_gpu_driver_custom();
+#endif
+        if (e && *e) {
+            fs_wait = *e == '1';
+            fs_wait_chosen = true;
+        }
+        if (fs_wait)
+            SDL_Log("gfx: draws wait for their fragment setup's own pipeline (no interpreter's in between)");
+    }
+    vkcache_load();             /* before any pipeline is made */
 
     window_thread = SDL_GetCurrentThreadID();
     {   /* Where the window was last time (pdo_gfx_pump_events), if it fits
@@ -2314,9 +2984,10 @@ static bool init_here(int width, int height)
     vs = make_shader(ff_vert_spv, sizeof ff_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs = make_shader(ff_frag_spv, sizeof ff_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
     fs_ps = make_shader(ff_ps_frag_spv, sizeof ff_ps_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
-    vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 5);
+    vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 5);
     if (!vsh_vs)
         SDL_Log("gfx: no GPU vertex programs (%s); they run on the CPU", SDL_GetError());
+    vout_vs = make_shader_sb(vout_vert_spv, sizeof vout_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
     fvf_vs = make_shader_sb(fvf_vert_spv, sizeof fvf_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
     if (!fvf_vs)
         SDL_Log("gfx: no GPU fixed-function vertices (%s); they run on the CPU", SDL_GetError());
@@ -2421,6 +3092,20 @@ static Uint32 prog_buf_size;
 /* Frame interpolation (main thread): the previous game frame, when the
  * frame shown blends towards F from it, and how far (1: F as it is). */
 static frame_data *P;
+static bool consts_pushed;      /* push_consts: what it pushed last is bound still (no pass begun since) */
+/* What replay's draws last bound and pushed in the pass begun last
+ * (begin_pass clears it): a draw sets only what differs from the one
+ * before. Draws in a row mostly share their pipeline, viewport, textures
+ * and fragment setup; setting them all again for each was much of the main
+ * thread's recording (200-500 ms a second on the RP6). */
+static struct {
+    SDL_GPUGraphicsPipeline *p;
+    int gpu;                    /* the geometry bound (bind_geometry), -1 none */
+    bool vp_set, tsb_set, ff_set;
+    SDL_GPUViewport vp;
+    SDL_GPUTextureSamplerBinding tsb[4];
+    pdo_ff_uniforms ff;
+} rec;
 static float blend;
 static bool interp_tint;    /* PDO_INTERP_TINT=1: unpaired draws magenta when blending */
 
@@ -2435,6 +3120,9 @@ static void bind_geometry(SDL_GPURenderPass *pass, int gpu, const command *c)
         SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 5);
     } else if (gpu == 2) {
         SDL_GPUBuffer *sb[2] = { F->gblob, pblob };
+        SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 2);
+    } else if (gpu == 3) {      /* the vertex pre-pass's outputs, and the frame before's */
+        SDL_GPUBuffer *sb[2] = { F->gvout, P && P->gvout ? P->gvout : F->gvout };
         SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 2);
     } else {
         /* From the draw's first vertex (drawn with a vertex offset taking
@@ -2487,17 +3175,25 @@ static SDL_GPURenderPass *begin_pass(SDL_GPUCommandBuffer *cmd, const command *c
     SDL_GPUTexture *ms = cur_target ? cur_target->ms : frame_ms, *seed = NULL;
     bool *stale = cur_target ? &cur_target->stale : &frame_stale;
 
+    consts_pushed = false;
+    rec.p = NULL;
+    rec.gpu = -1;
+    rec.vp_set = rec.tsb_set = rec.ff_set = false;
+
     /* The resolved texture holds what the multisampled buffer does not:
      * draw it in first, unless this pass clears the color anyway. */
     if (ms && *stale && !(clear && (clear->clear_flags & 0xF0)))
         seed = snapshot(cmd);
-    *stale = false;
+    *stale = ms && msaa_resolve_only;   /* resolve-only: the samples are gone after this pass */
 
     SDL_zero(ct);
     ct.texture = ms ? ms : cur_color();
     ct.load_op = SDL_GPU_LOADOP_LOAD;
-    ct.store_op = ms ? SDL_GPU_STOREOP_RESOLVE_AND_STORE : SDL_GPU_STOREOP_STORE;
+    ct.store_op = !ms ? SDL_GPU_STOREOP_STORE : msaa_resolve_only ? SDL_GPU_STOREOP_RESOLVE
+                : SDL_GPU_STOREOP_RESOLVE_AND_STORE;
     ct.resolve_texture = ms ? cur_color() : NULL;
+    if (seed && msaa_resolve_only)
+        ct.load_op = SDL_GPU_LOADOP_DONT_CARE;  /* the seed covers it all */
     SDL_zero(dt);
     dt.texture = cur_target ? cur_target->depth : frame_depth;
     dt.load_op = SDL_GPU_LOADOP_LOAD;
@@ -2576,7 +3272,7 @@ static SDL_GPUGraphicsPipeline *bloom_pipeline(int samples_log2, bool add)
     pi.target_info.color_target_descriptions = &ct;
     pi.target_info.num_color_targets = 1;
     pi.multisample_state.sample_count = (SDL_GPUSampleCount)samples_log2;
-    return SDL_CreateGPUGraphicsPipeline(dev, &pi);
+    return create_pipeline(&pi);
 }
 
 /* One full-screen draw of the bloom shader into dst. */
@@ -2607,6 +3303,8 @@ static void bloom_pass(SDL_GPUCommandBuffer *cmd, int level)
 {
     SDL_GPUTexture *color = cur_color(), *ms = cur_target ? cur_target->ms : frame_ms;
     Uint32 w, h, bw, bh;
+    if (msaa_resolve_only)
+        ms = NULL;      /* the samples are not kept: added into the resolved picture, which seeds the next pass */
     int samples_log2 = ms ? (nsamples >= 8 ? 3 : nsamples >= 4 ? 2 : nsamples >= 2 ? 1 : 0) : 0;
     /* The same glow at two strengths, around the bright lights (Orta's
      * picture is dark: half of an episode 1 frame is under 20 of 255).
@@ -2937,6 +3635,219 @@ static SDL_GPUTexture *slot_texture(const tex_slot *t)
 
 /* The frame's vertices, indices, streams, constants (and any new programs
  * and changed texels) to the GPU, once. */
+/* ── The vertex pre-pass ─────────────────────────────────────────────────
+ * Each vertex-program draw's vertices run through its program once a game
+ * frame, on a compute shader of the program's own (vsh.vert built with
+ * PDO_VSH_COMPUTE), the outputs written to the frame's gvout; the draws
+ * then only read them (vout.vert) -- the frame shown, and each frame
+ * interpolated between it and the next (with its partner's outputs). Before,
+ * every frame shown ran every program again, and blending ran it on both
+ * frames' inputs: on the RP6 interpolating at 120 Hz the scene's vertex
+ * work was most of an 8.3 ms frame. One compute pipeline a program (not a
+ * graphics pipeline a program and render state), made on a thread of its
+ * own; until a program's is made its draws go as before. PDO_VOUT=0
+ * (Android: setprop debug.ortarecomp.vout 0, read again every 5 s) turns
+ * it off. */
+#define COMP_SLOTS 1024
+typedef struct { uint64_t vkey; int state; SDL_GPUComputePipeline *p; const uint32_t *spv; size_t bytes; }
+        comp_prog;              /* state: 0 asked, 1 to make, 2 made, -1 none */
+static comp_prog comps[COMP_SLOTS];
+static SDL_Mutex *comp_lock;
+static SDL_Condition *comp_wake;
+static SDL_Thread *comp_thread;
+
+static bool vout_on(void)
+{
+    static bool on = true;
+    static Uint64 next;
+    Uint64 now = SDL_GetTicksNS();
+    if (now >= next) {
+        const char *e = SDL_getenv("PDO_VOUT");
+        bool was = on;
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        prop[0] = 0;
+        __system_property_get("debug.ortarecomp.vout", prop);
+        if (!e || !*e)
+            e = prop;
+#endif
+        on = !(e && *e == '0');
+        next = now + 5000000000ull;
+        if (on != was)
+            SDL_Log("gfx: vertex pre-pass %s", on ? "on" : "off (PDO_VOUT=0)");
+    }
+    return on && vout_vs;
+}
+
+static int SDLCALL comp_main(void *unused)
+{
+    (void)unused;
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);
+    SDL_LockMutex(comp_lock);
+    for (;;) {
+        comp_prog *c = NULL;
+        SDL_GPUComputePipelineCreateInfo ci;
+        SDL_GPUComputePipeline *p;
+        Uint64 t0;
+        for (uint32_t i = 0; i < COMP_SLOTS && !c; i++)
+            if (comps[i].state == 1)
+                c = &comps[i];
+        if (!c) {
+            SDL_WaitCondition(comp_wake, comp_lock);
+            continue;
+        }
+        SDL_zero(ci);
+        ci.code = (const Uint8 *)c->spv;
+        ci.code_size = c->bytes;
+        ci.entrypoint = "main";
+        ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        ci.num_readonly_storage_buffers = 1;
+        ci.num_readwrite_storage_buffers = 1;
+        ci.num_uniform_buffers = 2;
+        ci.threadcount_x = 64;
+        ci.threadcount_y = 1;
+        ci.threadcount_z = 1;
+        SDL_UnlockMutex(comp_lock);
+        t0 = SDL_GetTicksNS();
+        p = SDL_CreateGPUComputePipeline(dev, &ci);
+        if (!p)
+            SDL_Log("gfx: vertex program %016llx: no compute pipeline (%s)", (unsigned long long)c->vkey,
+                    SDL_GetError());
+        else if (SDL_GetTicksNS() - t0 > 250000000ull)
+            SDL_Log("gfx: a program's compute pipeline took %.0f ms to make", (double)(SDL_GetTicksNS() - t0) / 1e6);
+        SDL_LockMutex(comp_lock);
+        c->p = p;
+        c->state = p ? 2 : -1;
+    }
+    return 0;
+}
+
+/* The program's compute pipeline (render thread), asked for the first time
+ * it is wanted: NULL until made. *state: as comp_prog's. */
+static SDL_GPUComputePipeline *comp_of(uint64_t vkey, const uint32_t *code, uint32_t count, int *state)
+{
+    uint32_t h = (uint32_t)(vkey ^ vkey >> 32) % COMP_SLOTS;
+    comp_prog *c = NULL;
+    SDL_GPUComputePipeline *p = NULL;
+
+    *state = -1;
+    if (!comp_thread) {
+        static bool tried;
+        if (tried)
+            return NULL;
+        tried = true;
+        comp_lock = SDL_CreateMutex();
+        comp_wake = SDL_CreateCondition();
+        if (comp_lock && comp_wake)
+            comp_thread = SDL_CreateThread(comp_main, "vout", NULL);
+        if (!comp_thread)
+            return NULL;
+    }
+    SDL_LockMutex(comp_lock);
+    for (uint32_t n = 0; n < COMP_SLOTS; n++, h = (h + 1) % COMP_SLOTS)
+        if (comps[h].vkey == vkey || !comps[h].vkey) {
+            c = &comps[h];
+            break;
+        }
+    if (c && !c->vkey) {
+        c->vkey = vkey;
+        c->state = 0;
+    }
+    if (c && c->state == 0 && code) {
+        const uint32_t *spv;
+        size_t bytes;
+        int st = pdo_vsh_comp_get(vkey, code, count, &spv, &bytes);
+        if (st == 1) {
+            c->spv = spv;
+            c->bytes = bytes;
+            c->state = 1;
+            SDL_SignalCondition(comp_wake);
+        } else if (st < 0) {
+            c->state = -1;
+        }
+    }
+    if (c) {
+        *state = c->state;
+        p = c->state == 2 ? c->p : NULL;
+    }
+    SDL_UnlockMutex(comp_lock);
+    return p;
+}
+
+static void vout_prepass(SDL_GPUCommandBuffer *cmd)
+{
+    static struct { uint32_t cmd; SDL_GPUComputePipeline *p; } *jobs;
+    static uint32_t cap_jobs;
+    uint32_t njobs = 0, total = 0;
+    SDL_GPUComputePass *pass;
+    SDL_GPUComputePipeline *bound = NULL;
+    int32_t pushed = -1;
+
+    if (!vout_on() || !F->gblob)
+        return;
+    for (uint32_t i = 0; i < F->ncmds; i++) {
+        command *c = &F->cmds[i];
+        uint64_t vkey;
+        SDL_GPUComputePipeline *p;
+        int st;
+        if (c->kind != CMD_DRAW || !c->vsh || !c->vout_n || c->vu.info[0] < 0 || c->vu.info[2] < 0
+            || (uint32_t)c->vu.info[2] + 192 > F->nvconsts)
+            continue;
+        vkey = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
+        if (!vkey)
+            continue;
+        /* The code only to ask for its compute shader: this frame's copy
+         * of the programs can be older than the program (spec_key_of). */
+        p = comp_of(vkey, (uint64_t)c->vu.info[0] * 4 + (uint64_t)c->vu.info[1] * 8 <= F->nprogs
+                          ? F->progs + (size_t)c->vu.info[0] * 4 : NULL, (uint32_t)c->vu.info[1], &st);
+        if (!p)
+            continue;
+        jobs = grow(jobs, &cap_jobs, njobs + 1, sizeof *jobs);
+        jobs[njobs].cmd = i;
+        jobs[njobs].p = p;
+        njobs++;
+        c->vout_base = (int32_t)total;
+        total += c->vout_n;
+    }
+    if (!njobs)
+        return;
+    F->gvout = ensure_buffer(F->gvout, &F->gvout_size, total * VOUT_BYTES,
+                             SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE | SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
+    if (!F->gvout) {
+        for (uint32_t k = 0; k < njobs; k++)
+            F->cmds[jobs[k].cmd].vout_base = -1;
+        return;
+    }
+    {
+        SDL_GPUStorageBufferReadWriteBinding rw;
+        SDL_zero(rw);
+        rw.buffer = F->gvout;
+        pass = SDL_BeginGPUComputePass(cmd, NULL, 0, &rw, 1);
+    }
+    for (uint32_t k = 0; k < njobs; k++) {
+        command *c = &F->cmds[jobs[k].cmd];
+        struct vsh_uniforms u = c->vu;
+        if (jobs[k].p != bound) {
+            SDL_BindGPUComputePipeline(pass, jobs[k].p);
+            SDL_BindGPUComputeStorageBuffers(pass, 0, &F->gblob, 1);
+            bound = jobs[k].p;
+        }
+        u.interp[0] = (int32_t)c->vout_n;
+        u.interp[1] = c->vout_base;
+        u.info[3] = depth_rev;
+        u.blend_t[0] = 1.0f;
+        SDL_PushGPUComputeUniformData(cmd, 0, &u, sizeof u);
+        if (c->vu.info[2] != pushed) {
+            SDL_PushGPUComputeUniformData(cmd, 1, F->vconsts[c->vu.info[2]], 192 * 16);
+            pushed = c->vu.info[2];
+        }
+        SDL_DispatchGPUCompute(pass, (c->vout_n + 63) / 64, 1, 1);
+    }
+    SDL_EndGPUComputePass(pass);
+    vout_verts += total;
+    vout_frames++;
+}
+
 static void upload_frame(SDL_GPUCommandBuffer *cmd)
 {
     uint8_t *staging = F->staging;
@@ -2957,14 +3868,15 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
         SDL_GPUCopyPass *copy;
         uint8_t *map;
         Uint32 boff = vbytes + ibytes, coff = boff + bbytes, poff = coff + cbytes;
-        Uint32 tex_off = poff + pbytes;
+        Uint32 tex_off = (poff + pbytes + 15) & ~15u;     /* BC copies need 16-byte offsets */
 
         if (vbytes)
             F->gvb = ensure_buffer(F->gvb, &F->gvb_size, vbytes, SDL_GPU_BUFFERUSAGE_VERTEX);
         if (ibytes)
             F->gib = ensure_buffer(F->gib, &F->gib_size, ibytes, SDL_GPU_BUFFERUSAGE_INDEX);
         if (bbytes)
-            F->gblob = ensure_buffer(F->gblob, &F->gblob_size, bbytes, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
+            F->gblob = ensure_buffer(F->gblob, &F->gblob_size, bbytes,
+                                     SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
         if (cbytes)
             F->gconst = ensure_buffer(F->gconst, &F->gconst_size, cbytes, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
         if (pbytes)
@@ -3014,15 +3926,308 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
     }
 }
 
+/* ── GPU profile ──────────────────────────────────────────────────────────
+ * PDO_GPU_PROFILE=1 (Android: adb shell setprop debug.ortarecomp.gpu_profile
+ * 1): each render pass of a frame goes to the GPU on its own with a fence,
+ * a thread notes when each fence signals, and every 5 s the log has the
+ * GPU time of each pass by its place in the frame, with its target's size,
+ * samples and draws. Submitting a pass at a time costs a little itself:
+ * for finding where the time goes, not for playing. */
+typedef struct prof_seg {
+    SDL_GPUFence *fence;
+    Uint64 submitted;
+    uint32_t key;           /* place in frame << 24 | kind */
+    uint32_t w, h, samples, draws;
+    uint32_t d3, d2, dfull, dblend;     /* of the draws: 3D, screen-space, those over half the screen, blended */
+} prof_seg;
+#define PROF_KEYS 32
+static bool prof_on;
+static SDL_Mutex *prof_lock;
+static SDL_Condition *prof_cond;
+static prof_seg prof_q[256];
+static uint32_t prof_head, prof_tail;           /* the thread takes at head */
+static struct { uint32_t key, w, h, samples; double ms, draws, d3, d2, dfull, dblend; uint32_t n; } prof_acc[PROF_KEYS];
+static int prof_nacc;
+static Uint64 prof_last_end, prof_window;
+static uint32_t prof_frames;
+static uint32_t prof_place, prof_draws;         /* this frame's pass count, draws in the pass */
+static uint32_t prof_d3, prof_d2, prof_dfull, prof_dblend;
+/* debug.ortarecomp.gpu_profile 2: also leave out the screen-space draws,
+ * 3: the 3D ones (what they cost: the profile with and without); 4: every
+ * draw cut to one pixel (scissor), what is left being the vertices and
+ * the draws themselves. */
+static int prof_skip;
+
+/* The profile's setting: PDO_GPU_PROFILE, else (Android) the property. */
+static int prof_setting(void)
+{
+    const char *e = SDL_getenv("PDO_GPU_PROFILE");
+#ifdef __ANDROID__
+    static char prop[PROP_VALUE_MAX];
+    prop[0] = 0;
+    __system_property_get("debug.ortarecomp.gpu_profile", prop);
+    if (!e || !*e)
+        e = prop;
+#endif
+    return e ? SDL_atoi(e) : 0;
+}
+static SDL_GPUCommandBuffer *prof_cmd_out;      /* replay's last command buffer, for its caller */
+static bool prof_frame;                          /* this replay is profiled (draw_frame_main) */
+
+static int SDLCALL prof_main(void *unused)
+{
+    (void)unused;
+    for (;;) {
+        prof_seg sg;
+        SDL_LockMutex(prof_lock);
+        while (prof_head == prof_tail)
+            SDL_WaitCondition(prof_cond, prof_lock);
+        sg = prof_q[prof_head % SDL_arraysize(prof_q)];
+        SDL_UnlockMutex(prof_lock);
+        SDL_WaitForGPUFences(dev, true, &sg.fence, 1);
+        Uint64 end = SDL_GetTicksNS();
+        SDL_ReleaseGPUFence(dev, sg.fence);
+        Uint64 start = sg.submitted > prof_last_end ? sg.submitted : prof_last_end;
+        prof_last_end = end;
+        SDL_LockMutex(prof_lock);
+        prof_head++;
+        {
+            int i;
+            for (i = 0; i < prof_nacc; i++)
+                if (prof_acc[i].key == sg.key && prof_acc[i].w == sg.w && prof_acc[i].h == sg.h)
+                    break;
+            if (i == prof_nacc && prof_nacc < PROF_KEYS) {
+                prof_nacc++;
+                SDL_zero(prof_acc[i]);
+                prof_acc[i].key = sg.key;
+                prof_acc[i].w = sg.w;
+                prof_acc[i].h = sg.h;
+                prof_acc[i].samples = sg.samples;
+            }
+            if (i < prof_nacc) {
+                prof_acc[i].ms += (double)(end > start ? end - start : 0) / 1e6;
+                prof_acc[i].draws += sg.draws;
+                prof_acc[i].d3 += sg.d3;
+                prof_acc[i].d2 += sg.d2;
+                prof_acc[i].dfull += sg.dfull;
+                prof_acc[i].dblend += sg.dblend;
+                prof_acc[i].n++;
+            }
+        }
+        SDL_UnlockMutex(prof_lock);
+    }
+    return 0;
+}
+
+static void prof_push(prof_seg *sg);
+
+/* The work recorded since the last cut goes to the GPU now, as segment
+ * kind (0 a pass, 1 a copy, 2 the frame's presentation); recording goes
+ * on in a new command buffer. */
+static void prof_cut(SDL_GPUCommandBuffer **cmdp, int kind)
+{
+    prof_seg sg;
+    Uint32 w, h;
+    SDL_GPUTexture *ms = cur_target ? cur_target->ms : frame_ms;
+
+    if (!prof_on || !prof_frame || !*cmdp)
+        return;
+    cur_size(&w, &h);
+    SDL_zero(sg);
+    sg.key = prof_place++ << 24 | (uint32_t)kind;
+    sg.w = kind >= 2 ? 0 : w;
+    sg.h = kind >= 2 ? 0 : h;
+    sg.samples = ms ? (uint32_t)nsamples : 1;
+    sg.draws = prof_draws;
+    sg.d3 = prof_d3;
+    sg.d2 = prof_d2;
+    sg.dfull = prof_dfull;
+    sg.dblend = prof_dblend;
+    prof_draws = prof_d3 = prof_d2 = prof_dfull = prof_dblend = 0;
+    sg.fence = SDL_SubmitGPUCommandBufferAndAcquireFence(*cmdp);
+    sg.submitted = SDL_GetTicksNS();
+    *cmdp = SDL_AcquireGPUCommandBuffer(dev);
+    prof_push(&sg);
+}
+
+/* The frame's own submit (the window pass, after the profile's cuts):
+ * timed too, so that its work is not put on the next frame's first pass.
+ * Takes the fence. */
+static void prof_window_fence(SDL_GPUFence *fence, Uint64 submitted)
+{
+    prof_seg sg;
+
+    SDL_zero(sg);
+    sg.key = prof_place++ << 24 | 3u;
+    sg.fence = fence;
+    sg.submitted = submitted;
+    prof_push(&sg);
+}
+
+static void prof_push(prof_seg *sg_in)
+{
+    prof_seg sg = *sg_in;
+
+    if (!sg.fence)
+        return;
+    SDL_LockMutex(prof_lock);
+    if (prof_tail - prof_head < SDL_arraysize(prof_q))
+        prof_q[prof_tail++ % SDL_arraysize(prof_q)] = sg;
+    else
+        SDL_ReleaseGPUFence(dev, sg.fence);
+    SDL_SignalCondition(prof_cond);
+    SDL_UnlockMutex(prof_lock);
+}
+
+/* Once a frame: the averages every 5 s. */
+static void prof_report(void)
+{
+    Uint64 now = SDL_GetTicksNS();
+
+    if (!prof_on)
+        return;
+    prof_frames++;
+    prof_place = 0;
+    if (!prof_window)
+        prof_window = now;
+    if (now - prof_window < 5000000000ull)
+        return;
+    SDL_LockMutex(prof_lock);
+    {
+        double total = 0;
+        for (int i = 0; i < prof_nacc; i++)
+            total += prof_acc[i].ms;
+        SDL_Log("gpuprof: %u frames, %.2f ms a frame in all (#0 is texture uploads plus any wait before "
+                "the frame; the window pass waits for the display's image):", prof_frames, total / prof_frames);
+        for (int i = 0; i < prof_nacc; i++) {
+            uint32_t kind = prof_acc[i].key & 0xFF;
+            if (!prof_acc[i].n)
+                continue;
+            SDL_Log("gpuprof:   #%u %s %ux%u%s: %.2f ms a frame (%.2f each, in %u of the frames), %.0f draws "
+                    "(3D %.0f, screen-space %.0f of them %.1f over half the screen; blended %.0f)",
+                    prof_acc[i].key >> 24, kind == 5 ? "vertex pre-pass" : kind == 4 ? "uploads and wait before" : kind == 3 ? "window" : kind == 2 ? "presentation" : kind == 1 ? "copy" : "pass",
+                    prof_acc[i].w, prof_acc[i].h, prof_acc[i].samples > 1 ? " multisampled" : "",
+                    prof_acc[i].ms / prof_frames, prof_acc[i].ms / prof_acc[i].n, prof_acc[i].n,
+                    prof_acc[i].draws / prof_acc[i].n, prof_acc[i].d3 / prof_acc[i].n, prof_acc[i].d2 / prof_acc[i].n,
+                    prof_acc[i].dfull / prof_acc[i].n, prof_acc[i].dblend / prof_acc[i].n);
+        }
+        prof_nacc = 0;
+        prof_frames = 0;
+        prof_window = now;
+        {   /* the mode (1-4) can change while the game runs: adb shell setprop ... */
+            int v = prof_setting(), skip = v >= 2 ? v - 1 : 0;
+            if (v >= 1 && skip != prof_skip) {
+                prof_skip = skip;
+                SDL_Log("gpuprof: now %s", !skip ? "everything drawn" : skip == 1 ? "screen-space draws left out"
+                        : skip == 2 ? "3D draws left out" : "every draw cut to one pixel");
+            }
+        }
+    }
+    SDL_UnlockMutex(prof_lock);
+}
+
+static void prof_start(void)
+{
+    {
+        int v = prof_setting();
+        prof_on = v >= 1;
+        prof_skip = v >= 2 ? v - 1 : 0;     /* 1 screen-space out, 2 3D out, 3 one pixel */
+    }
+    if (!prof_on)
+        return;
+    prof_lock = SDL_CreateMutex();
+    prof_cond = SDL_CreateCondition();
+    if (!prof_lock || !prof_cond || !SDL_CreateThread(prof_main, "gpuprof", NULL)) {
+        prof_on = false;
+        return;
+    }
+    SDL_Log("gfx: GPU profile on: each pass submitted on its own and timed (gpuprof: lines every 5 s)%s",
+            prof_skip == 1 ? "; screen-space draws left out" : prof_skip == 2 ? "; 3D draws left out"
+            : prof_skip == 3 ? "; every draw cut to one pixel" : "");
+}
+
+/* Interpolating, a blended vertex-program draw runs its program once on
+ * both frames' constants and streams blended, instead of once for each
+ * frame with the outputs blended (shaders/vsh.vert, prev_prog.z): half the
+ * vertex work. On the RP6 (Turnip, 2x, 120 Hz) the two runs made the scene
+ * pass 6.3 ms of 8.3, and 1.5x did not help; once, 4.2-5.6 ms, and a boost's
+ * end looked right. On by default; PDO_INTERP_ONCE=0 (Android: setprop
+ * debug.ortarecomp.interp_once 0, read again every 5 s) for the two runs. */
+static bool interp_once(void)
+{
+    static bool on;
+    static Uint64 next;
+    Uint64 now = SDL_GetTicksNS();
+    if (now >= next) {
+        const char *e = SDL_getenv("PDO_INTERP_ONCE");
+        static bool logged;
+        bool was = on;
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        prop[0] = 0;
+        __system_property_get("debug.ortarecomp.interp_once", prop);
+        if (!e || !*e)
+            e = prop;
+#endif
+        on = !(e && *e == '0');
+        next = now + 5000000000ull;
+        if (on != was || !logged)
+            SDL_Log("interp: vertex programs run %s", on ? "once on both frames blended" : "for each frame, outputs blended");
+        logged = true;
+    }
+    return on;
+}
+
+/* A vertex-program draw's constants, and its partner's in the frame
+ * before when it blends, into the shader's uniform block (vsh.vert,
+ * Consts): read there at fixed places, not from the storage buffer. Pushed
+ * only when they change: draws in a row share them (pdo_gfx_draw_vsh). */
+static int32_t consts_cur, consts_prev;
+static const frame_data *consts_f, *consts_p;
+
+static void push_consts(SDL_GPUCommandBuffer *cmd, const command *c, float t)
+{
+    static float k[192][4], kp[192][4];
+    int32_t cur = c->vu.info[2], prev = P && t < 1.0f ? c->vu.interp[0] : -1;
+
+    if (cur < 0 || (uint32_t)cur + 192 > F->nvconsts)
+        return;
+    if (prev >= 0 && (uint32_t)prev + 192 > P->nvconsts)
+        prev = -1;
+    if (consts_pushed && cur == consts_cur && prev == consts_prev && consts_f == F
+        && consts_p == (prev >= 0 ? P : NULL))
+        return;
+    /* Two pushes of 3 KiB: SDL binds 4 KiB of a uniform block. */
+    memcpy(k, F->vconsts[cur], sizeof k);
+    memcpy(kp, prev >= 0 ? P->vconsts[prev] : F->vconsts[cur], sizeof kp);
+    SDL_PushGPUVertexUniformData(cmd, 1, k, sizeof k);
+    SDL_PushGPUVertexUniformData(cmd, 2, kp, sizeof kp);
+    consts_pushed = true;
+    consts_cur = cur;
+    consts_prev = prev;
+    consts_f = F;
+    consts_p = prev >= 0 ? P : NULL;
+}
+
 static void replay(SDL_GPUCommandBuffer *cmd)
 {
+    Uint64 rt0 = 0, rt1 = 0;
     SDL_GPURenderPass *pass = NULL;
     int bloom = pdo_settings_get()->bloom;
     uint32_t bloom_at = UINT32_MAX;     /* the command after the frame's last 3D draw */
+    int once = interp_once();
 
     upload_frame(cmd);
+    prof_cut(&cmd, 4);      /* the uploads, and any wait the queue had before this frame */
+    if (!F->vout_done) {    /* once a frame: its programs' vertices, for every time it is shown */
+        F->vout_done = true;
+        vout_prepass(cmd);
+        prof_cut(&cmd, 5);
+    }
     cur_target = NULL;
+    replay_frames++;
     bg_collect();
+    vkcache_maybe_save();
     if (bloom)
         for (uint32_t i = F->ncmds; i-- > 0;)
             if (F->cmds[i].kind == CMD_DRAW && is_3d(F, &F->cmds[i])) {
@@ -3053,68 +4258,220 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             log_command(i, c, tex);
 
         if (c->kind == CMD_CLEAR) {
-            if (pass)
+            if (pass) {
                 SDL_EndGPURenderPass(pass);
+                prof_cut(&cmd, 0);
+            }
             pass = begin_pass(cmd, c);
             continue;
         }
         if (c->kind == CMD_TARGET) {
-            if (pass)
+            if (pass) {
                 SDL_EndGPURenderPass(pass);
+                prof_cut(&cmd, 0);
+            }
             pass = NULL;
             cur_target = target_of(&c->surf, &c->surf2);
+            target_drawn(cur_target);
             continue;
         }
         if (c->kind == CMD_COPY) {
-            if (pass)
+            if (pass) {
                 SDL_EndGPURenderPass(pass);
+                prof_cut(&cmd, 0);
+            }
             pass = NULL;
             copy_rect(cmd, c);
+            prof_cut(&cmd, 1);
             continue;
         }
+        rt0 = SDL_GetTicksNS();
         gpu = 0;
         if (c->vsh && !(cpu_vsh && c->has_cpu) && vsh_vs && prog_buf && F->gblob && F->gconst)
             gpu = 1;
         else if (c->fvf >= 0 && !(cpu_vsh && c->has_cpu) && fvf_vs && F->gblob)
             gpu = 2;
+        if (gpu == 1 && c->vout_base >= 0 && F->gvout)
+            gpu = 3;                /* its vertices from the vertex pre-pass */
         if ((c->vsh || c->fvf >= 0) && !gpu && !c->has_cpu)
             continue;           /* no vertices to draw it with */
+        if (prof_frame) {
+            bool d3 = is_3d(F, c);
+            float r[4];
+            if ((prof_skip == 1 || prof_skip == 2) && d3 == (prof_skip == 2))
+                continue;
+            prof_d3 += d3;
+            prof_d2 += !d3;
+            prof_dblend += c->draw.ps.blend_enable != 0;
+            if (!d3 && screen_rect(F, c, r) && (r[2] - r[0]) * (r[3] - r[1]) >= 0.5f * (float)frame_w * (float)frame_h)
+                prof_dfull++;
+        }
         if (!pass)
             pass = begin_pass(cmd, NULL);
         {
             pdo_pipeline_state ps = c->draw.ps;
+            bool own_fs = false;    /* its setup has or will have its own shader (fs_wait) */
+            bool in_place = false;  /* fs_wait, a target drawn once: its pipeline made here */
             ps.single_sample = cur_target && cur_target->depth_only;
             ps.gpu_vsh = gpu;
             ps.combiners = (c->draw.ff.ps_final[2] & 0xFF) != 0;
             ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+            ps.fs_spec[0] = ps.fs_spec[1] = 0;
             /* The program's own shader when made, unless the draw is
-             * paired with another program (only the interpreter runs two).
-             * Its pipelines are made in the background (bg_ask): until
-             * one is, the interpreter's. */
-            if (gpu == 1 && c->vu.prev_prog[1] == 0) {
-                uint64_t key = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
-                if (key) {
-                    ps.vsh_spec[0] = (uint32_t)key;
-                    ps.vsh_spec[1] = (uint32_t)(key >> 32);
-                    if (!find_pipeline(&ps)) {
-                        bg_ask(&ps, spec_shader_of(key), true);
-                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+             * paired with another program (only the interpreter runs two),
+             * and the fragment setup's own shader when made. Pipelines
+             * with them are made in the background (bg_ask): until one
+             * is, the interpreters'. */
+            {
+                uint64_t vkey = 0, fkey;
+                bool stand_in;
+                SDL_GPUShader *svs = NULL, *sfs;
+                if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                    vkey = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
+                    if (vkey)
+                        svs = spec_shader_of(vkey);
+                    if (!svs)
+                        vkey = 0;
+                    if (vkey && vout_on()) {
+                        /* Its compute pipeline is coming (the pre-pass):
+                         * no graphics pipeline of the program's own
+                         * meanwhile (the slow ones), the CPU's vertices. */
+                        int st;
+                        comp_of(vkey, NULL, 0, &st);
+                        if (st >= 0) {
+                            vkey = 0;
+                            svs = NULL;
+                        }
                     }
                 }
-                if (ps.vsh_spec[0] || ps.vsh_spec[1])
-                    spec_draws++;
+                if (c->fkey) {
+                    fkey = c->fkey;
+                    sfs = c->sfs;
+                    fs_pending = false;
+                } else {
+                    fkey = fs_key_of(&c->draw.ff, ps.combiners, &sfs);
+                    c->fkey = fkey;
+                    c->sfs = sfs;
+                }
+                own_fs = fkey || fs_pending;
+                ps.vsh_spec[0] = (uint32_t)vkey;
+                ps.vsh_spec[1] = (uint32_t)(vkey >> 32);
+                ps.fs_spec[0] = (uint32_t)fkey;
+                ps.fs_spec[1] = (uint32_t)(fkey >> 32);
+                /* A program without its own shader yet is drawn from the
+                 * CPU's vertices below: no pipeline of the vertex interpreter
+                 * with the setup's own shader (Turnip took 27 s over one). */
+                stand_in = gpu == 1 && c->vu.prev_prog[1] == 0 && !vkey && c->has_cpu
+                           && pdo_vsh_spec_enabled();
+                if ((vkey || fkey) && !find_pipeline(&ps) && !(fs_wait && (stand_in || (gpu == 1 && !vkey)))) {
+                    if (!pipeline_failed(&ps)) {
+                        if (fs_wait && !svs)
+                            bg_ask_front(&ps, NULL, sfs);
+                        else
+                            bg_ask(&ps, svs, sfs, true);
+                    }
+                    else if (fkey && !vkey)
+                        own_fs = false;     /* its own will not come: the interpreter's */
+                    /* meanwhile: the program's shader alone if its pipeline is there */
+                    ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                    if (vkey && fkey && !find_pipeline(&ps))
+                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                    else if (!fkey)
+                        ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                }
+                if (gpu == 1 && c->vu.prev_prog[1] == 0) {
+                    if (ps.vsh_spec[0] || ps.vsh_spec[1]) {
+                        settle(c->vu.info[0], true);
+                    } else {
+                        settle(c->vu.info[0], false);
+                        if (c->has_cpu && pdo_vsh_spec_enabled()) {
+                            /* its own pipeline is not made yet: the CPU's vertices meanwhile */
+                            gpu = 0;
+                            ps.gpu_vsh = 0;
+                            if (fkey) {     /* the setup's own shader with them, when its pipeline is made */
+                                ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                                ps.fs_spec[0] = (uint32_t)fkey;
+                                ps.fs_spec[1] = (uint32_t)(fkey >> 32);
+                                if (!find_pipeline(&ps)) {
+                                    if (fs_wait && !pipeline_failed(&ps))
+                                        bg_ask_front(&ps, NULL, sfs);   /* the one this draw waits for */
+                                    else
+                                        own_fs = false;
+                                    ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                                }
+                            }
+                            cpu_stand_in_draws++;
+                            note_building();
+                        }
+                    }
+                }
+                if (gpu == 3) {
+                    settle(c->vu.info[0], true);   /* the CPU need not make its vertices */
+                    vout_draws++;
+                }
+                if (gpu == 1) {
+                    if (ps.vsh_spec[0] || ps.vsh_spec[1])
+                        spec_draws++;
+                    else
+                        interp_draws++;
+                }
+                if (ps.fs_spec[0] || ps.fs_spec[1])
+                    fs_spec_draws++;
                 else
-                    interp_draws++;
+                    fs_interp_draws++;
+            }
+            if (fs_wait && gpu == 1 && !ps.vsh_spec[0] && !ps.vsh_spec[1] && !find_pipeline(&ps)) {
+                /* No pipeline of the vertex interpreter's with a custom
+                 * driver (Turnip took 20 s and hundreds of MB over each;
+                 * a particle effect's ran the RP6 out of memory): a draw
+                 * without the CPU's vertices waits for its program's own. */
+                async_skipped++;
+                note_building();
+                continue;
+            }
+            if (fs_wait && own_fs && !ps.fs_spec[0] && !ps.fs_spec[1] && !find_pipeline(&ps)) {
+                uint64_t fk = 0;
+                SDL_GPUShader *sf = NULL;
+                if (target_redrawn(cur_target)) {
+                    async_skipped++;
+                    note_building();
+                    continue;               /* until its own setup's pipeline is made */
+                }
+                /* drawn once: its own setup's pipeline here, now */
+                fk = fs_key_of(&c->draw.ff, ps.combiners, &sf);
+                if (fk) {
+                    ps.fs_spec[0] = (uint32_t)fk;
+                    ps.fs_spec[1] = (uint32_t)(fk >> 32);
+                    in_place_draws++;
+                    in_place = true;
+                }
+            }
+            if (pipelines_async && !in_place && !find_pipeline(&ps)) {
+                ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                ps.fs_spec[0] = ps.fs_spec[1] = 0;
+                if (!find_pipeline(&ps)) {
+                    if (!pipeline_failed(&ps))
+                        bg_ask_urgent(&ps);
+                    async_skipped++;
+                    note_building();
+                    continue;               /* left out until its pipeline is made */
+                }
             }
             p = get_pipeline(&ps);
-            if (!p && (ps.vsh_spec[0] || ps.vsh_spec[1])) {
+            if (!p && (ps.vsh_spec[0] || ps.vsh_spec[1] || ps.fs_spec[0] || ps.fs_spec[1])) {
                 ps.vsh_spec[0] = ps.vsh_spec[1] = 0;
+                ps.fs_spec[0] = ps.fs_spec[1] = 0;
                 p = get_pipeline(&ps);
             }
         }
         if (!p)
             continue;
-        SDL_BindGPUGraphicsPipeline(pass, p);
+        rt1 = SDL_GetTicksNS();
+        rec_decide_ns += rt1 - rt0;
+        if (rec.p != p) {
+            SDL_BindGPUGraphicsPipeline(pass, p);
+            rec.p = p;
+        }
         /* The target's own scale: a shadow map may be at the game's size
          * (Shadows: Low) while the rest is scaled. */
         float vsx = cur_target ? (float)cur_target->pw / (float)cur_target->w : rscale;
@@ -3125,8 +4482,15 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         vp.h = c->draw.viewport[3] * vsy;
         vp.min_depth = depth_rev ? 1.0f - c->draw.viewport[5] : c->draw.viewport[4];
         vp.max_depth = depth_rev ? 1.0f - c->draw.viewport[4] : c->draw.viewport[5];
-        SDL_SetGPUViewport(pass, &vp);
-        bind_geometry(pass, gpu, c);
+        if (!rec.vp_set || memcmp(&rec.vp, &vp, sizeof vp)) {
+            SDL_SetGPUViewport(pass, &vp);
+            rec.vp = vp;
+            rec.vp_set = true;
+        }
+        if (gpu == 0 || rec.gpu != gpu) {     /* the CPU's vertices: at the draw's own place */
+            bind_geometry(pass, gpu, c);
+            rec.gpu = gpu;
+        }
         for (int s = 0; s < 4; s++) {
             tsb[s].texture = tex[s];
             tsb[s].sampler = get_sampler(&c->draw.tex[s]);
@@ -3140,10 +4504,26 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 SDL_BindGPUGraphicsPipeline(pass, p);
                 SDL_SetGPUViewport(pass, &vp);
                 bind_geometry(pass, gpu, c);
+                rec.p = p;
+                rec.vp = vp;
+                rec.vp_set = true;
+                rec.gpu = gpu;
             }
         }
-        SDL_BindGPUFragmentSamplers(pass, 0, tsb, 4);
-        SDL_PushGPUFragmentUniformData(cmd, 0, &c->draw.ff, sizeof c->draw.ff);
+        if (!rec.tsb_set || memcmp(rec.tsb, tsb, sizeof rec.tsb)) {
+            SDL_BindGPUFragmentSamplers(pass, 0, tsb, 4);
+            memcpy(rec.tsb, tsb, sizeof rec.tsb);
+            rec.tsb_set = true;
+        }
+        if (!rec.ff_set || memcmp(&rec.ff, &c->draw.ff, sizeof rec.ff)) {
+            SDL_PushGPUFragmentUniformData(cmd, 0, &c->draw.ff, sizeof c->draw.ff);
+            rec.ff = c->draw.ff;
+            rec.ff_set = true;
+        }
+        if (prof_frame && prof_skip == 3) {
+            SDL_Rect one = { 0, 0, 1, 1 };
+            SDL_SetGPUScissor(pass, &one);
+        }
         if (c->draw.ps.stencil_enable)
             SDL_SetGPUStencilReference(pass, c->draw.stencil_ref);
         if (gpu) {
@@ -3155,8 +4535,28 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             if (gpu == 1) {
                 c->vu.blend_t[0] = t;
                 c->vu.interp[2] = tint;
+                c->vu.prev_prog[2] = once;
                 c->vu.info[3] = depth_rev;
                 SDL_PushGPUVertexUniformData(cmd, 0, &c->vu, sizeof c->vu);
+                push_consts(cmd, c, t);
+            } else if (gpu == 3) {
+                /* vout.vert's Draw: the outputs, and its partner's in the
+                 * frame before when it blends (it was made there too) */
+                struct { int32_t base[4]; float t[4], pt[4]; } u;
+                const command *pc = P && t < 1.0f && !c->unpaired && c->vu.interp[0] >= 0
+                                    && c->pair_prev < P->ncmds && P->gvout ? &P->cmds[c->pair_prev] : NULL;
+                u.base[0] = c->vout_base;
+                u.base[1] = pc && pc->vsh && pc->vout_base >= 0 ? pc->vout_base : -1;
+                u.base[2] = u.base[1] >= 0 ? (int32_t)pc->vout_n : 0;
+                u.base[3] = tint;
+                u.t[0] = t;
+                u.t[1] = c->vu.blend_t[1];
+                u.t[2] = c->vu.blend_t[2];
+                u.t[3] = c->vu.blend_t[3];
+                u.pt[0] = c->vu.scale[3];
+                memcpy(&u.pt[1], &c->vu.interp[3], sizeof u.pt[1]);
+                u.pt[2] = u.pt[3] = 0.0f;
+                SDL_PushGPUVertexUniformData(cmd, 0, &u, sizeof u);
             } else {
                 F->fvf_us[c->fvf].blend_t[0] = t;
                 F->fvf_us[c->fvf].blend_t[1] = depth_rev;
@@ -3164,17 +4564,24 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 SDL_PushGPUVertexUniformData(cmd, 0, &F->fvf_us[c->fvf], sizeof F->fvf_us[0]);
             }
             SDL_DrawGPUIndexedPrimitives(pass, c->vsh_index_count, 1, c->vsh_first_index, 0, 0);
+            prof_draws++;
         } else {
             float b[4] = { P ? blend : 1.0f, P && c->prev_vbase >= 0 ? 1.0f : 0.0f,
                            0.0f, depth_rev ? 1.0f : 0.0f };   /* CPU-made: not tinted; w: reversed depth */
             SDL_PushGPUVertexUniformData(cmd, 0, b, sizeof b);
             SDL_DrawGPUIndexedPrimitives(pass, c->index_count, 1, c->first_index, -(Sint32)c->vbase, 0);
+            prof_draws++;
         }
+        rec_sdl_ns += SDL_GetTicksNS() - rt1;
+        rec_draws++;
     }
-    if (pass)
+    if (pass) {
         SDL_EndGPURenderPass(pass);
+        prof_cut(&cmd, 0);
+    }
     if (bloom_at == F->ncmds && replay_limit >= F->ncmds)     /* the last 3D draw was the frame's last command */
         bloom_pass(cmd, bloom);
+    prof_cmd_out = cmd;
 }
 
 /* Read the frame target back and write it as a BMP. Slow; debugging only. */
@@ -3435,7 +4842,7 @@ static void capture_check_textures(void)
         uint32_t levels;
         const uint8_t *src;
 
-        if (!g->uploaded || g->last_used + 2 < F->frame)
+        if (!g->uploaded || g->last_used + 2 < F->frame || g->bc)     /* BC: the blocks as they are */
             continue;
         pdo_xtex_describe(g->format_word, g->size_word, &info);
         if (!info.known)
@@ -3698,6 +5105,7 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
         fitv.x = SDL_floorf((sw - fitv.w) / 2);
         fitv.y = SDL_floorf((sh - fitv.h) / 2);
         fitv.max_depth = 1.0f;
+        pdo_overlay_set_rect(fitv.x, fitv.y, fitv.w, fitv.h);    /* the menu's clicks and taps */
         SDL_zero(vp);
         if (shown_movie && st->movie_fit != PDO_MOVIE_ORIGINAL) {
             memcpy(mr, shown_movie_rect, sizeof mr);
@@ -3982,7 +5390,9 @@ static int cmp_key(const void *a, const void *b)
  * their source known (pdo_gfx_set_draw_source). */
 static bool blendable(const command *c)
 {
-    return c->kind == CMD_DRAW && c->id_src;
+    /* Not a point list (particles): never blended as the CPU made them,
+     * and paired on the GPU, many alike made pairing take 17-23 ms. */
+    return c->kind == CMD_DRAW && c->id_src && !(c->vsh && c->vu.blend_t[1] != 0.0f);
 }
 
 /* A 3D draw: by a vertex program, or fixed-function not pretransformed --
@@ -4085,6 +5495,8 @@ static bool draw_corners(const frame_data *f, const command *c, float out[8])
 /* Where two alike draws are, cheaply: the screen and world translation of
  * a fixed-function draw, a program draw's anchors, else its corners. To
  * pick a big group's few nearest before the full distance. */
+static bool corners_of(const frame_data *f, const command *c, float out[8]);
+
 static float near_of(const frame_data *pf, const command *pc, const frame_data *cf, const command *c)
 {
     float d = 0.0f;
@@ -4099,7 +5511,7 @@ static float near_of(const frame_data *pf, const command *pc, const frame_data *
             d += SDL_fabsf(c->anchor[i] - pc->anchor[i]) + SDL_fabsf(c->anchor[4 + i] - pc->anchor[4 + i]);
     } else {
         float a4[8], b4[8];
-        if (draw_corners(pf, pc, a4) && draw_corners(cf, c, b4))
+        if (corners_of(pf, pc, a4) && corners_of(cf, c, b4))
             for (int i = 0; i < 8; i++)
                 if (a4[i] == a4[i] && b4[i] == b4[i])
                     d += SDL_fabsf(a4[i] - b4[i]);
@@ -4110,11 +5522,58 @@ static float near_of(const frame_data *pf, const command *pc, const frame_data *
 /* How far apart two alike draws are, to pair a group nearest first: where
  * their vertices are, and their matrices (fixed-function) or constant sets
  * (programs; what all objects share is equal and adds nothing). */
+/* draw_corners, worked out once a draw: pairing compares each draw of a
+ * group of alike ones with every other (a group of n, n times n). The
+ * cache is the draw's own (written only on the pairing thread). */
+static bool corners_of(const frame_data *f, const command *c, float out[8])
+{
+    command *m = (command *)c;
+    if (!m->corners_state)
+        m->corners_state = draw_corners(f, c, m->corners) ? 1 : 2;
+    if (m->corners_state != 1)
+        return false;
+    memcpy(out, m->corners, sizeof m->corners);
+    return true;
+}
+
+/* The constants' floats a program reads (its consts_read bits), in order:
+ * draw_distance summed over all 768 testing each bit, for every pair of a
+ * group of alike draws (most of pairing's time on the RP6). Programs are
+ * few; their lists are kept (pairing thread). */
+static const uint16_t *read_list(const uint8_t m[24], uint16_t *n)
+{
+    enum { SLOTS = 64 };
+    static struct { bool used; uint8_t key[24]; uint16_t n; uint16_t idx[768]; } cache[SLOTS];
+    uint32_t h = (uint32_t)hash_bytes(m, 24) % SLOTS, s = h;
+
+    for (uint32_t k = 0; k < SLOTS; k++, s = (s + 1) % SLOTS) {
+        if (cache[s].used && !memcmp(cache[s].key, m, 24)) {
+            *n = cache[s].n;
+            return cache[s].idx;
+        }
+        if (!cache[s].used)
+            break;
+    }
+    if (cache[s].used)      /* full: this one's place is taken over */
+        s = h;
+    cache[s].used = true;
+    memcpy(cache[s].key, m, 24);
+    cache[s].n = 0;
+    for (int i = 0; i < 192 * 4; i++)
+        if (m[i >> 5] >> ((i >> 2) & 7) & 1)
+            cache[s].idx[cache[s].n++] = (uint16_t)i;
+    *n = cache[s].n;
+    return cache[s].idx;
+}
+
+static uint32_t dd_calls;       /* draw_distance this pairing, for the slow-pairing log */
+
 static float draw_distance(const frame_data *pf, const command *pc, const frame_data *cf, const command *c)
 {
+    dd_calls++;
     float d = pc->id_src == c->id_src ? 0.0f : 1e-3f, a4[8], b4[8];   /* the same data: only a tie-break */
 
-    if (draw_corners(pf, pc, a4) && draw_corners(cf, c, b4))
+    if (corners_of(pf, pc, a4) && corners_of(cf, c, b4))
         for (int i = 0; i < 8; i++)
             if (a4[i] == a4[i] && b4[i] == b4[i])     /* not NaN */
                 d += SDL_fabsf(a4[i] - b4[i]);
@@ -4148,10 +5607,13 @@ static float draw_distance(const frame_data *pf, const command *pc, const frame_
          * battleships paired worse with their own last frame than with
          * another, and their constants "jumped"). */
         const float *a = pf->vconsts[pc->vu.info[2]], *b = cf->vconsts[c->vu.info[2]];
-        for (int i = 0; i < 192 * 4; i++)
-            if ((c->consts_read[i >> 5] >> ((i >> 2) & 7) & 1) && SDL_fabsf(a[i]) < 1e6f &&
-                SDL_fabsf(b[i]) < 1e6f)     /* not stale, huge or NaN registers */
+        uint16_t n;
+        const uint16_t *idx = read_list(c->consts_read, &n);
+        for (uint16_t k = 0; k < n; k++) {
+            int i = idx[k];
+            if (SDL_fabsf(a[i]) < 1e6f && SDL_fabsf(b[i]) < 1e6f)     /* not stale, huge or NaN registers */
                 d += SDL_fabsf(a[i] - b[i]);
+        }
     } else {
         /* From where it was, or from where it was going (moved on by how it
          * moved the frame before), whichever is nearer: in a pack flying in
@@ -4183,8 +5645,25 @@ static float draw_distance(const frame_data *pf, const command *pc, const frame_
  * a vertex moved 7.6 in a draw 9.8 across -- and blended vertex by vertex
  * its arcs scattered over the screen. Positions: the first three floats
  * of each vertex, stride apart; ncur, nprev: bytes there to read. */
+/* Pairing's own time by part, for the slow-pairing log: the stray tests
+ * (those over vertices that changed apart), the keys. */
+static Uint64 mf_stray_ns, mf_keys_ns;
+static uint32_t mf_stray_full, mf_stray_verts;
+
+static float stray_n_(const uint8_t *cur, const uint8_t *prev, uint32_t stride, uint32_t nv, uint32_t ncur,
+                      uint32_t nprev, int nc);
+
 static float stray_n(const uint8_t *cur, const uint8_t *prev, uint32_t stride, uint32_t nv, uint32_t ncur,
                      uint32_t nprev, int nc)
+{
+    Uint64 t0 = SDL_GetTicksNS();
+    float v = stray_n_(cur, prev, stride, nv, ncur, nprev, nc);
+    mf_stray_ns += SDL_GetTicksNS() - t0;
+    return v;
+}
+
+static float stray_n_(const uint8_t *cur, const uint8_t *prev, uint32_t stride, uint32_t nv, uint32_t ncur,
+                      uint32_t nprev, int nc)
 {
     float lo[3] = { 3e38f, 3e38f, 3e38f }, hi[3] = { -3e38f, -3e38f, -3e38f }, dmax = 0.0f, size = 0.0f;
     float mean[3] = { 0.0f, 0.0f, 0.0f };
@@ -4193,6 +5672,14 @@ static float stray_n(const uint8_t *cur, const uint8_t *prev, uint32_t stride, u
     if (!nv || !stride || nc < 1 || nc > 3 || (uint64_t)(nv - 1) * stride + bytes > ncur ||
         (uint64_t)(nv - 1) * stride + bytes > nprev)
         return 0.0f;
+    /* The same bytes as the frame before (a landscape, a model moved by its
+     * constants): nothing strayed, 0 as the loops below would find. Going
+     * over every vertex of every input of every paired draw, twice, was
+     * most of pairing (8-17 ms a game frame on the RP6). */
+    if (!memcmp(cur, prev, (size_t)(nv - 1) * stride + bytes))
+        return 0.0f;
+    mf_stray_full++;
+    mf_stray_verts += nv;
     for (int pass = 0; pass < 2; pass++)
         for (uint32_t v = 0; v < nv; v++) {
             float p1[3] = { 0.0f, 0.0f, 0.0f }, p0[3] = { 0.0f, 0.0f, 0.0f }, d = 0.0f;
@@ -4233,6 +5720,8 @@ static bool quads_resorted(const uint8_t *cur, const uint8_t *prev, uint32_t str
     if (nq < 2 || nq > 1024 || stride < 12 || (uint64_t)(nv - 1) * stride + 12 > ncur ||
         (uint64_t)(nv - 1) * stride + 12 > nprev)
         return false;
+    if (!memcmp(cur, prev, (size_t)(nv - 1) * stride + 12))
+        return false;   /* the same bytes: nothing moved, as the loops below would find */
     for (int pass = 0; pass < 2; pass++) {
         for (uint32_t q = 0; q < nq; q++) {
             float c1[3] = { 0, 0, 0 }, c0[3] = { 0, 0, 0 }, lo[3], hi[3], size = 0.0f, d = 0.0f;
@@ -4365,7 +5854,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
     uint32_t n_forced = 0, n_jumped = 0, n_rebuilt = 0, n_swapped = 0, n_still = 0, n_fvf_paired = 0;
     uint32_t n_lod = 0;     /* vertex-program draws paired across models (below) */
     uint32_t n_progswitch = 0;
-    uint32_t n_outblend = 0;    /* same program, a read register jumped: outputs blended */
+        uint32_t n_outblend = 0;    /* same program, a read register jumped: outputs blended */
     uint32_t n_screen = 0;  /* copies of the picture pasted on screen, not blended */  /* paired with the same draw on another program (boost, brake end) */
     char resized_txt[96] = "";
 
@@ -4407,8 +5896,12 @@ static void match_frames(frame_data *prev, frame_data *cur)
     memset(mf_ns, 0, sizeof mf_ns);
     mf_t0 = SDL_GetTicksNS();
     for (int pass = 0; pass < 3; pass++) {
-    np = keys_of(prev, &pk, &cap_pk, pass >= 1, pass == 2, taken);
-    nc = keys_of(cur, &ck, &cap_ck, pass >= 1, pass == 2, grouped);
+    {
+        Uint64 kt = SDL_GetTicksNS();
+        np = keys_of(prev, &pk, &cap_pk, pass >= 1, pass == 2, taken);
+        nc = keys_of(cur, &ck, &cap_ck, pass >= 1, pass == 2, grouped);
+        mf_keys_ns += SDL_GetTicksNS() - kt;
+    }
     i = j = 0;
     while (i < np && j < nc) {
         uint32_t i2 = i, j2 = j;
@@ -4737,8 +6230,22 @@ static void match_frames(frame_data *prev, frame_data *cur)
                          * frame, capture of a boost's end). Each frame's
                          * run is as the game drew it, and the outputs
                          * blend. */
-                        c->vu.prev_prog[0] = pc->vu.info[0];
-                        c->vu.prev_prog[1] = pc->vu.info[1];
+                        if (fs_wait) {
+                            /* Only the vertex interpreter runs two programs,
+                             * and with a custom driver its pipelines are
+                             * not made (Turnip ran the RP6 out of memory
+                             * over them, interpolating at 120 Hz): this
+                             * frame's alone, not blended (a boost's end,
+                             * one frame). */
+                            c->vu.interp[0] = -1;
+                            c->vu.interp[1] = 0;
+                            memcpy(c->vu.prev_scale, c->vu.scale, sizeof c->vu.prev_scale);
+                            memcpy(c->vu.prev_offset, c->vu.offset, sizeof c->vu.prev_offset);
+                            c->unpaired = true;
+                        } else {
+                            c->vu.prev_prog[0] = pc->vu.info[0];
+                            c->vu.prev_prog[1] = pc->vu.info[1];
+                        }
                     }
                     taken[pk[i + order[k]].cmd] = 1;
                     c->pair_prev = pk[i + order[k]].cmd;
@@ -5269,7 +6776,8 @@ static void match_frames(frame_data *prev, frame_data *cur)
         }
         if (++st_frames == 300) {
             SDL_Log("interp: %u camera cuts in the last 300 frames; %.1f close calls, %.1f wrong pairs undone, "
-                    "%.1f rebuilt draws a frame", st_cuts, st_close / 300.0, st_swapped / 300.0, st_rebuilt / 300.0);
+                    "%.1f rebuilt draws a frame",
+                    st_cuts, st_close / 300.0, st_swapped / 300.0, st_rebuilt / 300.0);
             st_frames = st_cuts = st_close = st_swapped = st_rebuilt = 0;
         }
     }
@@ -5281,8 +6789,9 @@ static void match_frames(frame_data *prev, frame_data *cur)
  * handed over, not the one last drawn. */
 static frame_data *free_frame(void)
 {
-    for (int i = 0; i < 5; i++)
-        if (&pool[i] != F && &pool[i] != ready && &pool[i] != held_cur && &pool[i] != held_prev)
+    for (int i = 0; i < (int)SDL_arraysize(pool); i++)
+        if (&pool[i] != F && &pool[i] != ready && &pool[i] != held_cur && &pool[i] != held_prev
+            && &pool[i] != held_next)
             return &pool[i];
     return NULL;
 }
@@ -5344,9 +6853,10 @@ static void hand_over(void)
             F->ups[i].t->staged_in = F->frame;
         for (int i = 0; i < ready->nups; i++) {
             pending_upload *u = &ready->ups[i];
-            uint32_t need = u->w * u->h * 4;
+            uint32_t need = u->bytes;
             if (u->t->staged_in == F->frame)
                 continue;           /* this frame has a newer copy */
+            F->staging_len = (F->staging_len + 15) & ~15u;   /* BC copies' alignment */
             if (F->nups == MAX_UPLOADS) {
                 u->t->uploaded = false;     /* next time it is used */
                 continue;
@@ -5510,8 +7020,13 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
     }
     {
         Uint64 r0 = SDL_GetTicksNS();
+        prof_frame = prof_on;
         replay(cmd);
+        if (prof_frame)
+            cmd = prof_cmd_out;     /* the profile submitted the passes before */
         present_pass(cmd);
+        prof_cut(&cmd, 2);
+        prof_frame = false;
         main_record_ns += SDL_GetTicksNS() - r0;
     }
     /* Frame generation: the window pass into ls_tex, taken in and the
@@ -5545,7 +7060,19 @@ static void draw_frame_main(frame_data *f, frame_data *prev, float t)
         /* Frame generation's scene-cut test reads what the GPU just did. */
         if (ls_drawn && fence)
             SDL_WaitForGPUFences(dev, true, &fence, 1);
-        gpu_note(fence, s1);
+        if (prof_on) {
+            prof_window_fence(fence, s1);   /* the profile times it, and releases it */
+            prof_report();
+        } else {
+            gpu_note(fence, s1);
+        }
+#ifdef __ANDROID__
+        {   /* two seconds of frames: a custom GPU driver works */
+            static uint32_t shown;
+            if (++shown == 120)
+                pdo_android_gpu_driver_started();
+        }
+#endif
     }
     if (ls_drawn) {
         /* The frame counter counts what reached the screen. */
@@ -5651,6 +7178,108 @@ static bool skip_odd_frame(const frame_data *f, bool cap30)
            && SDL_GetTicksNS() - f->stamp < 40000000ull;
 }
 
+/* Pairs prev and cur (match_frames), with the slow-pairing log. */
+static void run_match(frame_data *prev, frame_data *cur)
+{
+    static uint32_t slow_logs;
+    static Uint64 slow_window;
+    Uint64 m0 = SDL_GetTicksNS(), dm;
+
+    programs_switched = viewport_changed = false;
+    dd_calls = 0;
+    mf_stray_ns = mf_keys_ns = 0;
+    mf_stray_full = mf_stray_verts = 0;
+    match_frames(prev, cur);
+    dm = SDL_GetTicksNS() - m0;
+    SDL_AddAtomicU32(&pair_us, (int)(dm / 1000));
+    if (m0 - slow_window > 5000000000ull) {
+        slow_window = m0;
+        slow_logs = 0;
+    }
+    if (dm > 8000000 && slow_logs++ < 5) {     /* a frame's pairing over 8 ms */
+        uint32_t nd = 0;
+        for (uint32_t k = 0; k < cur->ncmds; k++)
+            nd += cur->cmds[k].kind == CMD_DRAW;
+        SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws, %u distances): passes %.1f (stray tests %.1f, "
+                "%u over changed vertices, %u of them; keys %.1f), across models %.1f, "
+                "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd, dd_calls,
+                mf_ns[0] / 1e6, mf_stray_ns / 1e6, mf_stray_full, mf_stray_verts, mf_keys_ns / 1e6,
+                mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
+    }
+}
+
+/* Interpolating, a new game frame is paired with the one before on a
+ * thread of its own: on the RP6 that took 4-5 ms a game frame, and on the
+ * main thread it cost the in-between frame after it its vblank (100 fps of
+ * 120). Meanwhile the main thread goes on drawing the pair before, which
+ * by then shows its newer frame (t past 1): the new pair takes over when
+ * paired, as its blend begins. match_frames writes only to the newer
+ * frame (and to its own statics, used on this thread alone then), which
+ * no other thread touches until it is done. */
+static SDL_Mutex *pair_lock;
+static SDL_Condition *pair_cond;
+static SDL_Thread *pair_thread;
+static frame_data *pair_prev, *pair_cur;     /* the job (under pair_lock) */
+static bool pair_busy, pair_done;
+
+static int SDLCALL pair_main(void *unused)
+{
+    (void)unused;
+    SDL_LockMutex(pair_lock);
+    for (;;) {
+        while (!pair_busy || pair_done)
+            SDL_WaitCondition(pair_cond, pair_lock);
+        SDL_UnlockMutex(pair_lock);
+        run_match(pair_prev, pair_cur);
+        SDL_LockMutex(pair_lock);
+        pair_done = true;
+        SDL_BroadcastCondition(pair_cond);
+    }
+    return 0;
+}
+
+/* Starts pairing prev and cur on the pairing thread: false if there is none. */
+static bool pair_start(frame_data *prev, frame_data *cur)
+{
+    if (!pair_thread) {
+        static bool tried;
+        if (tried || getenv("PDO_PAIR_HERE"))
+            return false;
+        tried = true;
+        pair_lock = SDL_CreateMutex();
+        pair_cond = SDL_CreateCondition();
+        if (pair_lock && pair_cond)
+            pair_thread = SDL_CreateThread(pair_main, "pairing", NULL);
+        if (!pair_thread)
+            return false;
+    }
+    SDL_LockMutex(pair_lock);
+    pair_prev = prev;
+    pair_cur = cur;
+    pair_done = false;
+    pair_busy = true;
+    SDL_BroadcastCondition(pair_cond);
+    SDL_UnlockMutex(pair_lock);
+    return true;
+}
+
+/* The pairing thread's job is done (waiting for it when wait): true once,
+ * then the paired frame is the main thread's to draw. */
+static bool pair_finished(bool wait)
+{
+    bool done;
+    if (!pair_thread)
+        return false;
+    SDL_LockMutex(pair_lock);
+    while (wait && pair_busy && !pair_done)
+        SDL_WaitCondition(pair_cond, pair_lock);
+    done = pair_busy && pair_done;
+    if (done)
+        pair_busy = false;
+    SDL_UnlockMutex(pair_lock);
+    return done;
+}
+
 void pdo_gfx_main_loop(void)
 {
     frame_data *cur = NULL, *prev = NULL;
@@ -5670,6 +7299,7 @@ void pdo_gfx_main_loop(void)
 
     for (;;) {
         frame_data *f;
+        bool async;             /* the new frame is paired on the pairing thread */
         /* Frame generation makes the frames between the game's instead. */
         /* pd1 draws its frame itself, one flat picture: no geometry to
          * blend, only frames to repeat (the counter rose, the motion not). */
@@ -5700,10 +7330,11 @@ void pdo_gfx_main_loop(void)
             } else if (!interp_ok && now >= retry_at) {
                 interp_ok = true;
             }
+            main_match_ns = (Uint64)SDL_SetAtomicU32(&pair_us, 0) * 1000;
             if (++log_n % 5 == 0)
-                SDL_Log("main: %.0f fps on screen, %.0f game frames; per second %.0f ms pairing, %.0f ms recording, "
+                SDL_Log("main: %.0f fps on screen, %.0f game frames; per second %.0f ms pairing%s, %.0f ms recording, "
                         "%.0f ms waiting for the window, %.0f ms submitting; GPU about %.1f ms a frame; blending %s",
-                        shown, games, main_match_ns / 1e6 / secs,
+                        shown, games, main_match_ns / 1e6 / secs, pair_thread ? " (its own thread)" : "",
                         main_record_ns / 1e6 / secs, main_wait_ns / 1e6 / secs, main_submit_ns / 1e6 / secs,
                         gpu_frames ? gpu_busy_ns / 1e6 / gpu_frames : 0.0,
                         !want ? "off" : interp_ok ? "on" : "held off");
@@ -5740,7 +7371,22 @@ void pdo_gfx_main_loop(void)
         if (f)
             ready = NULL;
         win_games += f != NULL;
-        if (f) {
+        SDL_UnlockMutex(q_lock);
+
+        if (f && pair_finished(true)) {     /* the one before is paired: it takes over first */
+            prev = cur;
+            cur = held_next;
+            SDL_LockMutex(q_lock);
+            held_prev = prev;
+            held_cur = cur;
+            held_next = NULL;
+            SDL_UnlockMutex(q_lock);
+        }
+        async = f && interp && cur && !shot_frame(f) && !(f->frame >= capture_frame && f->frame < capture_frame + capture_seq);
+        SDL_LockMutex(q_lock);
+        if (f && async) {
+            held_next = f;
+        } else if (f) {
             held_prev = cur;
             held_cur = f;
         }
@@ -5767,29 +7413,20 @@ void pdo_gfx_main_loop(void)
                 if (d > 8e6 && d < 50e6)
                     frame_interval += (d - frame_interval) * 0.1;
             }
+            if (async && pair_start(cur, f))
+                f = NULL;       /* drawn once paired (pair_finished, below) */
+            else if (async) {
+                SDL_LockMutex(q_lock);      /* no pairing thread: here, as before */
+                held_prev = cur;
+                held_cur = f;
+                held_next = NULL;
+                SDL_UnlockMutex(q_lock);
+            }
+        }
+        if (f) {
             prev = cur;
             cur = f;
-            programs_switched = viewport_changed = false;
-            {
-                Uint64 m0 = SDL_GetTicksNS(), dm;
-                static uint32_t slow_logs;
-                static Uint64 slow_window;
-                match_frames(interp ? prev : NULL, cur);
-                dm = SDL_GetTicksNS() - m0;
-                main_match_ns += dm;
-                if (now - slow_window > 5000000000ull) {
-                    slow_window = now;
-                    slow_logs = 0;
-                }
-                if (dm > 8000000 && slow_logs++ < 5) {     /* a frame's pairing over 8 ms */
-                    uint32_t nd = 0;
-                    for (uint32_t k = 0; k < cur->ncmds; k++)
-                        nd += cur->cmds[k].kind == CMD_DRAW;
-                    SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws): passes %.1f, across models %.1f, "
-                            "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd,
-                            mf_ns[0] / 1e6, mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
-                }
-            }
+            run_match(interp ? prev : NULL, cur);
             if (prev && f->frame >= capture_frame && f->frame < capture_frame + capture_seq)
                 capture_interp(prev, cur);
             /* Captures and screenshots are of the frame as it is. */
@@ -5801,6 +7438,22 @@ void pdo_gfx_main_loop(void)
                 SDL_UnlockMutex(q_lock);
                 if (!interp)
                     continue;
+            }
+        }
+        if (!f && pair_finished(false)) {   /* paired: the new pair takes over */
+            prev = cur;
+            cur = held_next;
+            SDL_LockMutex(q_lock);
+            held_prev = prev;
+            held_cur = cur;
+            held_next = NULL;
+            SDL_UnlockMutex(q_lock);
+            if (!interp) {      /* blending went off meanwhile: shown as it is */
+                draw_frame(cur, NULL, 1.0f);
+                win_shown++;
+                SDL_LockMutex(q_lock);
+                frames_drawn++;
+                SDL_UnlockMutex(q_lock);
             }
         }
         if (!interp || !prev || !cur)
