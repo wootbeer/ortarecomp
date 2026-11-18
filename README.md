@@ -105,7 +105,7 @@ Nothing from Lossless Scaling is in this repository or a release.
 
 ## Android (preview)
 
-- Install the `android.apk` from the release (allow installing from your
+- Install `OrtaRecomp-v<version>-android.apk` from the release (allow installing from your
   browser or file manager). 64-bit Android 11 or later with a Vulkan GPU.
 - In the launcher, choose Game files and pick your disc image. Its files are
   copied into the app's storage, so the image can be deleted afterwards.
