@@ -207,6 +207,12 @@ typedef struct pdo_gpu_vsh {
                                         * D3DVSDT type (0: absent, reads 0, 0, 0, 1) */
     float    vp_scale[4], vp_offset[4];/* the program's viewport transform; offset w:
                                         * the depth scale */
+    /* A point list (1; 2 with point sprites' texture coordinates): each
+     * point a square of its oPts pixels, within point_min and point_max
+     * (0: none), in a viewport point_vp[] pixels wide and high; the
+     * indices are point * 4 + corner (shaders/vsh.vert). */
+    int      points;
+    float    point_min, point_max, point_vp[2];
 } pdo_gpu_vsh;
 
 /* A draw of nv vertices made by g; idx index them from 0. cpu, if not

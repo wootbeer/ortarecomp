@@ -703,6 +703,16 @@ void pdo_gfx_draw_vsh(const pdo_draw *d, const pdo_gpu_vsh *g, uint32_t nv,
     }
     memcpy(c->vu.scale, g->vp_scale, sizeof c->vu.scale);
     memcpy(c->vu.offset, g->vp_offset, sizeof c->vu.offset);
+    c->vu.blend_t[1] = (float)g->points;
+    if (g->points) {
+        int32_t mx;
+        memcpy(&mx, &g->point_max, sizeof mx);
+        c->vu.blend_t[2] = g->point_vp[0];
+        c->vu.blend_t[3] = g->point_vp[1];
+        c->vu.scale[3] = g->point_min;
+        c->vu.interp[3] = mx;
+        c->draw.ps.cull = 0;            /* points have no facing */
+    }
 
     F->indices = grow(F->indices, &F->cap_indices, F->nindices + ni, sizeof *F->indices);
     memcpy(F->indices + F->nindices, idx, ni * sizeof *idx);
@@ -938,7 +948,7 @@ static SDL_GPUShader *spec_shader_of(uint64_t key)
             return spec_shaders[i].s;
     if (!pdo_vsh_spec_find(key, &spv, &bytes))
         return NULL;
-    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 5);
+    sh = make_shader_sb((const uint8_t *)spv, bytes, SDL_GPU_SHADERSTAGE_VERTEX, 0, 2, 5);
     if (!sh) {
         SDL_Log("gfx: vertex program %016llx: no shader (%s)", (unsigned long long)key, SDL_GetError());
         return NULL;
@@ -2872,7 +2882,7 @@ static bool init_here(int width, int height)
     vs = make_shader(ff_vert_spv, sizeof ff_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1);
     fs = make_shader(ff_frag_spv, sizeof ff_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
     fs_ps = make_shader(ff_ps_frag_spv, sizeof ff_ps_frag_spv, SDL_GPU_SHADERSTAGE_FRAGMENT, 4, 1);
-    vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 5);
+    vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 2, 5);
     if (!vsh_vs)
         SDL_Log("gfx: no GPU vertex programs (%s); they run on the CPU", SDL_GetError());
     fvf_vs = make_shader_sb(fvf_vert_spv, sizeof fvf_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
@@ -2979,6 +2989,7 @@ static Uint32 prog_buf_size;
 /* Frame interpolation (main thread): the previous game frame, when the
  * frame shown blends towards F from it, and how far (1: F as it is). */
 static frame_data *P;
+static bool consts_pushed;      /* push_consts: what it pushed last is bound still (no pass begun since) */
 static float blend;
 static bool interp_tint;    /* PDO_INTERP_TINT=1: unpaired draws magenta when blending */
 
@@ -3044,6 +3055,8 @@ static SDL_GPURenderPass *begin_pass(SDL_GPUCommandBuffer *cmd, const command *c
     SDL_GPURenderPass *pass;
     SDL_GPUTexture *ms = cur_target ? cur_target->ms : frame_ms, *seed = NULL;
     bool *stale = cur_target ? &cur_target->stale : &frame_stale;
+
+    consts_pushed = false;
 
     /* The resolved texture holds what the multisampled buffer does not:
      * draw it in first, unless this pass clears the color anyway. */
@@ -3829,6 +3842,36 @@ static bool interp_once(void)
     return on;
 }
 
+/* A vertex-program draw's constants, and its partner's in the frame
+ * before when it blends, into the shader's uniform block (vsh.vert,
+ * Consts): read there at fixed places, not from the storage buffer. Pushed
+ * only when they change: draws in a row share them (pdo_gfx_draw_vsh). */
+static int32_t consts_cur, consts_prev;
+static const frame_data *consts_f, *consts_p;
+
+static void push_consts(SDL_GPUCommandBuffer *cmd, const command *c, float t)
+{
+    static float k[384][4];
+    int32_t cur = c->vu.info[2], prev = P && t < 1.0f ? c->vu.interp[0] : -1;
+
+    if (cur < 0 || (uint32_t)cur + 192 > F->nvconsts)
+        return;
+    if (prev >= 0 && (uint32_t)prev + 192 > P->nvconsts)
+        prev = -1;
+    if (consts_pushed && cur == consts_cur && prev == consts_prev && consts_f == F
+        && consts_p == (prev >= 0 ? P : NULL))
+        return;
+    memcpy(k, F->vconsts[cur], 192 * sizeof k[0]);
+    if (prev >= 0)
+        memcpy(k + 192, P->vconsts[prev], 192 * sizeof k[0]);
+    SDL_PushGPUVertexUniformData(cmd, 1, k, sizeof k);
+    consts_pushed = true;
+    consts_cur = cur;
+    consts_prev = prev;
+    consts_f = F;
+    consts_p = prev >= 0 ? P : NULL;
+}
+
 static void replay(SDL_GPUCommandBuffer *cmd)
 {
     SDL_GPURenderPass *pass = NULL;
@@ -4093,6 +4136,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 c->vu.prev_prog[2] = once;
                 c->vu.info[3] = depth_rev;
                 SDL_PushGPUVertexUniformData(cmd, 0, &c->vu, sizeof c->vu);
+                push_consts(cmd, c, t);
             } else {
                 F->fvf_us[c->fvf].blend_t[0] = t;
                 F->fvf_us[c->fvf].blend_t[1] = depth_rev;

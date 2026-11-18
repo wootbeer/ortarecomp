@@ -2448,13 +2448,16 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
         }
         {
             Uint64 t = SDL_GetTicksNS();
-            if (type != 1 && use_gpu_vsh(p)) {
+            if (use_gpu_vsh(p)) {
                 gpu_p = p;
                 /* A capture keeps the CPU's vertices too, to log and to
                  * draw the frame both ways (PDO_CAPTURE_CPUVSH); so does a
                  * program whose own shader's pipelines are still being
-                 * made, drawn from them meanwhile (renderer.c, settled). */
-                cpu_too = pdo_gfx_capturing() || pdo_gfx_vsh_needs_cpu(p->gpu_program);
+                 * made, drawn from them meanwhile (renderer.c, settled).
+                 * A point list is drawn on the GPU alone (its squares are
+                 * made there; the CPU's vertices are points): its draws
+                 * wait for its pipelines instead. */
+                cpu_too = pdo_gfx_capturing() || (type != 1 && pdo_gfx_vsh_needs_cpu(p->gpu_program));
             }
             if (cpu_too)
                 fetch_vsh(p, base, stride, first, count, vbuf);
@@ -2558,6 +2561,34 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
                         d.ff.ps_c1[s][0], d.ff.ps_c1[s][1], d.ff.ps_c1[s][2], d.ff.ps_c1[s][3]);
             }
         }
+    }
+    if (type == 1 && gpu_p && !cpu_too) {
+        /* A point list's squares made by the vertex shader: four vertices
+         * a point, numbered point * 4 + corner (shaders/vsh.vert). The
+         * CPU ran each particle's program and made its square (20-120
+         * thousand vertices a second in Orta's episode 1 on the RP6). */
+        static uint32_t *qi, qcap;
+        pdo_gpu_vsh g;
+        if (n > qcap) {
+            qcap = n * 2;
+            qi = SDL_realloc(qi, qcap * 6 * sizeof *qi);
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            uint32_t v = order[i] << 2;
+            qi[i * 6 + 0] = v;     qi[i * 6 + 1] = v | 1; qi[i * 6 + 2] = v | 2;
+            qi[i * 6 + 3] = v | 1; qi[i * 6 + 4] = v | 3; qi[i * 6 + 5] = v | 2;
+        }
+        vsh_gpu_job(gpu_p, base, stride, first, count, &g);
+        g.points = RS(RS_POINTSPRITEENABLE) ? 2 : 1;
+        g.point_min = lf(RS(RS_POINTSIZE_MIN));
+        g.point_max = lf(RS(RS_POINTSIZE_MAX));
+        g.point_vp[0] = d.viewport[2] > 0.0f ? d.viewport[2] : 1.0f;
+        g.point_vp[1] = d.viewport[3] > 0.0f ? d.viewport[3] : 1.0f;
+        d.ps.topology = 0;
+        d.ps.cull = 0;
+        pdo_gfx_draw_vsh(&d, &g, count * 4, qi, n * 6, NULL);
+        draws_drawn++;
+        return;
     }
     if (type == 1) {
         draw_points(&d, vbuf, order, n);
