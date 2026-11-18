@@ -267,6 +267,7 @@ typedef struct frame_data {
     Uint32 gvb_size, gib_size, gblob_size, gconst_size;
     SDL_GPUBuffer *gvout;       /* the vertex pre-pass's outputs (vout_prepass) */
     Uint32 gvout_size;
+    bool vout_done;             /* the pre-pass ran for it (once, however often it is shown) */
     bool on_gpu;
 } frame_data;
 
@@ -426,6 +427,7 @@ static void reset_frame(frame_data *f)
     f->nups = 0;
     f->progs_new = f->gamma_new = false;
     f->on_gpu = false;
+    f->vout_done = false;
     f->movie = false;
 }
 
@@ -3006,6 +3008,19 @@ static Uint32 prog_buf_size;
  * frame shown blends towards F from it, and how far (1: F as it is). */
 static frame_data *P;
 static bool consts_pushed;      /* push_consts: what it pushed last is bound still (no pass begun since) */
+/* What replay's draws last bound and pushed in the pass begun last
+ * (begin_pass clears it): a draw sets only what differs from the one
+ * before. Draws in a row mostly share their pipeline, viewport, textures
+ * and fragment setup; setting them all again for each was much of the main
+ * thread's recording (200-500 ms a second on the RP6). */
+static struct {
+    SDL_GPUGraphicsPipeline *p;
+    int gpu;                    /* the geometry bound (bind_geometry), -1 none */
+    bool vp_set, tsb_set, ff_set;
+    SDL_GPUViewport vp;
+    SDL_GPUTextureSamplerBinding tsb[4];
+    pdo_ff_uniforms ff;
+} rec;
 static float blend;
 static bool interp_tint;    /* PDO_INTERP_TINT=1: unpaired draws magenta when blending */
 
@@ -3076,6 +3091,9 @@ static SDL_GPURenderPass *begin_pass(SDL_GPUCommandBuffer *cmd, const command *c
     bool *stale = cur_target ? &cur_target->stale : &frame_stale;
 
     consts_pushed = false;
+    rec.p = NULL;
+    rec.gpu = -1;
+    rec.vp_set = rec.tsb_set = rec.ff_set = false;
 
     /* The resolved texture holds what the multisampled buffer does not:
      * draw it in first, unless this pass clears the color anyway. */
@@ -3821,7 +3839,6 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
         SDL_EndGPUCopyPass(copy);
         SDL_ReleaseGPUTransferBuffer(dev, tb);
     }
-    vout_prepass(cmd);      /* once a frame: its programs' vertices, for every time it is shown */
 }
 
 /* ── GPU profile ──────────────────────────────────────────────────────────
@@ -4003,7 +4020,7 @@ static void prof_report(void)
                 continue;
             SDL_Log("gpuprof:   #%u %s %ux%u%s: %.2f ms a frame (%.2f each, in %u of the frames), %.0f draws "
                     "(3D %.0f, screen-space %.0f of them %.1f over half the screen; blended %.0f)",
-                    prof_acc[i].key >> 24, kind == 4 ? "uploads and wait before" : kind == 3 ? "window" : kind == 2 ? "presentation" : kind == 1 ? "copy" : "pass",
+                    prof_acc[i].key >> 24, kind == 5 ? "vertex pre-pass" : kind == 4 ? "uploads and wait before" : kind == 3 ? "window" : kind == 2 ? "presentation" : kind == 1 ? "copy" : "pass",
                     prof_acc[i].w, prof_acc[i].h, prof_acc[i].samples > 1 ? " multisampled" : "",
                     prof_acc[i].ms / prof_frames, prof_acc[i].ms / prof_acc[i].n, prof_acc[i].n,
                     prof_acc[i].draws / prof_acc[i].n, prof_acc[i].d3 / prof_acc[i].n, prof_acc[i].d2 / prof_acc[i].n,
@@ -4116,6 +4133,11 @@ static void replay(SDL_GPUCommandBuffer *cmd)
 
     upload_frame(cmd);
     prof_cut(&cmd, 4);      /* the uploads, and any wait the queue had before this frame */
+    if (!F->vout_done) {    /* once a frame: its programs' vertices, for every time it is shown */
+        F->vout_done = true;
+        vout_prepass(cmd);
+        prof_cut(&cmd, 5);
+    }
     cur_target = NULL;
     replay_frames++;
     bg_collect();
@@ -4349,7 +4371,10 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         }
         if (!p)
             continue;
-        SDL_BindGPUGraphicsPipeline(pass, p);
+        if (rec.p != p) {
+            SDL_BindGPUGraphicsPipeline(pass, p);
+            rec.p = p;
+        }
         /* The target's own scale: a shadow map may be at the game's size
          * (Shadows: Low) while the rest is scaled. */
         float vsx = cur_target ? (float)cur_target->pw / (float)cur_target->w : rscale;
@@ -4360,8 +4385,15 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         vp.h = c->draw.viewport[3] * vsy;
         vp.min_depth = depth_rev ? 1.0f - c->draw.viewport[5] : c->draw.viewport[4];
         vp.max_depth = depth_rev ? 1.0f - c->draw.viewport[4] : c->draw.viewport[5];
-        SDL_SetGPUViewport(pass, &vp);
-        bind_geometry(pass, gpu, c);
+        if (!rec.vp_set || memcmp(&rec.vp, &vp, sizeof vp)) {
+            SDL_SetGPUViewport(pass, &vp);
+            rec.vp = vp;
+            rec.vp_set = true;
+        }
+        if (gpu == 0 || rec.gpu != gpu) {     /* the CPU's vertices: at the draw's own place */
+            bind_geometry(pass, gpu, c);
+            rec.gpu = gpu;
+        }
         for (int s = 0; s < 4; s++) {
             tsb[s].texture = tex[s];
             tsb[s].sampler = get_sampler(&c->draw.tex[s]);
@@ -4375,10 +4407,22 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 SDL_BindGPUGraphicsPipeline(pass, p);
                 SDL_SetGPUViewport(pass, &vp);
                 bind_geometry(pass, gpu, c);
+                rec.p = p;
+                rec.vp = vp;
+                rec.vp_set = true;
+                rec.gpu = gpu;
             }
         }
-        SDL_BindGPUFragmentSamplers(pass, 0, tsb, 4);
-        SDL_PushGPUFragmentUniformData(cmd, 0, &c->draw.ff, sizeof c->draw.ff);
+        if (!rec.tsb_set || memcmp(rec.tsb, tsb, sizeof rec.tsb)) {
+            SDL_BindGPUFragmentSamplers(pass, 0, tsb, 4);
+            memcpy(rec.tsb, tsb, sizeof rec.tsb);
+            rec.tsb_set = true;
+        }
+        if (!rec.ff_set || memcmp(&rec.ff, &c->draw.ff, sizeof rec.ff)) {
+            SDL_PushGPUFragmentUniformData(cmd, 0, &c->draw.ff, sizeof c->draw.ff);
+            rec.ff = c->draw.ff;
+            rec.ff_set = true;
+        }
         if (prof_frame && prof_skip == 3) {
             SDL_Rect one = { 0, 0, 1, 1 };
             SDL_SetGPUScissor(pass, &one);
