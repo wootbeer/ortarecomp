@@ -196,6 +196,10 @@ typedef struct command {
     uint32_t pair_prev;     /* the paired draw in the frame before (match_frames) */
     uint8_t  consts_read[24]; /* vertex programs: a bit per c register read (pdo_gpu_vsh) */
     uint32_t in_bytes[16];    /* vertex programs: the size of the stream each v register reads */
+    /* Its fragment setup's key and shader once known (fs_key_of): a frame
+     * interpolated is drawn twice or more, the setup never changes. */
+    uint64_t fkey;
+    SDL_GPUShader *sfs;
     /* Vertex programs: where the vertex pre-pass put its vertices' outputs
      * in the frame's gvout (-1: not made there), and how many (vout_prepass) */
     int32_t  vout_base;
@@ -836,13 +840,13 @@ static int npipelines;
 #define PIPE_SLOTS (MAX_PIPELINES * 2)
 static uint16_t pipe_slot[PIPE_SLOTS];
 
+static uint64_t hash_bytes(const uint8_t *p, size_t n);
+
+/* A word at a time (hash_bytes): looked up several times a draw, a byte at
+ * a time it was a measurable share of recording. In memory only. */
 static uint32_t pipe_hash(const pdo_pipeline_state *ps)
 {
-    const uint8_t *b = (const uint8_t *)ps;
-    uint32_t h = 2166136261u;
-    for (size_t i = 0; i < sizeof *ps; i++)
-        h = (h ^ b[i]) * 16777619u;
-    return h;
+    return (uint32_t)hash_bytes((const uint8_t *)ps, sizeof *ps);
 }
 
 static SDL_GPUGraphicsPipeline *find_pipeline(const pdo_pipeline_state *ps)
@@ -1265,6 +1269,11 @@ uint64_t pdo_gfx_take_swap_wait_ns(void)
     return t;
 }
 
+/* The main thread's recording by part, for the log: deciding each draw's
+ * pipeline (setups' keys, lookups) and setting it and drawing (SDL). */
+static Uint64 rec_decide_ns, rec_sdl_ns;
+static uint32_t rec_draws;
+
 #define VOUT_BYTES 96           /* vout.vert's VOut: the vertex pre-pass's outputs, a vertex */
 static uint32_t vout_draws, vout_verts, vout_frames;  /* the vertex pre-pass, for the log */
 
@@ -1291,6 +1300,12 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
                     vout_frames ? (double)vout_verts * VOUT_BYTES / vout_frames / 1e6 : 0.0);
             cpu_stand_in_draws = async_skipped = in_place_draws = unsettled = settle_clashes = 0;
             vout_draws = vout_verts = vout_frames = 0;
+            SDL_Log("gfx: recording in %.1f s: %u draws, %.0f ms deciding them (%.1f us each), %.0f ms setting "
+                    "and drawing them (%.1f us each)", (double)(now - last) / 1e9, rec_draws, rec_decide_ns / 1e6,
+                    rec_draws ? rec_decide_ns / 1e3 / rec_draws : 0.0, rec_sdl_ns / 1e6,
+                    rec_draws ? rec_sdl_ns / 1e3 / rec_draws : 0.0);
+            rec_decide_ns = rec_sdl_ns = 0;
+            rec_draws = 0;
             last = now;
         }
         fs_spec_draws = fs_interp_draws = 0;
@@ -4176,6 +4191,7 @@ static void push_consts(SDL_GPUCommandBuffer *cmd, const command *c, float t)
 
 static void replay(SDL_GPUCommandBuffer *cmd)
 {
+    Uint64 rt0 = 0, rt1 = 0;
     SDL_GPURenderPass *pass = NULL;
     int bloom = pdo_settings_get()->bloom;
     uint32_t bloom_at = UINT32_MAX;     /* the command after the frame's last 3D draw */
@@ -4249,6 +4265,7 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             prof_cut(&cmd, 1);
             continue;
         }
+        rt0 = SDL_GetTicksNS();
         gpu = 0;
         if (c->vsh && !(cpu_vsh && c->has_cpu) && vsh_vs && prog_buf && F->gblob && F->gconst)
             gpu = 1;
@@ -4307,7 +4324,15 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                         }
                     }
                 }
-                fkey = fs_key_of(&c->draw.ff, ps.combiners, &sfs);
+                if (c->fkey) {
+                    fkey = c->fkey;
+                    sfs = c->sfs;
+                    fs_pending = false;
+                } else {
+                    fkey = fs_key_of(&c->draw.ff, ps.combiners, &sfs);
+                    c->fkey = fkey;
+                    c->sfs = sfs;
+                }
                 own_fs = fkey || fs_pending;
                 ps.vsh_spec[0] = (uint32_t)vkey;
                 ps.vsh_spec[1] = (uint32_t)(vkey >> 32);
@@ -4421,6 +4446,8 @@ static void replay(SDL_GPUCommandBuffer *cmd)
         }
         if (!p)
             continue;
+        rt1 = SDL_GetTicksNS();
+        rec_decide_ns += rt1 - rt0;
         if (rec.p != p) {
             SDL_BindGPUGraphicsPipeline(pass, p);
             rec.p = p;
@@ -4525,6 +4552,8 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             SDL_DrawGPUIndexedPrimitives(pass, c->index_count, 1, c->first_index, -(Sint32)c->vbase, 0);
             prof_draws++;
         }
+        rec_sdl_ns += SDL_GetTicksNS() - rt1;
+        rec_draws++;
     }
     if (pass) {
         SDL_EndGPURenderPass(pass);
