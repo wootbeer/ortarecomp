@@ -17,12 +17,28 @@
 // registers plain variables. Both runs then read the same program; only
 // a draw paired with another program (prev_prog) needs the interpreter.
 
+#ifdef PDO_VSH_COMPUTE
+// The vertex pre-pass (renderer.c, vout_prepass): a program's own code run
+// once a vertex of a game frame, as a compute shader, its outputs written
+// for the draws (vout.vert) -- however often the frame is shown, and
+// blended with the frame before's outputs there. This frame's streams and
+// constants alone. Draw: interp.x the vertex count, interp.y where the
+// outputs start in vout.
+layout(local_size_x = 64) in;
+layout(set = 0, binding = 0, std430) readonly buffer Streams { uint blob[]; };
+#define pblob blob
+struct VOut { vec4 pos; vec4 tc[4]; uint d0, d1; float fog, psize; };
+layout(set = 1, binding = 0, std430) writeonly buffer Outs { VOut vout[]; };
+#define UBO_SET 2
+#else
 layout(set = 0, binding = 0, std430) readonly buffer Streams { uint blob[]; };
 layout(set = 0, binding = 1, std430) readonly buffer Programs { uvec4 prog[]; };
 layout(set = 0, binding = 2, std430) readonly buffer Constants { vec4 cbuf[]; };
 // Frame interpolation: the previous game frame's streams and constants.
 layout(set = 0, binding = 3, std430) readonly buffer PrevStreams { uint pblob[]; };
 layout(set = 0, binding = 4, std430) readonly buffer PrevConstants { vec4 pcbuf[]; };
+#define UBO_SET 1
+#endif
 
 // The draw's 192 constants and its partner's in the frame before (kp,
 // blending), pushed with each draw (renderer.c, push_consts): read from a
@@ -31,10 +47,14 @@ layout(set = 0, binding = 4, std430) readonly buffer PrevConstants { vec4 pcbuf[
 // Two blocks of 3 KiB: SDL binds a uniform block 4 KiB wide (one of 6 KiB
 // read the earlier frame's constants past its end, and vertices flew in
 // the in-between frames).
-layout(set = 1, binding = 1, std140) uniform Consts { vec4 kc[192]; };
-layout(set = 1, binding = 2, std140) uniform PrevConsts { vec4 kp[192]; };
+layout(set = UBO_SET, binding = 1, std140) uniform Consts { vec4 kc[192]; };
+#ifdef PDO_VSH_COMPUTE
+#define kp kc
+#else
+layout(set = UBO_SET, binding = 2, std140) uniform PrevConsts { vec4 kp[192]; };
+#endif
 
-layout(set = 1, binding = 0, std140) uniform Draw {
+layout(set = UBO_SET, binding = 0, std140) uniform Draw {
     ivec4 info;          // program base (uvec4 units), instructions, constant base (vec4 units),
                          // reversed depth (renderer.c)
     ivec4 inputs[16];    // per v register: byte base in blob, stride, offset, D3DVSDT type (0: absent)
@@ -66,6 +86,7 @@ layout(set = 1, binding = 0, std140) uniform Draw {
     vec4  prev_vp_offset;
 };
 
+#ifndef PDO_VSH_COMPUTE
 layout(location = 0) out vec4 v_diffuse;
 layout(location = 1) out vec4 v_specular;
 layout(location = 2) out vec4 v_tc0;
@@ -73,6 +94,7 @@ layout(location = 3) out vec4 v_tc1;
 layout(location = 4) out vec4 v_tc2;
 layout(location = 5) out vec4 v_tc3;
 layout(location = 6) out float v_fog;
+#endif
 
 // Reads from this frame's streams, or the previous frame's (from_prev).
 bool from_prev;
@@ -299,6 +321,26 @@ vec4 to_clip(vec4 p, vec4 sc, vec4 of)
     return c;
 }
 
+#ifdef PDO_VSH_COMPUTE
+void main()
+{
+    uint i = gl_GlobalInvocationID.x;
+    if (i >= uint(interp.x))
+        return;
+    vidx = int(i);
+    mode = 2;                   // this frame's alone
+    run_spec();
+    VOut o;
+    o.pos = to_clip(R[12], vp_scale, vp_offset);
+    for (int t = 0; t < 4; t++) o.tc[t] = O[9 + t];
+    // Colors as the CPU packs them: NaN as 0, clamped, to 8 bits.
+    o.d0 = packUnorm4x8(mix(clamp(O[3], 0.0, 1.0), vec4(0.0), isnan(O[3])));
+    o.d1 = packUnorm4x8(mix(clamp(O[4], 0.0, 1.0), vec4(0.0), isnan(O[4])));
+    o.fog = O[5].x;
+    o.psize = O[6].x;
+    vout[uint(interp.y) + i] = o;
+}
+#else
 void main()
 {
     vidx = blend_t.y != 0.0 ? gl_VertexIndex >> 2 : gl_VertexIndex;
@@ -372,3 +414,4 @@ void main()
     v_tc3 = O[12];
     v_fog = O[5].x;
 }
+#endif

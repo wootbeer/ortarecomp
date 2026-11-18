@@ -92,7 +92,7 @@ static void write_masked(sbuf *b, const char *dst, uint32_t idx, const char *val
     put(b, "        %s%u.%s = %s.%s;\n", dst, idx, sw, val, sw);
 }
 
-static char *gen(const uint32_t *code, uint32_t count)
+static char *gen(const uint32_t *code, uint32_t count, bool compute)
 {
     sbuf b = {0};
     bool v_used[16] = {0}, rel_any = false;
@@ -102,6 +102,8 @@ static char *gen(const uint32_t *code, uint32_t count)
     /* #version stays first. */
     put(&b, "%.*s", (int)(nl - src + 1), src);
     put(&b, "#define PDO_VSH_SPEC 1\n");
+    if (compute)
+        put(&b, "#define PDO_VSH_COMPUTE 1\n");
     put(&b, "%s", nl + 1);
 
     for (uint32_t i = 0; i < count; i++) {
@@ -337,7 +339,23 @@ char *pdo_fs_spec_glsl(const int32_t *w)
 
 char *pdo_vsh_spec_glsl(const uint32_t *code, uint32_t count)
 {
-    return code_valid(code, count) ? gen(code, count) : NULL;
+    return code_valid(code, count) ? gen(code, count, false) : NULL;
+}
+
+/* The program's compute variant (vsh.vert's PDO_VSH_COMPUTE): run once a
+ * vertex, its outputs written to a buffer (renderer.c, the vertex pre-pass). */
+static char *comp_glsl(const uint32_t *code, uint32_t count)
+{
+    return code_valid(code, count) ? gen(code, count, true) : NULL;
+}
+
+uint64_t pdo_vsh_comp_key(uint64_t vkey)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (int i = 0; i < 8; i++)
+        h = (h ^ ((vkey >> (8 * i)) & 0xFF)) * 0x100000001B3ull;
+    h = (h ^ 'C') * 0x100000001B3ull;
+    return h ? h : 1;
 }
 
 /* FNV-1a, 64 bits. */
@@ -386,7 +404,7 @@ uint64_t pdo_vsh_spec_key(const uint32_t *code, uint32_t count)
 typedef struct {
     uint64_t key;
     int      state;             /* 0 waiting, 1 ready, -1 failed */
-    int      kind;              /* 0 a vertex program, 1 a fragment setup */
+    int      kind;              /* 0 a vertex program, 1 a fragment setup, 2 a program's compute variant */
     uint32_t *code, count;      /* while waiting: the program (count instructions), or the setup */
     uint32_t *spv;
     size_t   bytes;
@@ -503,9 +521,9 @@ static void tidy_cache(void)
         SDL_Log("gfx: %d shaders of another build removed", n);
 }
 
-static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t key, bool fragment)
+static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t key, int kind)
 {
-    const char *what = fragment ? "fragment setup" : "vertex program";
+    const char *what = kind == 1 ? "fragment setup" : kind == 2 ? "vertex program (compute)" : "vertex program";
     glslang_input_t in;
     glslang_shader_t *sh;
     glslang_program_t *prog = NULL;
@@ -513,7 +531,7 @@ static bool compile(const char *glsl, uint32_t **spv, size_t *bytes, uint64_t ke
 
     memset(&in, 0, sizeof in);
     in.language = GLSLANG_SOURCE_GLSL;
-    in.stage = fragment ? GLSLANG_STAGE_FRAGMENT : GLSLANG_STAGE_VERTEX;
+    in.stage = kind == 1 ? GLSLANG_STAGE_FRAGMENT : kind == 2 ? GLSLANG_STAGE_COMPUTE : GLSLANG_STAGE_VERTEX;
     in.client = GLSLANG_CLIENT_VULKAN;
     in.client_version = GLSLANG_TARGET_VULKAN_1_0;
     in.target_language = GLSLANG_TARGET_SPV;
@@ -584,14 +602,19 @@ static int SDLCALL work(void *unused)
             e->code = NULL;     /* ours now; e may move while unlocked */
             SDL_UnlockMutex(lock);
             ok = load(key, &spv, &bytes);
-            glsl = ok ? NULL : kind ? pdo_fs_spec_glsl((const int32_t *)code) : pdo_vsh_spec_glsl(code, count);
+            glsl = ok ? NULL : kind == 1 ? pdo_fs_spec_glsl((const int32_t *)code)
+                 : kind == 2 ? comp_glsl(code, count) : pdo_vsh_spec_glsl(code, count);
             if (glsl) {
-                ok = compile(glsl, &spv, &bytes, key, kind == 1);
+                ok = compile(glsl, &spv, &bytes, key, kind);
                 free(glsl);
                 if (ok)
                     save(key, spv, bytes);
                 if (n_logged++ < 96) {
-                    if (kind)
+                    if (kind == 2)
+                        SDL_Log("gfx: vertex program %016llx (%u instructions) %s in %.0f ms",
+                                (unsigned long long)key, count, ok ? "made into its compute shader" : "left without one",
+                                (double)(SDL_GetTicksNS() - t0) / 1e6);
+                    else if (kind)
                         SDL_Log("gfx: fragment setup %016llx (%s) %s in %.0f ms", (unsigned long long)key,
                                 code[B_COMB] ? "pixel shader" : "texture stages",
                                 ok ? "made into its own shader" : "left to the interpreter",
@@ -674,6 +697,37 @@ int pdo_vsh_spec_get(uint64_t key, const uint32_t *code, uint32_t count,
     SDL_LockMutex(lock);
     e = find(key);
     if (!e && (e = add(key)) != NULL) {
+        e->code = malloc((size_t)count * 32);
+        if (e->code) {
+            memcpy(e->code, code, (size_t)count * 32);
+            e->count = count;
+            n_pending++;
+            SDL_SignalCondition(wake);
+        } else {
+            e->state = -1;
+        }
+    }
+    state = e ? e->state : -1;
+    if (state == 1) {
+        *spv = e->spv;
+        *bytes = e->bytes;
+    }
+    SDL_UnlockMutex(lock);
+    return state;
+}
+
+int pdo_vsh_comp_get(uint64_t vkey, const uint32_t *code, uint32_t count, const uint32_t **spv, size_t *bytes)
+{
+    uint64_t key = pdo_vsh_comp_key(vkey);
+    entry *e;
+    int state;
+
+    if (!pdo_vsh_spec_enabled() || !start())
+        return -1;
+    SDL_LockMutex(lock);
+    e = find(key);
+    if (!e && (e = add(key)) != NULL) {
+        e->kind = 2;
         e->code = malloc((size_t)count * 32);
         if (e->code) {
             memcpy(e->code, code, (size_t)count * 32);
@@ -821,6 +875,14 @@ void pdo_vsh_spec_counts(uint32_t *made, uint32_t *failed, uint32_t *pending, do
 void pdo_vsh_spec_quit(void) {}
 
 bool pdo_fs_spec_enabled(void) { return false; }
+
+uint64_t pdo_vsh_comp_key(uint64_t vkey) { return vkey ^ 1; }
+
+int pdo_vsh_comp_get(uint64_t vkey, const uint32_t *code, uint32_t count, const uint32_t **spv, size_t *bytes)
+{
+    (void)vkey; (void)code; (void)count; (void)spv; (void)bytes;
+    return -1;
+}
 
 int pdo_fs_spec_get(uint64_t key, const int32_t *w, const uint32_t **spv, size_t *bytes)
 {

@@ -36,6 +36,11 @@ int pdo_vsh_spec_get(uint64_t key, const uint32_t *code, uint32_t count,
  * for pipelines made up front. */
 bool pdo_vsh_spec_find(uint64_t key, const uint32_t **spv, size_t *bytes);
 
+/* A program's compute variant (the vertex pre-pass, renderer.c): as
+ * pdo_vsh_spec_get, by the key of its vertex shader. */
+uint64_t pdo_vsh_comp_key(uint64_t vkey);
+int pdo_vsh_comp_get(uint64_t vkey, const uint32_t *code, uint32_t count, const uint32_t **spv, size_t *bytes);
+
 /* Programs made (and failed) so far, for the log; ms spent making them. */
 void pdo_vsh_spec_counts(uint32_t *made, uint32_t *failed, uint32_t *pending, double *ms);
 

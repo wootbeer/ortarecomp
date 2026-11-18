@@ -59,7 +59,7 @@ static SDL_GPUTexture *frame_color, *frame_depth, *white;
 static SDL_GPUTextureFormat depth_format;
 static int frame_w, frame_h;
 static uint64_t frames;
-static SDL_GPUShader *vs, *fs, *fs_ps, *vsh_vs, *fvf_vs;
+static SDL_GPUShader *vs, *fs, *fs_ps, *vsh_vs, *fvf_vs, *vout_vs;
 
 /* Overlay settings in force: every render target is rscale times the game's
  * size (viewports and copies scaled to match), drawn with nsamples samples
@@ -196,6 +196,10 @@ typedef struct command {
     uint32_t pair_prev;     /* the paired draw in the frame before (match_frames) */
     uint8_t  consts_read[24]; /* vertex programs: a bit per c register read (pdo_gpu_vsh) */
     uint32_t in_bytes[16];    /* vertex programs: the size of the stream each v register reads */
+    /* Vertex programs: where the vertex pre-pass put its vertices' outputs
+     * in the frame's gvout (-1: not made there), and how many (vout_prepass) */
+    int32_t  vout_base;
+    uint32_t vout_n;
     float    anchor[8];       /* vertex programs: oPos of the first and last vertex (pdo_gpu_vsh) */
     bool     anchored;
     bool strayed;           /* its vertices strayed over a fifth of its size from its partner's */
@@ -261,6 +265,8 @@ typedef struct frame_data {
      * used for every frame shown from it. */
     SDL_GPUBuffer *gvb, *gib, *gblob, *gconst;
     Uint32 gvb_size, gib_size, gblob_size, gconst_size;
+    SDL_GPUBuffer *gvout;       /* the vertex pre-pass's outputs (vout_prepass) */
+    Uint32 gvout_size;
     bool on_gpu;
 } frame_data;
 
@@ -704,6 +710,8 @@ void pdo_gfx_draw_vsh(const pdo_draw *d, const pdo_gpu_vsh *g, uint32_t nv,
     memcpy(c->vu.scale, g->vp_scale, sizeof c->vu.scale);
     memcpy(c->vu.offset, g->vp_offset, sizeof c->vu.offset);
     c->vu.blend_t[1] = (float)g->points;
+    c->vout_base = -1;
+    c->vout_n = g->points ? nv / 4 : nv;
     if (g->points) {
         int32_t mx;
         memcpy(&mx, &g->point_max, sizeof mx);
@@ -1250,6 +1258,9 @@ uint64_t pdo_gfx_take_swap_wait_ns(void)
     return t;
 }
 
+#define VOUT_BYTES 96           /* vout.vert's VOut: the vertex pre-pass's outputs, a vertex */
+static uint32_t vout_draws, vout_verts, vout_frames;  /* the vertex pre-pass, for the log */
+
 void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_pipelines, double *bg_ms)
 {
     *own = spec_draws;
@@ -1266,10 +1277,13 @@ void pdo_gfx_take_vsh_counts(uint32_t *own, uint32_t *interpreted, uint32_t *bg_
                     "(shaders made %u, failed %u, to come %u); program draws from the CPU's vertices while "
                     "their pipeline is made %u; draws left out until theirs is made %u, "
                     "on a target drawn once with theirs made in place %u; programs back on the CPU %u "
-                    "(slots shared %u)", fs_spec_draws,
+                    "(slots shared %u); program draws from the vertex pre-pass %u, %u vertices made there "
+                    "(%.1f MB of outputs a game frame)", fs_spec_draws,
                     fs_interp_draws, made, failed, pending, cpu_stand_in_draws, async_skipped, in_place_draws,
-                    unsettled, settle_clashes);
+                    unsettled, settle_clashes, vout_draws, vout_verts,
+                    vout_frames ? (double)vout_verts * VOUT_BYTES / vout_frames / 1e6 : 0.0);
             cpu_stand_in_draws = async_skipped = in_place_draws = unsettled = settle_clashes = 0;
+            vout_draws = vout_verts = vout_frames = 0;
             last = now;
         }
         fs_spec_draws = fs_interp_draws = 0;
@@ -1408,7 +1422,8 @@ static SDL_GPUGraphicsPipeline *make_pipeline(const pdo_pipeline_state *ps, SDL_
         ((cw & 0xFF000000u) ? SDL_GPU_COLORCOMPONENT_A : 0));
 
     SDL_zero(pi);
-    pi.vertex_shader = ps->gpu_vsh == 1 ? (spec_vs ? spec_vs : vsh_vs) : ps->gpu_vsh == 2 ? fvf_vs : vs;
+    pi.vertex_shader = ps->gpu_vsh == 1 ? (spec_vs ? spec_vs : vsh_vs) : ps->gpu_vsh == 2 ? fvf_vs
+                     : ps->gpu_vsh == 3 ? vout_vs : vs;
     pi.fragment_shader = spec_fs ? spec_fs : ps->combiners && fs_ps ? fs_ps : fs;
     if (!ps->gpu_vsh) {         /* vsh.vert reads its streams from storage buffers */
         pi.vertex_input_state.vertex_buffer_descriptions = vb;
@@ -2885,6 +2900,7 @@ static bool init_here(int width, int height)
     vsh_vs = make_shader_sb(vsh_vert_spv, sizeof vsh_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 5);
     if (!vsh_vs)
         SDL_Log("gfx: no GPU vertex programs (%s); they run on the CPU", SDL_GetError());
+    vout_vs = make_shader_sb(vout_vert_spv, sizeof vout_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
     fvf_vs = make_shader_sb(fvf_vert_spv, sizeof fvf_vert_spv, SDL_GPU_SHADERSTAGE_VERTEX, 0, 1, 2);
     if (!fvf_vs)
         SDL_Log("gfx: no GPU fixed-function vertices (%s); they run on the CPU", SDL_GetError());
@@ -3004,6 +3020,9 @@ static void bind_geometry(SDL_GPURenderPass *pass, int gpu, const command *c)
         SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 5);
     } else if (gpu == 2) {
         SDL_GPUBuffer *sb[2] = { F->gblob, pblob };
+        SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 2);
+    } else if (gpu == 3) {      /* the vertex pre-pass's outputs, and the frame before's */
+        SDL_GPUBuffer *sb[2] = { F->gvout, P && P->gvout ? P->gvout : F->gvout };
         SDL_BindGPUVertexStorageBuffers(pass, 0, sb, 2);
     } else {
         /* From the draw's first vertex (drawn with a vertex offset taking
@@ -3513,6 +3532,219 @@ static SDL_GPUTexture *slot_texture(const tex_slot *t)
 
 /* The frame's vertices, indices, streams, constants (and any new programs
  * and changed texels) to the GPU, once. */
+/* ── The vertex pre-pass ─────────────────────────────────────────────────
+ * Each vertex-program draw's vertices run through its program once a game
+ * frame, on a compute shader of the program's own (vsh.vert built with
+ * PDO_VSH_COMPUTE), the outputs written to the frame's gvout; the draws
+ * then only read them (vout.vert) -- the frame shown, and each frame
+ * interpolated between it and the next (with its partner's outputs). Before,
+ * every frame shown ran every program again, and blending ran it on both
+ * frames' inputs: on the RP6 interpolating at 120 Hz the scene's vertex
+ * work was most of an 8.3 ms frame. One compute pipeline a program (not a
+ * graphics pipeline a program and render state), made on a thread of its
+ * own; until a program's is made its draws go as before. PDO_VOUT=0
+ * (Android: setprop debug.ortarecomp.vout 0, read again every 5 s) turns
+ * it off. */
+#define COMP_SLOTS 1024
+typedef struct { uint64_t vkey; int state; SDL_GPUComputePipeline *p; const uint32_t *spv; size_t bytes; }
+        comp_prog;              /* state: 0 asked, 1 to make, 2 made, -1 none */
+static comp_prog comps[COMP_SLOTS];
+static SDL_Mutex *comp_lock;
+static SDL_Condition *comp_wake;
+static SDL_Thread *comp_thread;
+
+static bool vout_on(void)
+{
+    static bool on = true;
+    static Uint64 next;
+    Uint64 now = SDL_GetTicksNS();
+    if (now >= next) {
+        const char *e = SDL_getenv("PDO_VOUT");
+        bool was = on;
+#ifdef __ANDROID__
+        static char prop[PROP_VALUE_MAX];
+        prop[0] = 0;
+        __system_property_get("debug.ortarecomp.vout", prop);
+        if (!e || !*e)
+            e = prop;
+#endif
+        on = !(e && *e == '0');
+        next = now + 5000000000ull;
+        if (on != was)
+            SDL_Log("gfx: vertex pre-pass %s", on ? "on" : "off (PDO_VOUT=0)");
+    }
+    return on && vout_vs;
+}
+
+static int SDLCALL comp_main(void *unused)
+{
+    (void)unused;
+    SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW);
+    SDL_LockMutex(comp_lock);
+    for (;;) {
+        comp_prog *c = NULL;
+        SDL_GPUComputePipelineCreateInfo ci;
+        SDL_GPUComputePipeline *p;
+        Uint64 t0;
+        for (uint32_t i = 0; i < COMP_SLOTS && !c; i++)
+            if (comps[i].state == 1)
+                c = &comps[i];
+        if (!c) {
+            SDL_WaitCondition(comp_wake, comp_lock);
+            continue;
+        }
+        SDL_zero(ci);
+        ci.code = (const Uint8 *)c->spv;
+        ci.code_size = c->bytes;
+        ci.entrypoint = "main";
+        ci.format = SDL_GPU_SHADERFORMAT_SPIRV;
+        ci.num_readonly_storage_buffers = 1;
+        ci.num_readwrite_storage_buffers = 1;
+        ci.num_uniform_buffers = 2;
+        ci.threadcount_x = 64;
+        ci.threadcount_y = 1;
+        ci.threadcount_z = 1;
+        SDL_UnlockMutex(comp_lock);
+        t0 = SDL_GetTicksNS();
+        p = SDL_CreateGPUComputePipeline(dev, &ci);
+        if (!p)
+            SDL_Log("gfx: vertex program %016llx: no compute pipeline (%s)", (unsigned long long)c->vkey,
+                    SDL_GetError());
+        else if (SDL_GetTicksNS() - t0 > 250000000ull)
+            SDL_Log("gfx: a program's compute pipeline took %.0f ms to make", (double)(SDL_GetTicksNS() - t0) / 1e6);
+        SDL_LockMutex(comp_lock);
+        c->p = p;
+        c->state = p ? 2 : -1;
+    }
+    return 0;
+}
+
+/* The program's compute pipeline (render thread), asked for the first time
+ * it is wanted: NULL until made. *state: as comp_prog's. */
+static SDL_GPUComputePipeline *comp_of(uint64_t vkey, const uint32_t *code, uint32_t count, int *state)
+{
+    uint32_t h = (uint32_t)(vkey ^ vkey >> 32) % COMP_SLOTS;
+    comp_prog *c = NULL;
+    SDL_GPUComputePipeline *p = NULL;
+
+    *state = -1;
+    if (!comp_thread) {
+        static bool tried;
+        if (tried)
+            return NULL;
+        tried = true;
+        comp_lock = SDL_CreateMutex();
+        comp_wake = SDL_CreateCondition();
+        if (comp_lock && comp_wake)
+            comp_thread = SDL_CreateThread(comp_main, "vout", NULL);
+        if (!comp_thread)
+            return NULL;
+    }
+    SDL_LockMutex(comp_lock);
+    for (uint32_t n = 0; n < COMP_SLOTS; n++, h = (h + 1) % COMP_SLOTS)
+        if (comps[h].vkey == vkey || !comps[h].vkey) {
+            c = &comps[h];
+            break;
+        }
+    if (c && !c->vkey) {
+        c->vkey = vkey;
+        c->state = 0;
+    }
+    if (c && c->state == 0 && code) {
+        const uint32_t *spv;
+        size_t bytes;
+        int st = pdo_vsh_comp_get(vkey, code, count, &spv, &bytes);
+        if (st == 1) {
+            c->spv = spv;
+            c->bytes = bytes;
+            c->state = 1;
+            SDL_SignalCondition(comp_wake);
+        } else if (st < 0) {
+            c->state = -1;
+        }
+    }
+    if (c) {
+        *state = c->state;
+        p = c->state == 2 ? c->p : NULL;
+    }
+    SDL_UnlockMutex(comp_lock);
+    return p;
+}
+
+static void vout_prepass(SDL_GPUCommandBuffer *cmd)
+{
+    static struct { uint32_t cmd; SDL_GPUComputePipeline *p; } *jobs;
+    static uint32_t cap_jobs;
+    uint32_t njobs = 0, total = 0;
+    SDL_GPUComputePass *pass;
+    SDL_GPUComputePipeline *bound = NULL;
+    int32_t pushed = -1;
+
+    if (!vout_on() || !F->gblob)
+        return;
+    for (uint32_t i = 0; i < F->ncmds; i++) {
+        command *c = &F->cmds[i];
+        uint64_t vkey;
+        SDL_GPUComputePipeline *p;
+        int st;
+        if (c->kind != CMD_DRAW || !c->vsh || !c->vout_n || c->vu.info[0] < 0 || c->vu.info[2] < 0
+            || (uint32_t)c->vu.info[2] + 192 > F->nvconsts)
+            continue;
+        vkey = spec_key_of(F->progs, F->nprogs, c->vu.info[0], (uint32_t)c->vu.info[1]);
+        if (!vkey)
+            continue;
+        /* The code only to ask for its compute shader: this frame's copy
+         * of the programs can be older than the program (spec_key_of). */
+        p = comp_of(vkey, (uint64_t)c->vu.info[0] * 4 + (uint64_t)c->vu.info[1] * 8 <= F->nprogs
+                          ? F->progs + (size_t)c->vu.info[0] * 4 : NULL, (uint32_t)c->vu.info[1], &st);
+        if (!p)
+            continue;
+        jobs = grow(jobs, &cap_jobs, njobs + 1, sizeof *jobs);
+        jobs[njobs].cmd = i;
+        jobs[njobs].p = p;
+        njobs++;
+        c->vout_base = (int32_t)total;
+        total += c->vout_n;
+    }
+    if (!njobs)
+        return;
+    F->gvout = ensure_buffer(F->gvout, &F->gvout_size, total * VOUT_BYTES,
+                             SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_WRITE | SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
+    if (!F->gvout) {
+        for (uint32_t k = 0; k < njobs; k++)
+            F->cmds[jobs[k].cmd].vout_base = -1;
+        return;
+    }
+    {
+        SDL_GPUStorageBufferReadWriteBinding rw;
+        SDL_zero(rw);
+        rw.buffer = F->gvout;
+        pass = SDL_BeginGPUComputePass(cmd, NULL, 0, &rw, 1);
+    }
+    for (uint32_t k = 0; k < njobs; k++) {
+        command *c = &F->cmds[jobs[k].cmd];
+        struct vsh_uniforms u = c->vu;
+        if (jobs[k].p != bound) {
+            SDL_BindGPUComputePipeline(pass, jobs[k].p);
+            SDL_BindGPUComputeStorageBuffers(pass, 0, &F->gblob, 1);
+            bound = jobs[k].p;
+        }
+        u.interp[0] = (int32_t)c->vout_n;
+        u.interp[1] = c->vout_base;
+        u.info[3] = depth_rev;
+        u.blend_t[0] = 1.0f;
+        SDL_PushGPUComputeUniformData(cmd, 0, &u, sizeof u);
+        if (c->vu.info[2] != pushed) {
+            SDL_PushGPUComputeUniformData(cmd, 1, F->vconsts[c->vu.info[2]], 192 * 16);
+            pushed = c->vu.info[2];
+        }
+        SDL_DispatchGPUCompute(pass, (c->vout_n + 63) / 64, 1, 1);
+    }
+    SDL_EndGPUComputePass(pass);
+    vout_verts += total;
+    vout_frames++;
+}
+
 static void upload_frame(SDL_GPUCommandBuffer *cmd)
 {
     uint8_t *staging = F->staging;
@@ -3540,7 +3772,8 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
         if (ibytes)
             F->gib = ensure_buffer(F->gib, &F->gib_size, ibytes, SDL_GPU_BUFFERUSAGE_INDEX);
         if (bbytes)
-            F->gblob = ensure_buffer(F->gblob, &F->gblob_size, bbytes, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
+            F->gblob = ensure_buffer(F->gblob, &F->gblob_size, bbytes,
+                                     SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ | SDL_GPU_BUFFERUSAGE_COMPUTE_STORAGE_READ);
         if (cbytes)
             F->gconst = ensure_buffer(F->gconst, &F->gconst_size, cbytes, SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ);
         if (pbytes)
@@ -3588,6 +3821,7 @@ static void upload_frame(SDL_GPUCommandBuffer *cmd)
         SDL_EndGPUCopyPass(copy);
         SDL_ReleaseGPUTransferBuffer(dev, tb);
     }
+    vout_prepass(cmd);      /* once a frame: its programs' vertices, for every time it is shown */
 }
 
 /* ── GPU profile ──────────────────────────────────────────────────────────
@@ -3948,6 +4182,8 @@ static void replay(SDL_GPUCommandBuffer *cmd)
             gpu = 1;
         else if (c->fvf >= 0 && !(cpu_vsh && c->has_cpu) && fvf_vs && F->gblob)
             gpu = 2;
+        if (gpu == 1 && c->vout_base >= 0 && F->gvout)
+            gpu = 3;                /* its vertices from the vertex pre-pass */
         if ((c->vsh || c->fvf >= 0) && !gpu && !c->has_cpu)
             continue;           /* no vertices to draw it with */
         if (prof_frame) {
@@ -3987,6 +4223,17 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                         svs = spec_shader_of(vkey);
                     if (!svs)
                         vkey = 0;
+                    if (vkey && vout_on()) {
+                        /* Its compute pipeline is coming (the pre-pass):
+                         * no graphics pipeline of the program's own
+                         * meanwhile (the slow ones), the CPU's vertices. */
+                        int st;
+                        comp_of(vkey, NULL, 0, &st);
+                        if (st >= 0) {
+                            vkey = 0;
+                            svs = NULL;
+                        }
+                    }
                 }
                 fkey = fs_key_of(&c->draw.ff, ps.combiners, &sfs);
                 own_fs = fkey || fs_pending;
@@ -4040,6 +4287,10 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                             note_building();
                         }
                     }
+                }
+                if (gpu == 3) {
+                    settle(c->vu.info[0], true);   /* the CPU need not make its vertices */
+                    vout_draws++;
                 }
                 if (gpu == 1) {
                     if (ps.vsh_spec[0] || ps.vsh_spec[1])
@@ -4147,6 +4398,24 @@ static void replay(SDL_GPUCommandBuffer *cmd)
                 c->vu.info[3] = depth_rev;
                 SDL_PushGPUVertexUniformData(cmd, 0, &c->vu, sizeof c->vu);
                 push_consts(cmd, c, t);
+            } else if (gpu == 3) {
+                /* vout.vert's Draw: the outputs, and its partner's in the
+                 * frame before when it blends (it was made there too) */
+                struct { int32_t base[4]; float t[4], pt[4]; } u;
+                const command *pc = P && t < 1.0f && !c->unpaired && c->vu.interp[0] >= 0
+                                    && c->pair_prev < P->ncmds && P->gvout ? &P->cmds[c->pair_prev] : NULL;
+                u.base[0] = c->vout_base;
+                u.base[1] = pc && pc->vsh && pc->vout_base >= 0 ? pc->vout_base : -1;
+                u.base[2] = u.base[1] >= 0 ? (int32_t)pc->vout_n : 0;
+                u.base[3] = tint;
+                u.t[0] = t;
+                u.t[1] = c->vu.blend_t[1];
+                u.t[2] = c->vu.blend_t[2];
+                u.t[3] = c->vu.blend_t[3];
+                u.pt[0] = c->vu.scale[3];
+                memcpy(&u.pt[1], &c->vu.interp[3], sizeof u.pt[1]);
+                u.pt[2] = u.pt[3] = 0.0f;
+                SDL_PushGPUVertexUniformData(cmd, 0, &u, sizeof u);
             } else {
                 F->fvf_us[c->fvf].blend_t[0] = t;
                 F->fvf_us[c->fvf].blend_t[1] = depth_rev;
