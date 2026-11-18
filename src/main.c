@@ -11,7 +11,9 @@
  *   OrtaRecomp --program pd1    run another program on the disc (with
  *                               --boot): pd1 is Pandora's Box's Panzer
  *                               Dragoon (pd1.xbe), if this build has it
+ *   OrtaRecomp --pd1            play the original Panzer Dragoon at once
  *   OrtaRecomp --log FILE       write the log into FILE
+ *   OrtaRecomp --NAME VALUE     a setting for this run (--help lists them)
  *   (--launch-data FILE: internal, a program on the disc starting another;
  *   src/guest/relaunch.c)
  *
@@ -60,7 +62,50 @@ typedef struct options {
     const char *log;
     const char *program;
     const char *launch_data;    /* a program before this one handed this over */
+    int         n_set;          /* settings for this run: --NAME VALUE */
+    const char *set_name[64], *set_value[64];
+    char        set_buf[64][48];
 } options;
+
+static const char help_text[] =
+    APP_NAME " " PDO_VERSION "\n"
+    "\n"
+    "  --boot              play at once, without the launcher\n"
+    "  --pd1               play the original Panzer Dragoon at once\n"
+    "  --game-dir DIR      the game files in DIR, for this run\n"
+    "  --setup             the launcher, on choosing the game files\n"
+    "  --log FILE          write the log into FILE\n"
+    "\n"
+    "Any setting, for this run only (not saved): --NAME VALUE or --NAME=VALUE\n"
+    "  --scale 1-8 (or 1.5x...)   --msaa 1|2|4|8      --fxaa 0|1\n"
+    "  --anisotropy 1|2|4|8|16    --bloom off|low|high\n"
+    "  --aspect 4:3|16:9|21:9     --hud-edges 0|1     --fit bars|stretch|zoom\n"
+    "  --movie-fit original|bars|stretch|zoom         --soft-filter 0|1\n"
+    "  --fullscreen 0|1           --vsync on|off|fast --frame-rate 60|30\n"
+    "  --shadows high|low         --show-fps 0|1\n"
+    "  --frame-interp 0|1         --lsfg-multiplier 1-4  --lsfg-performance 0|1\n"
+    "  --gpu-vertex 0|1           --gpu-fixed 0|1\n"
+    "  --picture-crt 0|1          --picture-brightness -50..50\n"
+    "  --picture-contrast 50..150 --picture-gamma 50..200  --picture-saturation 0..200\n"
+    "  --output stereo|headphones|5.1   --audio-hrtf 0|1   --volume 0-100\n"
+    "  --mouse-aim 0|1            --mouse-speed 10-400   --rumble 0-100\n"
+    "  --save-file 1|2|3          --skip-logos 0|1    --skip-launcher 0|1\n"
+    "  --unlock-box 0|1\n"
+    "The names are those in ortarecomp.ini (dashes or underscores).\n"
+    "Example: OrtaRecomp --boot --scale 4 --msaa 4 --aspect 16:9\n";
+
+/* Text for the player: the console, and on Windows (no console in a
+ * release) a message box as well. */
+static void tell(const char *title, const char *text)
+{
+    fputs(text, stdout);
+    fflush(stdout);
+#if defined(_WIN32) && defined(PDO_RELEASE)
+    SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_INFORMATION, title, text, NULL);
+#else
+    (void)title;
+#endif
+}
 
 static bool parse_args(int argc, char **argv, options *o)
 {
@@ -86,8 +131,28 @@ static bool parse_args(int argc, char **argv, options *o)
             o->program = argv[++i];
         else if (strcmp(argv[i], "--launch-data") == 0 && i + 1 < argc)
             o->launch_data = argv[++i];
-        else {
-            fprintf(stderr, "unknown argument: %s\n", argv[i]);
+        else if (strcmp(argv[i], "--pd1") == 0) {
+            o->boot = true;
+            o->program = "pd1";
+        } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "/?") == 0) {
+            tell(APP_NAME, help_text);
+            return false;
+        } else if (strncmp(argv[i], "--", 2) == 0 && argv[i][2] && o->n_set < 64) {
+            /* a setting: --name value, --name=value, or --name alone (1) */
+            const char *name = argv[i] + 2, *eq = strchr(name, '=');
+            if (eq) {
+                SDL_strlcpy(o->set_buf[o->n_set], name, SDL_min(sizeof o->set_buf[0], (size_t)(eq - name) + 1));
+                o->set_name[o->n_set] = o->set_buf[o->n_set];
+                o->set_value[o->n_set] = eq + 1;
+            } else {
+                o->set_name[o->n_set] = name;
+                o->set_value[o->n_set] = i + 1 < argc && strncmp(argv[i + 1], "--", 2) != 0 ? argv[++i] : "1";
+            }
+            o->n_set++;
+        } else {
+            char text[300];
+            snprintf(text, sizeof text, "unknown argument: %s\n(--help lists them)\n", argv[i]);
+            tell(APP_NAME, text);
             return false;
         }
     }
@@ -465,6 +530,7 @@ int main(int argc, char **argv)
     SDL_SetAppMetadata(APP_NAME, PDO_VERSION, "io.github.ortarecomp");
     SDL_Log("%s %s (built %s), %s, %d logical cores, %d MB RAM", APP_NAME, PDO_VERSION, __DATE__,
             SDL_GetPlatform(), SDL_GetNumLogicalCPUCores(), SDL_GetSystemRAM());
+    SDL_Log("data folder: %s, %s", pdo_data_dir(), pdo_data_dir_note ? pdo_data_dir_note : "");
 
     if (!SDL_Init(opt.check || opt.import_iso ? 0 : SDL_INIT_VIDEO)) {
         fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
@@ -472,6 +538,15 @@ int main(int argc, char **argv)
     }
 
     pdo_config_load(&cfg);
+    for (int i = 0; i < opt.n_set; i++)
+        if (!pdo_settings_set(&cfg, opt.set_name[i], opt.set_value[i])) {
+            char text[300];
+            snprintf(text, sizeof text, "unknown setting: --%s %s\n(--help lists them)\n", opt.set_name[i],
+                     opt.set_value[i]);
+            tell(APP_NAME, text);
+            SDL_Quit();
+            return 2;
+        }
     pdo_settings_log();
 #ifdef __ANDROID__
     pdo_android_gpu_driver_load();      /* before any Vulkan window: SDL loads Vulkan from it */

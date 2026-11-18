@@ -50,8 +50,8 @@ Available for Windows, Linux / Steam Deck and Android (preview).
 - **Shader cache:** shaders are built while you play the first time and
   saved for next time.
 - **Extras:** open every Pandora's Box item without touching your save,
-  skip the boot logos or the launcher, an FPS counter, fullscreen (Alt+Enter), portable
-  mode.
+  skip the boot logos or the launcher, an FPS counter, fullscreen (Alt+Enter),
+  portable by default, every setting on the command line.
 - **Easy setup:** point the launcher at your disc image or game folder.
   No runtimes to install.
 - **Crash and freeze reports** written to a log, to attach to bug reports.
@@ -69,8 +69,10 @@ c1af4eafccc02e11105d606b177263216cb7aa71bf1fbe8486ddfc3b1b848d2c
 On first launch, choose Game files in the launcher and pick your disc image
 or folder. A disc image is copied into the app's data folder.
 
-Add a blank portable.txt in the application's folder to make portable if you
-want to save settings, saves and game files locally.
+New installs are portable: settings, saves and game files are kept in the
+app's own folder (a `portable.txt` there marks it). If you already used an
+earlier version, your settings stay where they were. Delete `portable.txt`
+to use your user folder instead.
 
 ## Playing
 
@@ -78,6 +80,10 @@ want to save settings, saves and game files locally.
   anti-aliasing, aspect ratio, picture, sound, controls and more).
 - Alt+Enter: fullscreen.
 - Save file 1, 2 or 3 is picked in the launcher before starting.
+- Command line: `--boot` starts the game without the launcher, `--pd1`
+  starts the original Panzer Dragoon, and any setting can be given for
+  that run, e.g. `OrtaRecomp --boot --scale 4 --msaa 4 --aspect 16:9`.
+  `--help` lists them all.
 - Needs a 64-bit PC with a Vulkan graphics driver: Windows 10/11, or
   Linux / Steam Deck; or Android 11+ (preview, below). No Visual C++
   runtime needed on Windows. Linux needs glibc 2.34 or newer (Steam Deck,
@@ -125,10 +131,9 @@ Nothing from Lossless Scaling is in this repository or a release.
 
 ## Reporting Issues
 
-Every run writes `ortarecomp.log` to the data folder
-(`%APPDATA%\OrtaRecomp\OrtaRecomp` on Windows,
-`~/.local/share/OrtaRecomp/OrtaRecomp` on Linux and Steam Deck, or the
-app's folder when portable); the
+Every run writes `ortarecomp.log` to the data folder (the app's folder
+when portable, the default; otherwise `%APPDATA%\OrtaRecomp\OrtaRecomp` on
+Windows, `~/.local/share/OrtaRecomp/OrtaRecomp` on Linux and Steam Deck); the
 run before is kept as `ortarecomp-previous.log`. After a crash or a freeze,
 attach that log (the previous one if you have started the game again) to
 your report in the GitHub Issues section, with what you were doing.

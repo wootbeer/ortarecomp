@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.1.14 (beta)
+
+### Added
+
+- **Portable by default:** new installs keep their settings, saves and game
+  files in the app's own folder. If you already have them in your user
+  folder, nothing changes. Delete `portable.txt` to go back to the user
+  folder.
+- **Command line settings:** any setting can be given when starting, for
+  that run only, e.g. `--scale 4 --msaa 4 --aspect 16:9`. `--pd1` starts
+  the original Panzer Dragoon straight away. `--help` lists everything.
+
+### Fixed
+
+- **Linux, Steam Deck and Android:** "The disc may be dirty or damaged"
+  when starting a stage from Pandora's Box after playing the original
+  Panzer Dragoon.
+
 ## v0.1.13 (beta)
 
 ### Added
@@ -30,9 +48,6 @@
 
 - **Voices missing with 5.1 sound** after the opening movie and other
   movies with 5.1 audio: they were replaced by the movie's sound (issue 37).
-- **Linux, Steam Deck and Android:** "The disc may be dirty or damaged"
-  when starting a stage from Pandora's Box after playing the original
-  Panzer Dragoon.
 - A `Lossless.dll` picked in the launcher wasn't used.
 
 ## v0.1.12 (beta)
