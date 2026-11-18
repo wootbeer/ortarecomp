@@ -417,18 +417,17 @@ static bool run_launcher(pdo_config *cfg, pdo_game_check *check, bool *have_game
         pdo_launcher_end();
         if (choice != PDO_LAUNCH_PICK)
             break;
-        /* The game file picker (setup_ui.c), its own window and dialogs. */
-        SDL_HideWindow(win);
+        /* The game file picker (setup_ui.c): its dialogs over this window,
+         * its import progress in it. */
         {
             pdo_config pick = *cfg;
             pdo_game_check pc;
-            if (pdo_setup_run(&pick, &pc)) {
+            if (pdo_setup_run(&pick, &pc, win, ren)) {
                 *cfg = pick;
                 *check = pc;
                 *have_game = true;
             }
         }
-        SDL_ShowWindow(win);
     }
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(ren);
@@ -516,7 +515,7 @@ int main(int argc, char **argv)
     /* --boot (or --no-boot) goes straight on, as before: the first-run
      * picker if there are no game files. Otherwise the launcher. */
     if (opt.boot || opt.no_boot) {
-        if (!have_game && !pdo_setup_run(&cfg, &check)) {
+        if (!have_game && !pdo_setup_run(&cfg, &check, NULL, NULL)) {
             SDL_Quit();
             return 0;
         }
