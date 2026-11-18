@@ -200,6 +200,10 @@ typedef struct command {
      * interpolated is drawn twice or more, the setup never changes. */
     uint64_t fkey;
     SDL_GPUShader *sfs;
+    /* Its corners on screen (draw_corners) once worked out, for pairing:
+     * 0 not yet, 1 known, 2 none. */
+    uint8_t  corners_state;
+    float    corners[8];
     /* Vertex programs: where the vertex pre-pass put its vertices' outputs
      * in the frame's gvout (-1: not made there), and how many (vout_prepass) */
     int32_t  vout_base;
@@ -5500,11 +5504,25 @@ static float near_of(const frame_data *pf, const command *pc, const frame_data *
 /* How far apart two alike draws are, to pair a group nearest first: where
  * their vertices are, and their matrices (fixed-function) or constant sets
  * (programs; what all objects share is equal and adds nothing). */
+/* draw_corners, worked out once a draw: pairing compares each draw of a
+ * group of alike ones with every other (a group of n, n times n). The
+ * cache is the draw's own (written only on the pairing thread). */
+static bool corners_of(const frame_data *f, const command *c, float out[8])
+{
+    command *m = (command *)c;
+    if (!m->corners_state)
+        m->corners_state = draw_corners(f, c, m->corners) ? 1 : 2;
+    if (m->corners_state != 1)
+        return false;
+    memcpy(out, m->corners, sizeof m->corners);
+    return true;
+}
+
 static float draw_distance(const frame_data *pf, const command *pc, const frame_data *cf, const command *c)
 {
     float d = pc->id_src == c->id_src ? 0.0f : 1e-3f, a4[8], b4[8];   /* the same data: only a tie-break */
 
-    if (draw_corners(pf, pc, a4) && draw_corners(cf, c, b4))
+    if (corners_of(pf, pc, a4) && corners_of(cf, c, b4))
         for (int i = 0; i < 8; i++)
             if (a4[i] == a4[i] && b4[i] == b4[i])     /* not NaN */
                 d += SDL_fabsf(a4[i] - b4[i]);
@@ -5755,8 +5773,7 @@ static void match_frames(frame_data *prev, frame_data *cur)
     uint32_t n_forced = 0, n_jumped = 0, n_rebuilt = 0, n_swapped = 0, n_still = 0, n_fvf_paired = 0;
     uint32_t n_lod = 0;     /* vertex-program draws paired across models (below) */
     uint32_t n_progswitch = 0;
-    static uint32_t n_streams_alike;   /* draws whose streams were read once (log) */
-    uint32_t n_outblend = 0;    /* same program, a read register jumped: outputs blended */
+        uint32_t n_outblend = 0;    /* same program, a read register jumped: outputs blended */
     uint32_t n_screen = 0;  /* copies of the picture pasted on screen, not blended */  /* paired with the same draw on another program (boost, brake end) */
     char resized_txt[96] = "";
 
@@ -6106,27 +6123,6 @@ static void match_frames(frame_data *prev, frame_data *cur)
                         c->vu.prev_in[r] = pc->vu.inputs[r][0];
                     }
                     c->vu.interp[0] = pc->vu.info[2];
-                    /* Streams that hold the same bytes as the frame
-                     * before (a landscape, a model the game does not
-                     * touch) are read once, not from both frames: on
-                     * the RP6 reading both was much of the scene pass. */
-                    if (same_in) {
-                        uint32_t last = UINT32_MAX;
-                        bool alike = true;
-                        for (int r = 0; r < 16 && alike; r++) {
-                            uint32_t a = (uint32_t)c->vu.inputs[r][0], b = (uint32_t)pc->vu.inputs[r][0];
-                            if (!c->vu.inputs[r][3] || a == last)
-                                continue;
-                            last = a;
-                            alike = c->in_bytes[r] == pc->in_bytes[r] && a + c->in_bytes[r] <= cur->nblob
-                                    && b + pc->in_bytes[r] <= prev->nblob
-                                    && !memcmp(cur->blob + a, prev->blob + b, c->in_bytes[r]);
-                        }
-                        if (alike) {
-                            same_in = false;        /* nothing to blend in them */
-                            n_streams_alike++;
-                        }
-                    }
                     c->vu.interp[1] = same_in;
                     memcpy(c->vu.prev_scale, pc->vu.scale, sizeof c->vu.prev_scale);
                     memcpy(c->vu.prev_offset, pc->vu.offset, sizeof c->vu.prev_offset);
@@ -6695,9 +6691,8 @@ static void match_frames(frame_data *prev, frame_data *cur)
         }
         if (++st_frames == 300) {
             SDL_Log("interp: %u camera cuts in the last 300 frames; %.1f close calls, %.1f wrong pairs undone, "
-                    "%.1f rebuilt draws a frame; %.1f program draws a frame with streams as before (read once)",
-                    st_cuts, st_close / 300.0, st_swapped / 300.0, st_rebuilt / 300.0, n_streams_alike / 300.0);
-            n_streams_alike = 0;
+                    "%.1f rebuilt draws a frame",
+                    st_cuts, st_close / 300.0, st_swapped / 300.0, st_rebuilt / 300.0);
             st_frames = st_cuts = st_close = st_swapped = st_rebuilt = 0;
         }
     }
