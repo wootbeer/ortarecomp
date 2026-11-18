@@ -5629,8 +5629,25 @@ static float draw_distance(const frame_data *pf, const command *pc, const frame_
  * a vertex moved 7.6 in a draw 9.8 across -- and blended vertex by vertex
  * its arcs scattered over the screen. Positions: the first three floats
  * of each vertex, stride apart; ncur, nprev: bytes there to read. */
+/* Pairing's own time by part, for the slow-pairing log: the stray tests
+ * (those over vertices that changed apart), the keys. */
+static Uint64 mf_stray_ns, mf_keys_ns;
+static uint32_t mf_stray_full, mf_stray_verts;
+
+static float stray_n_(const uint8_t *cur, const uint8_t *prev, uint32_t stride, uint32_t nv, uint32_t ncur,
+                      uint32_t nprev, int nc);
+
 static float stray_n(const uint8_t *cur, const uint8_t *prev, uint32_t stride, uint32_t nv, uint32_t ncur,
                      uint32_t nprev, int nc)
+{
+    Uint64 t0 = SDL_GetTicksNS();
+    float v = stray_n_(cur, prev, stride, nv, ncur, nprev, nc);
+    mf_stray_ns += SDL_GetTicksNS() - t0;
+    return v;
+}
+
+static float stray_n_(const uint8_t *cur, const uint8_t *prev, uint32_t stride, uint32_t nv, uint32_t ncur,
+                      uint32_t nprev, int nc)
 {
     float lo[3] = { 3e38f, 3e38f, 3e38f }, hi[3] = { -3e38f, -3e38f, -3e38f }, dmax = 0.0f, size = 0.0f;
     float mean[3] = { 0.0f, 0.0f, 0.0f };
@@ -5645,6 +5662,8 @@ static float stray_n(const uint8_t *cur, const uint8_t *prev, uint32_t stride, u
      * most of pairing (8-17 ms a game frame on the RP6). */
     if (!memcmp(cur, prev, (size_t)(nv - 1) * stride + bytes))
         return 0.0f;
+    mf_stray_full++;
+    mf_stray_verts += nv;
     for (int pass = 0; pass < 2; pass++)
         for (uint32_t v = 0; v < nv; v++) {
             float p1[3] = { 0.0f, 0.0f, 0.0f }, p0[3] = { 0.0f, 0.0f, 0.0f }, d = 0.0f;
@@ -5685,6 +5704,8 @@ static bool quads_resorted(const uint8_t *cur, const uint8_t *prev, uint32_t str
     if (nq < 2 || nq > 1024 || stride < 12 || (uint64_t)(nv - 1) * stride + 12 > ncur ||
         (uint64_t)(nv - 1) * stride + 12 > nprev)
         return false;
+    if (!memcmp(cur, prev, (size_t)(nv - 1) * stride + 12))
+        return false;   /* the same bytes: nothing moved, as the loops below would find */
     for (int pass = 0; pass < 2; pass++) {
         for (uint32_t q = 0; q < nq; q++) {
             float c1[3] = { 0, 0, 0 }, c0[3] = { 0, 0, 0 }, lo[3], hi[3], size = 0.0f, d = 0.0f;
@@ -5859,8 +5880,12 @@ static void match_frames(frame_data *prev, frame_data *cur)
     memset(mf_ns, 0, sizeof mf_ns);
     mf_t0 = SDL_GetTicksNS();
     for (int pass = 0; pass < 3; pass++) {
-    np = keys_of(prev, &pk, &cap_pk, pass >= 1, pass == 2, taken);
-    nc = keys_of(cur, &ck, &cap_ck, pass >= 1, pass == 2, grouped);
+    {
+        Uint64 kt = SDL_GetTicksNS();
+        np = keys_of(prev, &pk, &cap_pk, pass >= 1, pass == 2, taken);
+        nc = keys_of(cur, &ck, &cap_ck, pass >= 1, pass == 2, grouped);
+        mf_keys_ns += SDL_GetTicksNS() - kt;
+    }
     i = j = 0;
     while (i < np && j < nc) {
         uint32_t i2 = i, j2 = j;
@@ -7146,6 +7171,8 @@ static void run_match(frame_data *prev, frame_data *cur)
 
     programs_switched = viewport_changed = false;
     dd_calls = 0;
+    mf_stray_ns = mf_keys_ns = 0;
+    mf_stray_full = mf_stray_verts = 0;
     match_frames(prev, cur);
     dm = SDL_GetTicksNS() - m0;
     SDL_AddAtomicU32(&pair_us, (int)(dm / 1000));
@@ -7157,9 +7184,11 @@ static void run_match(frame_data *prev, frame_data *cur)
         uint32_t nd = 0;
         for (uint32_t k = 0; k < cur->ncmds; k++)
             nd += cur->cmds[k].kind == CMD_DRAW;
-        SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws, %u distances): passes %.1f, across models %.1f, "
+        SDL_Log("interp: frame %llu: pairing took %.1f ms (%u draws, %u distances): passes %.1f (stray tests %.1f, "
+                "%u over changed vertices, %u of them; keys %.1f), across models %.1f, "
                 "wrong pairs %.1f, picture %.1f, logs %.1f", (unsigned long long)cur->frame, dm / 1e6, nd, dd_calls,
-                mf_ns[0] / 1e6, mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
+                mf_ns[0] / 1e6, mf_stray_ns / 1e6, mf_stray_full, mf_stray_verts, mf_keys_ns / 1e6,
+                mf_ns[1] / 1e6, mf_ns[2] / 1e6, mf_ns[3] / 1e6, mf_ns[4] / 1e6);
     }
 }
 
