@@ -98,7 +98,7 @@ static const char help_text[] =
 
 /* Text for the player: the console, and on Windows (no console in a
  * release) a message box as well. */
-static void tell(const char *title, const char *text)
+static void tell_player(const char *title, const char *text)
 {
     fputs(text, stdout);
     fflush(stdout);
@@ -137,7 +137,7 @@ static bool parse_args(int argc, char **argv, options *o)
             o->boot = true;
             o->program = "pd1";
         } else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0 || strcmp(argv[i], "/?") == 0) {
-            tell(APP_NAME, help_text);
+            tell_player(APP_NAME, help_text);
             return false;
         } else if (strncmp(argv[i], "--", 2) == 0 && argv[i][2] && o->n_set < 64) {
             /* a setting: --name value, --name=value, or --name alone (1) */
@@ -153,14 +153,14 @@ static bool parse_args(int argc, char **argv, options *o)
             if (!pdo_settings_known(o->set_name[o->n_set])) {
                 char text[300];
                 snprintf(text, sizeof text, "unknown argument: --%s\n(--help lists them)\n", o->set_name[o->n_set]);
-                tell(APP_NAME, text);
+                tell_player(APP_NAME, text);
                 return false;
             }
             o->n_set++;
         } else {
             char text[300];
             snprintf(text, sizeof text, "unknown argument: %s\n(--help lists them)\n", argv[i]);
-            tell(APP_NAME, text);
+            tell_player(APP_NAME, text);
             return false;
         }
     }
@@ -555,7 +555,7 @@ int main(int argc, char **argv)
             char text[300];
             snprintf(text, sizeof text, "unknown setting: --%s %s\n(--help lists them)\n", opt.set_name[i],
                      opt.set_value[i]);
-            tell(APP_NAME, text);
+            tell_player(APP_NAME, text);
             SDL_Quit();
             return 2;
         }
@@ -570,7 +570,7 @@ int main(int argc, char **argv)
         char text[PDO_PATH_MAX * 2 + 1100];
         if (!pdo_assets_import_iso(opt.import_iso, dst, cli_progress, NULL, &check, err, sizeof err)) {
             snprintf(text, sizeof text, "Import failed: %s\n", err);
-            tell(APP_NAME, text);
+            tell_player(APP_NAME, text);
             SDL_Quit();
             return 1;
         }
@@ -579,7 +579,7 @@ int main(int argc, char **argv)
         report(cfg.game_dir, &check);
         snprintf(text, sizeof text, "Imported %s.\nThe game files are in %s\nStart Orta Recomp to play.\n",
                  opt.import_iso, dst);
-        tell(APP_NAME, text);
+        tell_player(APP_NAME, text);
         SDL_Quit();
         return 0;
     }
