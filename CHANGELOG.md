@@ -30,6 +30,9 @@
 
 - **Voices missing with 5.1 sound** after the opening movie and other
   movies with 5.1 audio: they were replaced by the movie's sound (issue 37).
+- **Linux, Steam Deck and Android:** "The disc may be dirty or damaged"
+  when starting a stage from Pandora's Box after playing the original
+  Panzer Dragoon.
 - A `Lossless.dll` picked in the launcher wasn't used.
 
 ## v0.1.12 (beta)

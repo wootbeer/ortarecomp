@@ -53,9 +53,9 @@
 +static int cache_clear_entry(const char *path, const struct stat *st, int type, struct FTW *ftw)
 +{
 +    (void)st;
-+    if (ftw->level == 0)
-+        return 0;   /* the folder itself stays */
-+    if ((type == FTW_DP ? rmdir(path) : unlink(path)) != 0)
++    if (ftw->level == 0 || type == FTW_DP)
++        return 0;   /* folders stay: Orta relaunched with launch data formats Z: but makes none */
++    if (unlink(path) != 0)
 +        fprintf(stderr, "  [FILE] cache format: could not remove %s (errno %d)\n", path, errno);
 +    return 0;
 +}

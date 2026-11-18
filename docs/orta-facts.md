@@ -354,6 +354,13 @@ writes of 4 KB from offset 0 to 118,784 (boot sector, a 96 KB cluster
 table, a 16 KB root folder). Nothing else touches the partition devices in
 a session (episodes 1 to 7, Pandora's Box, pd1 and back, saving); its files
 go through the folders. Patch 0043 keeps the images at what is written.
+Started again with launch data (back from pd1, Pandora's Box), Orta still
+formats Z: but makes none of its cache folders (event, menudata, sprite,
+the stage folders): it expects them from the boot before. On Windows the
+folders were never removed; on Linux and Android the format emptied the
+folder, folders included, and Pandora's Box's first copy into sprite\
+failed until the "disc may be dirty" screen. The format now removes files
+only (patch 0033).
 
 ## Saves and Pandora's Box
 
