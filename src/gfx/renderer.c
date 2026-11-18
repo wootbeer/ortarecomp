@@ -5639,6 +5639,12 @@ static float stray_n(const uint8_t *cur, const uint8_t *prev, uint32_t stride, u
     if (!nv || !stride || nc < 1 || nc > 3 || (uint64_t)(nv - 1) * stride + bytes > ncur ||
         (uint64_t)(nv - 1) * stride + bytes > nprev)
         return 0.0f;
+    /* The same bytes as the frame before (a landscape, a model moved by its
+     * constants): nothing strayed, 0 as the loops below would find. Going
+     * over every vertex of every input of every paired draw, twice, was
+     * most of pairing (8-17 ms a game frame on the RP6). */
+    if (!memcmp(cur, prev, (size_t)(nv - 1) * stride + bytes))
+        return 0.0f;
     for (int pass = 0; pass < 2; pass++)
         for (uint32_t v = 0; v < nv; v++) {
             float p1[3] = { 0.0f, 0.0f, 0.0f }, p0[3] = { 0.0f, 0.0f, 0.0f }, d = 0.0f;
