@@ -8,6 +8,34 @@ project(OrtaRecomp VERSION 0.1.15 LANGUAGES C CXX)
 # in together with the xboxrecomp kernel layer. Without it you get the
 # launcher alone, which is enough to test the game-file setup.
 
+# src/gfx/shaders_spv.h is made by tools/compile_shaders.py and committed;
+# nothing remakes it at build time. It records a hash of the shader sources:
+# a warning when they changed since (an old copy of ff.frag or vsh.vert
+# embedded there fails at run time, every setup and program then drawn by the
+# interpreter). Run tools/compile_shaders.py after changing a shader.
+file(GLOB PDO_SHADER_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/shaders/*.vert"
+                             "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/shaders/*.frag")
+list(SORT PDO_SHADER_SOURCES)
+set(PDO_SHADER_LISTING "")
+foreach(shader ${PDO_SHADER_SOURCES})
+    file(READ "${shader}" PDO_SHADER_TEXT)
+    string(REPLACE "\r" "" PDO_SHADER_TEXT "${PDO_SHADER_TEXT}")
+    string(SHA256 PDO_SHADER_HASH "${PDO_SHADER_TEXT}")
+    get_filename_component(PDO_SHADER_NAME "${shader}" NAME)
+    string(APPEND PDO_SHADER_LISTING "${PDO_SHADER_NAME}:${PDO_SHADER_HASH}\n")
+endforeach()
+string(SHA256 PDO_SHADERS_WANT "${PDO_SHADER_LISTING}")
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/shaders_spv.h" PDO_SHADERS_HAVE
+     LIMIT_COUNT 1 REGEX "sources sha256: [0-9a-f]+")
+string(REGEX MATCH "sha256: ([0-9a-f]+)" PDO_SHADERS_HAVE "${PDO_SHADERS_HAVE}")
+set(PDO_SHADERS_HAVE "${CMAKE_MATCH_1}")
+if(NOT PDO_SHADERS_HAVE STREQUAL PDO_SHADERS_WANT)
+    message(WARNING "src/gfx/shaders_spv.h is older than src/gfx/shaders/: run "
+        "tools/compile_shaders.py (needs glslangValidator) and rebuild.")
+endif()
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${PDO_SHADER_SOURCES}
+             "${CMAKE_CURRENT_SOURCE_DIR}/src/gfx/shaders_spv.h")
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_STANDARD 20)
