@@ -1,0 +1,25 @@
+--- a/src/kernel/kernel_bridge.c
++++ b/src/kernel/kernel_bridge.c
+@@ -2929,11 +2929,21 @@ static const char* bridge_get_xbox_path(uint32_t obj_attrs_va)
+ }
+ 
+ /* Write NTSTATUS + Information into Xbox IO_STATUS_BLOCK */
++/* Information first, then Status, as the kernel completes a request: other
++ * guest threads run during a kernel call, and a title polling an overlapped
++ * request takes it as finished once Status is no longer STATUS_PENDING,
++ * then reads the byte count. Mad Dash Racing's stream reader saw a read
++ * finished with 0 bytes between the two stores and gave up its file. */
+ static void bridge_write_iostatus(uint32_t ios_va, NTSTATUS status, uint32_t info)
+ {
+     if (ios_va) {
+-        BRIDGE_MEM32(ios_va + 0) = (uint32_t)status;
+         BRIDGE_MEM32(ios_va + 4) = info;
++#if defined(_MSC_VER) && !defined(__clang__)
++        MemoryBarrier();
++#else
++        __atomic_thread_fence(__ATOMIC_RELEASE);
++#endif
++        BRIDGE_MEM32(ios_va + 0) = (uint32_t)status;
+     }
+ }
+ 
