@@ -7,9 +7,9 @@
 - **HUD and text going dark** in Pandora's Box's extra pod scenarios (and
   anywhere the game leaves fog on while drawing its HUD), depending on where
   the camera looked (issue 48).
-- **Mouse aim:** the reticle stays where the mouse puts it instead of
-  pulling back to the centre, keeps up with fast moves, and no longer goes
-  diagonal (issue 51).
+- **Mouse aim:** the reticle follows the mouse and stays where you put it,
+  instead of pulling back to the centre or stopping when you move fast, and
+  no longer goes diagonal (issue 51).
 
 ## v0.1.15 (beta)
 

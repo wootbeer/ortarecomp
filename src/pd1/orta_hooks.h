@@ -476,19 +476,20 @@
 /* cri_hle.c:75: 0x00485B30 -> 0x009F1144: 0xC after 0x00485B24, used alike 2/2 */
 /* cri_hle.c:142: 0x00485B28 -> 0x009F113C: 0x4 after 0x00485B24, used alike 2/2 */
 /* cri_hle.c:143: 0x00485B40 -> 0x009F1154: used alike 3/3 */
-/* d3d_hle.c:35: 0x002BD708 -> 0x00228F78: used alike 109/109 */
-/* d3d_hle.c:469: 0x002BD70C -> 0x00228F7C: used alike 1/1 */
-/* d3d_hle.c:533: 0x002BD918 -> 0x00229188: used alike 17/17 */
-/* d3d_hle.c:534: 0x002BD718 -> 0x00228F88: used alike 8/8 */
-/* d3d_hle.c:575: 0x00310BFC -> 0x006E7854: 0xE4 after 0x00310B18, used alike 2/2 */
-/* d3d_hle.c:807: 0x002AC080 -> 0x00219280: end of game code: the section after .text (Orta MMATRIX, pd1 D3D) */
-/* d3d_hle.c:955: 0x002BEB08 -> 0x0022A368: used alike 3/3 */
-/* d3d_hle.c:1008: 0x002BC618 -> 0x00227EA0: used alike 1/1 */
-/* d3d_hle.c:2266: 0x0006A24B is Orta's own game code */
-/* d3d_hle.c:2472: 0x000688E3 is Orta's own game code */
-/* d3d_hle.c:2694: 0x004EB1EC -> 0x0098D99C: used alike 4/4 */
+/* d3d_hle.c:36: 0x002BD708 -> 0x00228F78: used alike 109/109 */
+/* d3d_hle.c:490: 0x002BD70C -> 0x00228F7C: used alike 1/1 */
+/* d3d_hle.c:554: 0x002BD918 -> 0x00229188: used alike 17/17 */
+/* d3d_hle.c:555: 0x002BD718 -> 0x00228F88: used alike 8/8 */
+/* d3d_hle.c:596: 0x00310BFC -> 0x006E7854: 0xE4 after 0x00310B18, used alike 2/2 */
+/* d3d_hle.c:828: 0x002AC080 -> 0x00219280: end of game code: the section after .text (Orta MMATRIX, pd1 D3D) */
+/* d3d_hle.c:976: 0x002BEB08 -> 0x0022A368: used alike 3/3 */
+/* d3d_hle.c:1029: 0x002BC618 -> 0x00227EA0: used alike 1/1 */
+/* d3d_hle.c:2293: 0x0006A24B is Orta's own game code */
+/* d3d_hle.c:2522: 0x000688E3 is Orta's own game code */
+/* d3d_hle.c:2772: 0x004EB1EC -> 0x0098D99C: used alike 4/4 */
 /* dsound_hle.c:412: 0x002CCFD0 -> 0x00237C70: used alike 2/2 */
 /* dsound_hle.c:413: 0x002DE590 -> 0x00249230: used alike 1/1 */
-/* dsound_hle.c:1034: 0x000687E9 is Orta's own game code */
-/* dsound_hle.c:1100: 0x0032DD9C -> 0x007B704C: used alike 2/2 */
-/* input_hle.c:44: 0x003067CC -> 0x0027164C: used alike 2/2 */
+/* dsound_hle.c:1044: 0x000687E9 is Orta's own game code */
+/* dsound_hle.c:1110: 0x0032DD9C -> 0x007B704C: used alike 2/2 */
+/* input_hle.c:47: 0x003067CC -> 0x0027164C: used alike 2/2 */
+/* input_hle.c:49: 0x00472030 is Orta's own game code */
