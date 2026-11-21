@@ -254,6 +254,9 @@ typedef struct pdo_fvf_uniforms {
 bool pdo_gfx_depth_reversed(void);
 /* Shaders are being made for draws that wait for them: the overlay's note. */
 bool pdo_gfx_building(void);
+/* The mouse pointer on the game's picture, in the game's pixels (640x480,
+ * across the picture whatever its aspect): false without a picture. */
+bool pdo_gfx_pointer_on_game(float *gx, float *gy);
 
 enum { PDO_FVF_PRE = 1, PDO_FVF_DIFFUSE = 2, PDO_FVF_SPECULAR = 4, PDO_FVF_NORMAL = 8,
        PDO_FVF_LIT = 16, PDO_FVF_FOGTABLE = 32 };

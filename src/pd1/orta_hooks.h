@@ -491,5 +491,7 @@
 /* dsound_hle.c:413: 0x002DE590 -> 0x00249230: used alike 1/1 */
 /* dsound_hle.c:1044: 0x000687E9 is Orta's own game code */
 /* dsound_hle.c:1110: 0x0032DD9C -> 0x007B704C: used alike 2/2 */
-/* input_hle.c:47: 0x003067CC -> 0x0027164C: used alike 2/2 */
-/* input_hle.c:49: 0x00472030 is Orta's own game code */
+/* input_hle.c:48: 0x003067CC -> 0x0027164C: used alike 2/2 */
+/* input_hle.c:50: 0x00472030 is Orta's own game code */
+/* input_hle.c:52: 0x0041A13C is Orta's own game code */
+/* input_hle.c:53: 0x0041A140 is Orta's own game code */

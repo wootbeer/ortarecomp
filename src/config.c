@@ -25,7 +25,7 @@ char pdo_log_file[PDO_PATH_MAX];
 
 static pdo_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
-                                  .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100, .show_building = true,
+                                  .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = PDO_MOUSE_RELATIVE, .mouse_speed = 100, .show_building = true,
                                   .skip_logos = true, .rumble = 100, .touch_size = 100, .touch_opacity = 30, .hrtf = true, .depth_reversed = PDO_DEPTH_REVERSED_DEFAULT, .pic_contrast = 100,
                                   .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
 
@@ -269,7 +269,7 @@ static bool load_setting(pdo_config *cfg, const char *line, const char *value)
         else if (strcmp(line, "window_maximized") == 0)
             settings.win_maximized = SDL_atoi(value) != 0;
         else if (strcmp(line, "mouse_aim") == 0)
-            settings.mouse_aim = SDL_atoi(value) != 0;
+            settings.mouse_aim = clamp_int(SDL_atoi(value), PDO_MOUSE_OFF, PDO_MOUSE_LIGHTGUN);
         else if (strcmp(line, "mouse_speed") == 0)
             settings.mouse_speed = clamp_int(SDL_atoi(value), 10, 400);
         else if (strcmp(line, "unlock_box") == 0)

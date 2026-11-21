@@ -4961,6 +4961,30 @@ static void capture_steps(void)
 /* Escape gave the mouse back to the desktop (pdo_gfx_pump_events). */
 static bool mouse_released;
 
+/* The game's picture in the window (swapchain pixels) and its size in the
+ * game's pixels, from the last presented frame. */
+static SDL_GPUViewport game_vp;
+static float game_fw, game_fh;
+
+bool pdo_gfx_pointer_on_game(float *gx, float *gy)
+{
+    float mx, my;
+    int ww, wh, pw, ph;
+
+    if (!window || game_vp.w <= 0.0f || game_vp.h <= 0.0f)
+        return false;
+    SDL_GetMouseState(&mx, &my);        /* window coordinates */
+    SDL_GetWindowSize(window, &ww, &wh);
+    SDL_GetWindowSizeInPixels(window, &pw, &ph);
+    if (ww > 0)
+        mx *= (float)pw / (float)ww;
+    if (wh > 0)
+        my *= (float)ph / (float)wh;
+    *gx = (mx - game_vp.x) / game_vp.w * game_fw;
+    *gy = (my - game_vp.y) / game_vp.h * game_fh;
+    return true;
+}
+
 /* Mouse motion only, the rest left queued: while frame generation spaces
  * its pictures (lsfg_show) the main loop is not pumping, and the game would
  * read the mouse up to a game frame late. */
@@ -5033,11 +5057,18 @@ bool pdo_gfx_pump_events(void)
     if (window) {
         /* The game has the mouse (hidden, held in the window) for mouse
          * aim while it is the window in front and the options are shut. */
-        bool want = pdo_settings_get()->mouse_aim && !mouse_released && !pdo_overlay_open() &&
+        int mode = pdo_settings_get()->mouse_aim;
+        bool held = mode != PDO_MOUSE_OFF && !mouse_released && !pdo_overlay_open() &&
                     (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
+        bool want = held && mode == PDO_MOUSE_RELATIVE;
+        bool hide = held && mode == PDO_MOUSE_LIGHTGUN;  /* the gun's own pointer, ours hidden */
         if (want != SDL_GetWindowRelativeMouseMode(window))
             SDL_SetWindowRelativeMouseMode(window, want);
-        pdo_mouse_set_captured(want);
+        if (hide && SDL_CursorVisible())
+            SDL_HideCursor();
+        else if (!hide && !want && !SDL_CursorVisible())
+            SDL_ShowCursor();
+        pdo_mouse_set_captured(held);
     }
     return keep_going;
 }
@@ -5192,6 +5223,9 @@ static void present_to_window(SDL_GPUCommandBuffer *cmd)
             vp.y = SDL_floorf((sh - vp.h) / 2);
         }
         vp.max_depth = 1.0f;
+        game_vp = vp;                   /* where the pointer is on the picture (lightgun aim) */
+        game_fw = (float)frame_w;
+        game_fh = (float)frame_h;
     }
     SDL_zero(ct);
     ct.texture = swap;

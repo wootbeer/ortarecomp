@@ -484,7 +484,7 @@ static void control_act(int a, int dir)
     pdo_settings *st = pdo_settings_get();
 
     if (selected == CTL_MOUSE) {
-        st->mouse_aim = !st->mouse_aim;
+        st->mouse_aim = (st->mouse_aim + (dir < 0 ? 2 : 1)) % 3;    /* Off, Relative, Lightgun */
     } else if (selected == CTL_MSPEED) {
         st->mouse_speed = SDL_clamp(st->mouse_speed + 10 * dir, 10, 400);
     } else if (selected == CTL_BACK || (a < 0 && dir < 0 && selected >= PDO_IN_COUNT)) {
@@ -883,7 +883,8 @@ static void draw_controls(void)
             if (i == selected && capture)
                 snprintf(line, sizeof line, "%-9s press a key/button/click", pdo_input_button_name(i));
         } else if (i == CTL_MOUSE) {
-            snprintf(line, sizeof line, "%-9s %s", "Mouse aim", pdo_settings_get()->mouse_aim ? "On" : "Off");
+            static const char *const modes[] = { "Off", "Relative", "Lightgun" };
+            snprintf(line, sizeof line, "%-9s %s", "Mouse aim", modes[SDL_clamp(pdo_settings_get()->mouse_aim, 0, 2)]);
         } else if (i == CTL_MSPEED) {
             snprintf(line, sizeof line, "%-9s %d%%", "Mouse spd", pdo_settings_get()->mouse_speed);
         } else {

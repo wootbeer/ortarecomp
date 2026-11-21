@@ -28,6 +28,7 @@
 #include "guest/guest.h"
 #include "xbox_memory_layout.h"
 #include "gfx/overlay.h"
+#include "gfx/renderer.h"
 #ifdef __ANDROID__
 #include "android/touch_controls.h"
 #endif
@@ -47,6 +48,9 @@
 #define TYPE_GAMEPAD PROG_VA(0x003067CCu, 0x0027164Cu)
 /* Orta's reticle object (docs/orta-facts.md, Input and the reticle); none in pd1 */
 #define RETICLE PROG_VA(0x00472030u, 0)
+/* The projection to the screen's focal lengths, x and y (0x00044C90); Orta's */
+#define PROJ_FOCAL_X PROG_VA(0x0041A13Cu, 0)
+#define PROJ_FOCAL_Y PROG_VA(0x0041A140u, 0)
 #define TYPE_CURRENT  0
 #define TYPE_CHANGED  4
 #define TYPE_PREVIOUS 8
@@ -226,7 +230,7 @@ static int16_t axis_from_keys(const bool *k, SDL_Scancode neg, SDL_Scancode pos)
 /* PDO_AIM_SEARCH=1 (issue 51): which numbers the game keeps move with the
  * reticle. Each frame the floats of the player object (RETICLE's) and of
  * the objects it points to at +0x14, +0x3D4 and +0x3D0 (the reticle
- * update sub_0007B5D0's own, from sub_00041880) are sampled beside the
+ * update's own: 0x7B5D0, called from 0x41880) are sampled beside the
  * reticle's screen position (+0xB8/+0xBC); every 4 s those that follow it
  * most closely (correlation over the last 240 samples) are logged with
  * their scale and offset. The smoothed aim the reticle is drawn from should
@@ -390,25 +394,68 @@ static void read_port(int port, pad_state *s)
              * stops with it; the camera follows as ever. Outside play (no
              * aim object: menus, pd1) the motion tilts the stick as it
              * moves, keeping its direction. A controller's stick, the
-             * keys, Start or Back hand aiming back to them. */
+             * keys, Start or Back hand aiming back to them.
+             *
+             * Relative: each frame's motion is applied half then and half
+             * the next frame (the motion arrives unevenly between the
+             * game's 60 reads a second: steps of uneven size), all of it,
+             * one frame late. Lightgun: the reticle is steered to where the
+             * pointer is on the picture: each frame the aim turns by the
+             * angle between the reticle and the pointer, from the game's
+             * own projection (0x00044C90: its focal lengths), a share of it
+             * so a few frames land it; the game's clamp keeps it within the
+             * reticle's range, short of the picture's edges. */
             const float DEGREES_PER_COUNT = 0.05f;     /* at 100 %: about 0.2 reticle pixels */
+            const float LIGHTGUN_SHARE = 0.6f;         /* of the angle to the pointer, a frame */
             static bool aiming;
+            static float carry_x, carry_y;              /* the half of the last motion still to apply */
+            static float last_gx = -1e9f, last_gy = -1e9f;
+            int mode = pdo_settings_get()->mouse_aim;
+            float gx = 0.0f, gy = 0.0f;
+            bool pointer = mode == PDO_MOUSE_LIGHTGUN && pdo_gfx_pointer_on_game(&gx, &gy);
             float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
             bool stick = s->thumb[0] > 8000 || s->thumb[0] < -8000 || s->thumb[1] > 8000 || s->thumb[1] < -8000;
             uint32_t obj = RETICLE ? MEM32(RETICLE) : 0;
             bool play = obj >= 0x10000u && obj < 0x04000000u;
 
             pdo_mouse_take(&dx, &dy);
-            if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
+            if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK))) {
                 aiming = false;
-            if (play && !stick && !lx && !ly) {
-                if (dx != 0.0f || dy != 0.0f)
+                carry_x = carry_y = 0.0f;
+            }
+            bool moved = dx != 0.0f || dy != 0.0f;
+            if (pointer && (gx != last_gx || gy != last_gy)) {
+                moved = last_gx > -1e8f;        /* the pointer moved: lightgun aiming */
+                last_gx = gx;
+                last_gy = gy;
+            }
+            if (play && !stick && !lx && !ly && mode != PDO_MOUSE_OFF) {
+                if (moved)
                     aiming = true;
                 if (aiming) {
                     float pitch = MEMF(obj + 0xF8), yaw = MEMF(obj + 0xFC);
                     if (pitch == pitch && yaw == yaw) {         /* not NaN */
-                        MEMF(obj + 0xFC) = yaw + dx * speed * DEGREES_PER_COUNT;
-                        MEMF(obj + 0xF8) = pitch + dy * speed * DEGREES_PER_COUNT;
+                        if (mode == PDO_MOUSE_LIGHTGUN) {
+                            float rx_ = MEMF(obj + 0xB8), ry_ = MEMF(obj + 0xBC);
+                            float fx = SDL_fabsf(MEMF(PROJ_FOCAL_X)), fy = SDL_fabsf(MEMF(PROJ_FOCAL_Y));
+                            if (!(fx > 1.0f && fx < 1e5f))
+                                fx = 300.0f;            /* not read: about the game's */
+                            if (!(fy > 1.0f && fy < 1e5f))
+                                fy = 300.0f;
+                            if (pointer && rx_ == rx_ && ry_ == ry_ && gx >= 0.0f && gy >= 0.0f &&
+                                gx <= 1000.0f && gy <= 1000.0f) {
+                                yaw += LIGHTGUN_SHARE * SDL_atanf((gx - rx_) / fx) * 57.29578f;
+                                pitch += LIGHTGUN_SHARE * SDL_atanf((gy - ry_) / fy) * 57.29578f;
+                            }
+                        } else {
+                            float ax = 0.5f * (dx + carry_x), ay = 0.5f * (dy + carry_y);
+                            carry_x = dx;
+                            carry_y = dy;
+                            yaw += ax * speed * DEGREES_PER_COUNT;
+                            pitch += ay * speed * DEGREES_PER_COUNT;
+                        }
+                        MEMF(obj + 0xFC) = yaw;
+                        MEMF(obj + 0xF8) = pitch;
                         MEMF(obj + 0xD8) = 0.0f;                /* the stick's rates */
                         MEMF(obj + 0xDC) = 0.0f;
                     }

@@ -7,15 +7,16 @@
 - Options > Advanced > Shader note: turn off the "Building shaders" note
   in the corner (on by default). Also `--shader-note 0` on the command
   line.
+- **Lightgun aiming:** Controls > Mouse aim > Lightgun puts the reticle
+  where the pointer is on the picture, for lightguns that act as a mouse.
 
 ### Fixed
 
 - **HUD and text going dark** in Pandora's Box's extra pod scenarios (and
   anywhere the game leaves fog on while drawing its HUD), depending on where
   the camera looked (issue 48).
-- **Mouse aim:** the reticle follows the mouse and stays where you put it,
-  instead of pulling back to the centre or stopping when you move fast, and
-  no longer goes diagonal (issue 51).
+- **Mouse aim:** the mouse now turns the aim directly, like mouse-look in a
+  shooter: precise, no drift or float, and smooth (issue 51).
 
 ## v0.1.15 (beta)
 
