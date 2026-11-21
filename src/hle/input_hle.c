@@ -282,16 +282,51 @@ static void read_port(int port, pad_state *s)
         ry = axis_from_keys(k, SDL_SCANCODE_K, SDL_SCANCODE_I);
         if (lx) s->thumb[0] = lx;
         if (ly) s->thumb[1] = ly;
-        {   /* Mouse aim: the mouse's motion this frame tilts the left stick,
-             * full over at about 15 pixels a frame at speed 100 %, so the
-             * game's own aiming (its speed, limits, camera follow) moves the
-             * reticle. A still mouse leaves the stick to the controller. */
-            float dx, dy, k = (float)pdo_settings_get()->mouse_speed / 100.0f * (32767.0f / 15.0f);
+        {   /* Mouse aim: the mouse moves a stick that stays where it is left
+             * (full over after MOUSE_FULL pixels at speed 100 %), as a held
+             * thumbstick: Orta's reticle goes back to the centre when the
+             * stick is let go, so a stick tilted only while the mouse moved
+             * pulled it back as soon as the mouse stopped, and capped at
+             * 15 pixels a frame (each axis on its own) faster moves stopped
+             * following and went diagonal (issue 51). Longer than
+             * MOUSE_HOLD_NS without motion it eases back to the centre, as
+             * the game's menus read the same stick; a controller's stick or
+             * the keys take over at once. */
+            enum { MOUSE_FULL = 400 };
+            const Uint64 MOUSE_HOLD_NS = 1500000000ull;
+            static float mx, my;
+            static Uint64 last_move, last_ease;
+            Uint64 now = SDL_GetTicksNS();
+            float dx, dy, len, k = (float)pdo_settings_get()->mouse_speed / 100.0f / MOUSE_FULL;
+            bool stick = s->thumb[0] > 8000 || s->thumb[0] < -8000 || s->thumb[1] > 8000 || s->thumb[1] < -8000;
+
             pdo_mouse_take(&dx, &dy);
-            if (dx != 0.0f)
-                s->thumb[0] = clamp16((int)(dx * k));
-            if (dy != 0.0f)
-                s->thumb[1] = clamp16((int)(-dy * k));
+            if (stick || lx || ly) {
+                mx = my = 0.0f;                     /* the controller or the keys */
+            } else if (dx != 0.0f || dy != 0.0f) {
+                mx += dx * k;
+                my -= dy * k;
+                len = SDL_sqrtf(mx * mx + my * my);
+                if (len > 1.0f) {                   /* to the edge, keeping the direction */
+                    mx /= len;
+                    my /= len;
+                }
+                last_move = now;
+            } else if (now - last_move > MOUSE_HOLD_NS && (mx != 0.0f || my != 0.0f)) {
+                /* back to the centre in about a quarter of a second */
+                float f = SDL_powf(0.5f, (float)(now - last_ease) / 40000000.0f);
+                if (now - last_ease > 100000000ull)
+                    f = 0.5f;
+                mx *= f;
+                my *= f;
+                if (mx * mx + my * my < 1e-4f)
+                    mx = my = 0.0f;
+            }
+            last_ease = now;
+            if (mx != 0.0f || my != 0.0f) {
+                s->thumb[0] = clamp16((int)(mx * 32767.0f));
+                s->thumb[1] = clamp16((int)(my * 32767.0f));
+            }
         }
         if (rx) s->thumb[2] = rx;
         if (ry) s->thumb[3] = ry;
