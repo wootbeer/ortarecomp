@@ -2376,9 +2376,10 @@ static void bars_log(const char *what, uint32_t color, float a, float b)
  * shrink a picture of the screen's own shape: there they are not drawn
  * (true: drop the draw). The thin strips at the very top and bottom (16
  * lines, 0x0006A0A8) are in every frame and stay. */
-/* An untextured screen-space draw smaller than a pixel of the game's
+/* An untextured screen-space draw of a pixel or so of the game's
  * picture both ways: left out. Selecting a main-menu entry leaves one, a
- * white quad of about 0.8 x 0.9 pixels at (320, 70) (a capture); on the
+ * white quad of about 0.8 x 0.9 to 0.8 x 1.0 pixels at (320, 70)
+ * (captures; under 2 pixels each way is left out); on the
  * console it lights at most one pixel of 640x480, at 4x it was a white dot
  * of a few. Only that draw (its callers checked); textured sprites, anything
  * bigger and every other draw are drawn. */
@@ -2408,7 +2409,7 @@ static bool speck(uint32_t base, uint32_t stride, uint32_t first, uint32_t count
         y0 = SDL_min(y0, y);
         y1 = SDL_max(y1, y);
     }
-    return x1 - x0 < 1.0f && y1 - y0 < 1.0f;
+    return x1 - x0 < 2.0f && y1 - y0 < 2.0f;
 }
 
 static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
