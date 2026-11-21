@@ -323,12 +323,14 @@ static void aim_search(uint32_t obj)
  * downwards) at up to YAW_RATE / PITCH_RATE degrees a second, and the
  * camera is held on the aim (src/guest/mouse_aim.c), so the view turns
  * with it all the way round, as in modern games. The right stick is not
- * passed on in play; the left stick is the game's as ever. Outside play
+ * passed on in play; the left stick is the game's as ever. Pitch is held
+ * to 40 degrees either way, where the camera stops (past it the reticle
+ * left the screen). Outside play
  * (menus, pd1: no player object) nothing changes. Real time, not the
  * game's reads, so the speed is the same at any frame rate. */
 static void dual_stick(pad_state *s)
 {
-    const float YAW_RATE = 200.0f, PITCH_RATE = 120.0f, DEAD = 0.15f, PITCH_MAX = 80.0f;
+    const float YAW_RATE = 200.0f, PITCH_RATE = 120.0f, DEAD = 0.15f, PITCH_MAX = 40.0f;
     static Uint64 last;
     Uint64 now = SDL_GetTicksNS();
     float dt = last ? (float)(now - last) * 1e-9f : 0.0f;
@@ -364,22 +366,14 @@ static void dual_stick(pad_state *s)
     k = k * k / m;                      /* squared past the dead zone: fine aim near the centre */
     pitch = MEMF(obj + 0xF8);
     yaw = MEMF(obj + 0xFC);
-    if (pitch != pitch || yaw != yaw)
+    if (pitch != pitch || yaw != yaw || SDL_fabsf(yaw) > 1e5f)
         return;
     yaw += x * k * YAW_RATE * dt;
     pitch -= y * k * PITCH_RATE * dt;   /* stick up: look up */
-    {   /* within 180 degrees of the camera's yaw, which wraps at 360 */
-        uint32_t cam = MEM32(obj + 0x3D0);
-        float cy = cam >= 0x10000u && cam < 0x04000000u ? MEMF(cam + 0xC4) : yaw;
-        float d = yaw - cy;
-        if (d == d && d > -1e5f && d < 1e5f) {
-            while (d > 180.0f)
-                d -= 360.0f;
-            while (d < -180.0f)
-                d += 360.0f;
-            yaw = cy + d;
-        }
-    }
+    while (yaw > 180.0f)                /* -180..180, as the game keeps it */
+        yaw -= 360.0f;
+    while (yaw < -180.0f)
+        yaw += 360.0f;
     MEMF(obj + 0xFC) = yaw;
     MEMF(obj + 0xF8) = SDL_clamp(pitch, -PITCH_MAX, PITCH_MAX);
 }

@@ -358,10 +358,13 @@ The camera follows the aim through a damped spring per axis in 0x0007B5D0
 0x00041880): the pull +0x120/+0x124 = +0x110/+0x114 + [player+0x380] x the
 error to the target angle, the velocity +0x130/+0x134 takes the pull and
 loses [player+0x384] of itself, and the angles take the velocity: +0xC0
-pitch (degrees, clamped to 90), +0xC4 yaw (wraps at 360). The targets come
+pitch (degrees; it stopped at 40 up in a trace), +0xC4 yaw (not wrapped: past
+404 in a trace, while the game keeps the aim's yaw in -180..180). The targets come
 from the player's +0xF8/+0xFC. Run with stiffness 1 and no damping, the
 camera turns with the aim at once (tried for mouse aim, issue 51: the
-camera, not the reticle; it shook once round, at the yaw's wrap).
+camera, not the reticle; it shook once round: the aim's yaw wraps and the
+camera's does not, and the clamp of the aim around the camera then held the
+aim a turn away; dual-stick aiming moves the camera's by whole turns).
 [player+0x380]/+0x384 are read only here and by 0x0007B2D0, another
 spring.
 
