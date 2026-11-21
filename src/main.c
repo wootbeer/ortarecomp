@@ -91,6 +91,7 @@ static const char help_text[] =
     "  --picture-contrast 50..150 --picture-gamma 50..200  --picture-saturation 0..200\n"
     "  --output stereo|headphones|5.1   --audio-hrtf 0|1   --volume 0-100\n"
     "  --mouse-aim 0|1|2          --mouse-speed 10-400   --rumble 0-100\n"
+    "  --dual-stick 0|1\n"
     "  --save-file 1|2|3          --skip-logos 0|1    --skip-launcher 0|1\n"
     "  --unlock-box 0|1\n"
     "The names are those in ortarecomp.ini (dashes or underscores).\n"

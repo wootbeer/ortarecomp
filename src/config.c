@@ -272,6 +272,8 @@ static bool load_setting(pdo_config *cfg, const char *line, const char *value)
             settings.mouse_aim = clamp_int(SDL_atoi(value), PDO_MOUSE_OFF, PDO_MOUSE_LIGHTGUN);
         else if (strcmp(line, "mouse_speed") == 0)
             settings.mouse_speed = clamp_int(SDL_atoi(value), 10, 400);
+        else if (strcmp(line, "dual_stick") == 0)
+            settings.dual_stick = SDL_atoi(value) != 0;
         else if (strcmp(line, "unlock_box") == 0)
             settings.unlock_box = SDL_atoi(value) != 0;
         else if (strcmp(line, "skip_logos") == 0)
@@ -349,6 +351,7 @@ static int config_text(const pdo_config *cfg, char *text, size_t cap)
                  "window_maximized=%d\n"
                  "mouse_aim=%d\n"
                  "mouse_speed=%d\n"
+                 "dual_stick=%d\n"
                  "unlock_box=%d\n"
                  "skip_logos=%d\n"
                  "skip_launcher=%d\n"
@@ -381,7 +384,7 @@ static int config_text(const pdo_config *cfg, char *text, size_t cap)
                  settings.fps30 ? 30 : 60,
                  settings.shadow_original ? "low" : "high",
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
-                 settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble,
+                 settings.mouse_aim, settings.mouse_speed, settings.dual_stick, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble,
                  settings.touch_buttons == PDO_TOUCH_ALWAYS ? "always" : settings.touch_buttons == PDO_TOUCH_OFF ? "off" : "auto",
                  settings.touch_size, settings.touch_opacity, settings.gpu_driver, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,

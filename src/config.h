@@ -49,6 +49,7 @@ typedef struct pdo_settings {
     bool win_maximized;
     int  mouse_aim;         /* PDO_MOUSE_*: how the mouse aims (input_hle.c) */
     int  mouse_speed;       /* 10-400 % */
+    bool dual_stick;        /* the right stick turns the aim and the view all the way round (input_hle.c) */
     bool unlock_box;        /* every Pandora's Box item open, the save untouched (src/guest/unlocks.c) */
     bool skip_logos;        /* a press during the boot logos goes to the title (src/guest/intro_skip.c) */
     bool skip_launcher;     /* start the game without the launcher (src/main.c; Shift held shows it) */

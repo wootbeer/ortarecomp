@@ -318,6 +318,46 @@ static void aim_search(uint32_t obj)
     }
 }
 
+/* Dual-stick aiming (Controls > Dual stk): in play the right stick turns
+ * the aim angles (player +0xF8 pitch, +0xFC yaw, degrees; pitch grows
+ * downwards) at up to YAW_RATE / PITCH_RATE degrees a second, and the
+ * camera is held on the aim (src/guest/mouse_aim.c), so the view turns
+ * with it all the way round, as in modern games. The right stick is not
+ * passed on in play; the left stick is the game's as ever. Outside play
+ * (menus, pd1: no player object) nothing changes. Real time, not the
+ * game's reads, so the speed is the same at any frame rate. */
+static void dual_stick(pad_state *s)
+{
+    const float YAW_RATE = 200.0f, PITCH_RATE = 120.0f, DEAD = 0.15f, PITCH_MAX = 80.0f;
+    static Uint64 last;
+    Uint64 now = SDL_GetTicksNS();
+    float dt = last ? (float)(now - last) * 1e-9f : 0.0f;
+    uint32_t obj = RETICLE ? MEM32(RETICLE) : 0;
+    float x, y, m, k, pitch, yaw;
+
+    last = now;
+    if (!pdo_settings_get()->dual_stick || obj < 0x10000u || obj >= 0x04000000u)
+        return;
+    x = (float)s->thumb[2] / 32767.0f;
+    y = (float)s->thumb[3] / 32767.0f;
+    s->thumb[2] = s->thumb[3] = 0;
+    m = SDL_sqrtf(x * x + y * y);
+    if (m <= DEAD || dt <= 0.0f)
+        return;
+    if (dt > 0.05f)
+        dt = 0.05f;                     /* after a pause: no jump */
+    k = (m > 1.0f ? 1.0f : (m - DEAD) / (1.0f - DEAD));
+    k = k * k / m;                      /* squared past the dead zone: fine aim near the centre */
+    pitch = MEMF(obj + 0xF8);
+    yaw = MEMF(obj + 0xFC);
+    if (pitch != pitch || yaw != yaw)
+        return;
+    yaw += x * k * YAW_RATE * dt;
+    pitch -= y * k * PITCH_RATE * dt;   /* stick up: look up */
+    MEMF(obj + 0xFC) = yaw;
+    MEMF(obj + 0xF8) = SDL_clamp(pitch, -PITCH_MAX, PITCH_MAX);
+}
+
 static int16_t clamp16(int v)
 {
     return (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
@@ -512,6 +552,7 @@ static void read_port(int port, pad_state *s)
         /* The on-screen controls, as the first controller too (src/android/). */
         pdo_touch_add(&s->buttons, s->analog, s->thumb);
 #endif
+        dual_stick(s);
         apply_script(s);
     }
     {   /* The options overlay keeps the game's input while it is open. */
