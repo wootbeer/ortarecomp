@@ -412,7 +412,7 @@ static void read_port(int port, pad_state *s)
             pdo_mouse_take(&dx, &dy);
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
                 cx = cy = 0.0f;
-            if (play && (dx != 0.0f || dy != 0.0f) && SDL_getenv("PDO_WATCH_RETICLE"))
+            if (play && SDL_getenv("PDO_WATCH_RETICLE"))
                 pdo_debug_watch_writes((void *)XBOX_PTR(obj + 0xB8), 8);   /* src/guest/crash_report.c */
             if (play && SDL_getenv("PDO_AIM_SEARCH"))
                 aim_search(obj);
