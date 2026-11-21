@@ -17,6 +17,8 @@
   the camera looked (issue 48).
 - **Mouse aim:** the mouse now turns the aim directly, like mouse-look in a
   shooter: precise, no drift or float, and smooth (issue 51).
+- A white dot left where a main-menu entry was selected (the game's own
+  speck of a draw, smaller than a pixel; at higher resolutions it showed).
 
 ## v0.1.15 (beta)
 

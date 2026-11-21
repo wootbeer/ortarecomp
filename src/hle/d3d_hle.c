@@ -20,6 +20,7 @@
 #include "gfx/vsh_spec.h"
 #include "gfx/xtex.h"
 #include "guest/guest.h"
+#include "guest/program.h"
 #include "guest/vsh.h"
 #include "xbox_memory_layout.h"
 
@@ -2376,6 +2377,32 @@ static void bars_log(const char *what, uint32_t color, float a, float b)
  * shrink a picture of the screen's own shape: there they are not drawn
  * (true: drop the draw). The thin strips at the very top and bottom (16
  * lines, 0x0006A0A8) are in every frame and stay. */
+/* An untextured screen-space draw smaller than a pixel of the game's
+ * picture both ways: left out. Selecting a main-menu entry leaves one, a
+ * white quad of about 0.8 x 0.9 pixels at (320, 70) (a capture); on the
+ * console it lights at most one pixel of 640x480, at 4x it was a white dot
+ * of a few. Textured sprites and anything bigger are drawn. */
+static bool speck(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+
+    /* Orta's only: pd1 draws its world as screen-space polygons, a far one
+     * as small as this */
+    if (pdo_program_active() != PDO_PROGRAM_ORTA)
+        return false;
+    if ((st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || st.tex[0] || count == 0 || count > 6 || stride < 16)
+        return false;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t v = base + (first + i) * stride;
+        float x = MEMF(v), y = MEMF(v + 4);
+        x0 = SDL_min(x0, x);
+        x1 = SDL_max(x1, x);
+        y0 = SDL_min(y0, y);
+        y1 = SDL_max(y1, y);
+    }
+    return x1 - x0 < 1.0f && y1 - y0 < 1.0f;
+}
+
 static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
 {
     float q[2][4], b[4];    /* each quad's x0, y0, x1, y1 */
@@ -2432,7 +2459,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     float hud_k, hud_at;                    /* a HUD sprite's squeeze, on a wider screen, and about where */
 
     state_init();
-    if (cutscene_bars(base, stride, first, count))
+    if (cutscene_bars(base, stride, first, count) || speck(base, stride, first, count))
         return;
     hud_squeeze(base, stride, first, count, &hud_k, &hud_at);
     if (count > vcap) {
