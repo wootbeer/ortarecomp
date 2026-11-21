@@ -436,14 +436,23 @@ static void read_port(int port, pad_state *s)
                 aim_search(obj);
             {   /* PDO_MOUSE_TRACE=1: what mouse aim does, a few lines a second */
                 static int trace = -1;
-                static Uint64 last_trace;
+                static Uint64 last_trace, rate_since;
+                static int polls, rate;
+                Uint64 tnow = SDL_GetTicksNS();
+                polls++;                    /* how often the game reads its controller */
+                if (tnow - rate_since >= 1000000000ull) {
+                    rate = polls;
+                    polls = 0;
+                    rate_since = tnow;
+                }
                 if (trace < 0) {
                     const char *e = SDL_getenv("PDO_MOUSE_TRACE");
                     trace = e && *e == '1';
                 }
                 if (trace && (dx != 0.0f || dy != 0.0f || play) && SDL_GetTicksNS() - last_trace > 250000000ull) {
                     last_trace = SDL_GetTicksNS();
-                    SDL_Log("mouse: motion %+.0f %+.0f, stick %+6d %+6d, aim %+.2f %+.2f%s, reticle %.1f %.1f%s",
+                    SDL_Log("mouse: %d reads a second, motion %+.0f %+.0f, stick %+6d %+6d, aim %+.2f %+.2f%s, "
+                            "reticle %.1f %.1f%s", rate,
                             dx, dy, s->thumb[0], s->thumb[1], play ? MEMF(obj + 0xF8) : 0.0f,
                             play ? MEMF(obj + 0xFC) : 0.0f, aiming ? " (mouse)" : "", play ? MEMF(obj + 0xB8) : 0.0f,
                             play ? MEMF(obj + 0xBC) : 0.0f, play ? "" : " (no reticle: tilting as it moves)");
