@@ -223,6 +223,14 @@ static int16_t axis_from_keys(const bool *k, SDL_Scancode neg, SDL_Scancode pos)
     return (int16_t)((k[pos] ? 32767 : 0) - (k[neg] ? 32767 : 0));
 }
 
+/* The mouse is aiming in play: src/guest/mouse_aim.c takes the game's glide
+ * out of the reticle while it is. */
+static bool mouse_aiming;
+bool pdo_mouse_aim_active(void)
+{
+    return mouse_aiming;
+}
+
 /* PDO_AIM_SEARCH=1 (issue 51): which numbers the game keeps move with the
  * reticle. Each frame the floats of the player object (RETICLE's) and of
  * the objects it points to at +0x14, +0x3D4 and +0x3D0 (the reticle
@@ -376,32 +384,20 @@ static void read_port(int port, pad_state *s)
         if (lx) s->thumb[0] = lx;
         if (ly) s->thumb[1] = ly;
         {   /* Mouse aim (issue 51). Orta's left stick places the reticle:
-             * held at a tilt t the reticle glides (about a quarter second)
-             * to the centre + t x its range and stays, and goes back to the
-             * centre as the stick does (a trace with a controller: full
-             * right settled at x 465 from 320, up and down about 200 from
-             * the centre). So in play the mouse moves a cursor and the stick
-             * reports where it is, as a fraction of that range: the reticle
-             * goes where the mouse points and stays. Tilting the stick only
-             * while the mouse moved sent it back to the centre whenever the
-             * mouse stopped. Outside play (no reticle object: menus, pd1)
-             * the motion tilts the stick as it moves, as before, keeping its
-             * direction. Start or Back (the pause menu), a controller's
-             * stick or the keys put the cursor back in the middle. */
+             * held at a tilt t the reticle goes to the centre + t x its
+             * range and stays (full right about 155 pixels from the centre,
+             * up and down about 200), and back to the centre with the
+             * stick. So in play the mouse moves a cursor and the stick
+             * reports where it is, as a fraction of that range; the game's
+             * glide towards it is taken out while the mouse aims
+             * (src/guest/mouse_aim.c), so the reticle lands where the mouse
+             * points. Outside play (no reticle object: menus, pd1) the
+             * motion tilts the stick as it moves, keeping its direction.
+             * Start or Back (the pause menu), a controller's stick or the
+             * keys hand aiming back to them. */
             const float RANGE_X = 155.0f, RANGE_Y = 200.0f;    /* reticle pixels at full tilt */
-            /* The game's glide: each frame the reticle covers about 7 % of
-             * the way to where the stick puts it (a held tilt of 0.83 took
-             * a second to arrive: 320, 373, 424, 443, 449). The mouse is
-             * after the reticle itself, so the stick overshoots by what
-             * lets the glide cover LAND of the way a frame, easing off as
-             * it gets there: about five frames instead of a second. */
-            const float GLIDE = 0.07f, LAND = 0.35f;
-            static float centre_x = 320.0f, centre_y = 214.4f;   /* the reticle at rest */
-            static float rest_x, rest_y;
-            static Uint64 rest_since;
-            /* reticle pixels a mouse count at 100 %: full right in about 725
-             * counts, half an inch of a 1600-count mouse (1 put a nudge of
-             * 125 counts at the edge) */
+            /* reticle pixels a mouse count at 100 %: full right in about 775
+             * counts, half an inch of a 1600-count mouse */
             const float PIXELS_PER_COUNT = 0.2f;
             static float cx, cy;                /* the cursor, -1..1 of the range */
             float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
@@ -410,36 +406,16 @@ static void read_port(int port, pad_state *s)
             bool play = obj >= 0x10000u && obj < 0x04000000u;
 
             pdo_mouse_take(&dx, &dy);
-            if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
+            if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK))) {
                 cx = cy = 0.0f;
+                mouse_aiming = false;
+            }
             if (play && !stick && !lx && !ly) {
-                float px = MEMF(obj + 0xB8), py = MEMF(obj + 0xBC);   /* the reticle, screen pixels */
-                bool seen = px == px && py == py && px > -1000.0f && px < 2000.0f && py > -1000.0f &&
-                            py < 2000.0f;
-                Uint64 now = SDL_GetTicksNS();
-
+                if (dx != 0.0f || dy != 0.0f)
+                    mouse_aiming = true;
                 cx = SDL_clamp(cx + dx * speed * PIXELS_PER_COUNT / RANGE_X, -1.0f, 1.0f);
                 cy = SDL_clamp(cy - dy * speed * PIXELS_PER_COUNT / RANGE_Y, -1.0f, 1.0f);
-                if (cx == 0.0f && cy == 0.0f && seen) {
-                    /* idle: where the reticle settles is the centre (a stage
-                     * may hold it elsewhere) */
-                    if (SDL_fabsf(px - rest_x) > 0.5f || SDL_fabsf(py - rest_y) > 0.5f) {
-                        rest_x = px;
-                        rest_y = py;
-                        rest_since = now;
-                    } else if (now - rest_since > 500000000ull) {
-                        centre_x = px;
-                        centre_y = py;
-                    }
-                } else if (seen) {
-                    /* where the cursor wants it, in screen pixels (y down) */
-                    float want_x = centre_x + cx * RANGE_X, want_y = centre_y - cy * RANGE_Y;
-                    float tx_ = (px - centre_x + LAND * (want_x - px) / GLIDE) / RANGE_X;
-                    float ty_ = -(py - centre_y + LAND * (want_y - py) / GLIDE) / RANGE_Y;
-                    s->thumb[0] = clamp16((int)(SDL_clamp(tx_, -1.0f, 1.0f) * 32767.0f));
-                    s->thumb[1] = clamp16((int)(SDL_clamp(ty_, -1.0f, 1.0f) * 32767.0f));
-                    rest_since = now;
-                } else {
+                if (mouse_aiming) {
                     s->thumb[0] = clamp16((int)(cx * 32767.0f));
                     s->thumb[1] = clamp16((int)(cy * 32767.0f));
                 }
