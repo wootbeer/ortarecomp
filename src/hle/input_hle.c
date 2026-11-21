@@ -299,8 +299,11 @@ static void read_port(int port, pad_state *s)
             const float TILT_FULL = 40.0f;      /* reticle pixels off target for a full tilt */
             const float TARGET_LEAD = 160.0f;   /* how far the target may run ahead */
             static bool steering;
-            static float tx, ty;
-            float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
+            static float tx, ty, ref_x, ref_y;  /* ref: the reticle as the check's half second began */
+            static Uint64 ref_at;
+            /* half a reticle pixel a mouse count at 100 %: a full turn of a
+             * 1600-count mouse was always far off the target */
+            float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 200.0f;
             bool stick = s->thumb[0] > 8000 || s->thumb[0] < -8000 || s->thumb[1] > 8000 || s->thumb[1] < -8000;
             bool have = false;
             float rx_ = 0.0f, ry_ = 0.0f;
@@ -320,6 +323,7 @@ static void read_port(int port, pad_state *s)
                     tx = rx_;
                     ty = ry_;
                     steering = true;
+                    ref_at = 0;
                 }
                 tx += dx * speed;
                 ty += dy * speed;
@@ -328,16 +332,26 @@ static void read_port(int port, pad_state *s)
                 ty = SDL_clamp(ty, ry_ - TARGET_LEAD, ry_ + TARGET_LEAD);
             }
             if (steering) {
-                /* A reticle that does not move while steered far off is not
-                 * in play (a menu over a stale object): let go. */
-                static float last_x, last_y;
-                static int frozen;
-                bool far_off = SDL_fabsf(tx - rx_) > 20.0f || SDL_fabsf(ty - ry_) > 20.0f;
-                frozen = far_off && rx_ == last_x && ry_ == last_y ? frozen + 1 : 0;
-                last_x = rx_;
-                last_y = ry_;
-                if (frozen > 30)
-                    steering = false;
+                /* A reticle that does not move towards the target in half a
+                 * second while steered far off is not the player's to move:
+                 * the game holds it at the centre as a stage starts (x stayed
+                 * at 320 while y wandered), or a menu is over a stale object.
+                 * Let go; the next motion starts again from where it is. A
+                 * reticle chasing a target the mouse keeps moving passes. */
+                Uint64 now = SDL_GetTicksNS();
+                float ox = tx - rx_, oy = ty - ry_, d = SDL_sqrtf(ox * ox + oy * oy);
+                if (ref_at == 0 || d < 20.0f) {
+                    ref_x = rx_;
+                    ref_y = ry_;
+                    ref_at = now;
+                } else if (now - ref_at > 500000000ull) {
+                    float towards = ((rx_ - ref_x) * ox + (ry_ - ref_y) * oy) / d;
+                    if (towards < 2.0f)
+                        steering = false;
+                    ref_x = rx_;
+                    ref_y = ry_;
+                    ref_at = now;
+                }
             }
             {   /* PDO_MOUSE_TRACE=1: what mouse aim sees, a few lines a second */
                 static int trace = -1;
@@ -364,8 +378,8 @@ static void read_port(int port, pad_state *s)
                 s->thumb[0] = clamp16((int)(ex * 32767.0f));
                 s->thumb[1] = clamp16((int)(ey * 32767.0f));
             } else if (dx != 0.0f || dy != 0.0f) {
-                ex = dx * speed / 15.0f;
-                ey = -dy * speed / 15.0f;
+                ex = dx * speed * 2.0f / 15.0f;    /* as before: full over at 15 pixels at 100 % */
+                ey = -dy * speed * 2.0f / 15.0f;
                 len = SDL_sqrtf(ex * ex + ey * ey);
                 if (len > 1.0f) {
                     ex /= len;
