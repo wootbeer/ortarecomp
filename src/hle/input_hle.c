@@ -360,10 +360,13 @@ static void read_port(int port, pad_state *s)
                     const char *e = SDL_getenv("PDO_MOUSE_TRACE");
                     trace = e && *e == '1';
                 }
-                if (trace && (dx != 0.0f || dy != 0.0f || steering) && SDL_GetTicksNS() - last_trace > 250000000ull) {
+                if (trace && (dx != 0.0f || dy != 0.0f || steering || obj) &&
+                    SDL_GetTicksNS() - last_trace > 250000000ull) {
                     last_trace = SDL_GetTicksNS();
-                    SDL_Log("mouse: motion %+.0f %+.0f, reticle object 0x%08x at %.1f %.1f (%s), target %.1f %.1f, %s",
-                            dx, dy, obj, rx_, ry_, have ? "used" : "not used", tx, ty,
+                    SDL_Log("mouse: motion %+.0f %+.0f, stick %+6d %+6d, reticle object 0x%08x at %.1f %.1f (%s), "
+                            "aim %+.4f %+.4f, target %.1f %.1f, %s",
+                            dx, dy, s->thumb[0], s->thumb[1], obj, rx_, ry_, have ? "used" : "not used",
+                            have ? MEMF(obj + 0x830) : 0.0f, have ? MEMF(obj + 0x834) : 0.0f, tx, ty,
                             steering ? "steering" : "tilting as it moves");
                 }
             }
