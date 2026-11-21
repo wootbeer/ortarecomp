@@ -225,17 +225,32 @@ static LONG CALLBACK watch_handler(EXCEPTION_POINTERS *ep)
         if (a < watch_page || a >= watch_page + 4096)
             return EXCEPTION_CONTINUE_SEARCH;
         if (a >= watch_lo && a < watch_hi) {
-            uint64_t rip = ep->ContextRecord->Rip, off = 0;
+            uint64_t rip = ep->ContextRecord->Rip;
             int i;
             for (i = 0; i < watch_nseen && watch_seen[i] != rip; i++)
                 ;
             if (i == watch_nseen && watch_nseen < 64) {
-                uint32_t va = game_function_at(rip, &off);
                 watch_seen[watch_nseen++] = rip;
-                fprintf(stderr, "watch: +0x%02X written by host 0x%llx%s", (unsigned)(a - watch_lo),
-                        (unsigned long long)rip, va ? "" : "\n");
-                if (va)
-                    fprintf(stderr, " (sub_%08X+0x%llx)\n", va, (unsigned long long)off);
+                fprintf(stderr, "watch: +0x%02X written\n", (unsigned)(a - watch_lo));
+                /* the place (symbol, or the module and offset; the nearest
+                 * game function at any distance: some generated ones are
+                 * larger than game_function_at's 64 KB) and the game's
+                 * call chain from its stack */
+                print_host_address("by", rip);
+                {
+                    int lo = 0, hi = nfuncs;
+                    while (lo < hi) {
+                        int mid = (lo + hi) / 2;
+                        if (funcs[mid].host <= rip)
+                            lo = mid + 1;
+                        else
+                            hi = mid;
+                    }
+                    if (lo > 0)
+                        fprintf(stderr, "  in or after sub_%08X (+0x%llx)\n", funcs[lo - 1].va,
+                                (unsigned long long)(rip - funcs[lo - 1].host));
+                }
+                print_guest_state();
                 fflush(stderr);
             }
         }
@@ -261,6 +276,12 @@ void pdo_debug_watch_writes(void *host, size_t bytes)
     watch_lo = host;
     watch_hi = watch_lo + bytes;
     watch_page = (uint8_t *)((uintptr_t)host & ~(uintptr_t)4095);
+    {   /* the function map and symbols, now rather than inside the handler */
+        uint64_t off;
+        game_function_at(0, &off);
+        SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+        SymInitialize(GetCurrentProcess(), NULL, TRUE);
+    }
     AddVectoredExceptionHandler(1, watch_handler);
     if (!VirtualProtect(watch_page, 4096, PAGE_READONLY, &old)) {
         fprintf(stderr, "watch: could not protect the page (%lu)\n", GetLastError());
