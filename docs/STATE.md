@@ -122,6 +122,13 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
+   Dual-stick aiming, as an option: the right stick turning the view all
+   the way round and the left moving, as modern games do. The camera
+   spring in 0x0007B5D0 can be driven directly (`docs/orta-facts.md`,
+   Input and the reticle); taking its damping out made the camera follow
+   the aim at once, which is the start of it. Needs the yaw's 360 wrap
+   handled (it shook) and a choice of how the game's own camera moves
+   with it.
 
 ## Testing
 

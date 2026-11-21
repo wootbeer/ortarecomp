@@ -337,6 +337,23 @@ the same values). 0x00033960 records the sticks for demos (4096 entries at
 screen position in pixels at +0xB8/+0xBC, recomputed every frame (writing it
 does not move the reticle); the state it comes from is not found yet.
 
+The left stick places the reticle: held at a tilt t it glides (about a
+quarter second) to the centre plus t times its range and stays, and goes
+back with the stick; full right settles about 155 pixels right of the
+centre (x 320), full up or down about 200 from y 214 (a controller trace).
+
+The camera follows the aim through a damped spring per axis in 0x0007B5D0
+(thiscall on [player+0x3D0], player at 0x00472030; called from
+0x00041880): the pull +0x120/+0x124 = +0x110/+0x114 + [player+0x380] x the
+error to the target angle, the velocity +0x130/+0x134 takes the pull and
+loses [player+0x384] of itself, and the angles take the velocity: +0xC0
+pitch (degrees, clamped to 90), +0xC4 yaw (wraps at 360). The targets come
+from the player's +0xF8/+0xFC. Run with stiffness 1 and no damping, the
+camera turns with the aim at once (tried for mouse aim, issue 51: the
+camera, not the reticle; it shook once round, at the yaw's wrap).
+[player+0x380]/+0x384 are read only here and by 0x0007B2D0, another
+spring.
+
 ## Difficulty
 
 The chosen difficulty is at 0x00342778 (from the save's 0x00424E70 by
