@@ -20,7 +20,6 @@
 #include "gfx/vsh_spec.h"
 #include "gfx/xtex.h"
 #include "guest/guest.h"
-#include "guest/program.h"
 #include "guest/vsh.h"
 #include "xbox_memory_layout.h"
 
@@ -2386,10 +2385,12 @@ static bool speck(uint32_t base, uint32_t stride, uint32_t first, uint32_t count
 {
     float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
 
+#ifdef PDO_PROGRAM_PD1
     /* Orta's only: pd1 draws its world as screen-space polygons, a far one
-     * as small as this */
-    if (pdo_program_active() != PDO_PROGRAM_ORTA)
-        return false;
+     * as small as this (this file is built for pd1 with that defined) */
+    (void)base; (void)stride; (void)first; (void)count;
+    return false;
+#endif
     if ((st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || st.tex[0] || count == 0 || count > 6 || stride < 16)
         return false;
     for (uint32_t i = 0; i < count; i++) {
