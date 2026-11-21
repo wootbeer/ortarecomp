@@ -43,5 +43,8 @@ void pdo_guest_log_opened_files(const char *list_path);
 /* The game's movie setup opens a movie (src/hle/dsound_hle.c sees it):
  * its .sfd name, a guest address. d3d_hle.c reads the picture's size. */
 void pdo_movie_opened(uint32_t sfd_name_va);
+/* PDO_WATCH_RETICLE: log the code writing these host bytes (guest memory),
+ * once a run; Windows only (src/guest/crash_report.c). */
+void pdo_debug_watch_writes(void *host, size_t bytes);
 
 #endif

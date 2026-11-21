@@ -198,6 +198,79 @@ void pdo_crash_report_install(void)
     SetUnhandledExceptionFilter(crash_filter);
 }
 
+/* PDO_WATCH_RETICLE (issue 51): who writes a few bytes of guest memory.
+ * Their page is made read-only; each write to it faults here, is let
+ * through one instruction (the page writable, the trap flag set, then
+ * read-only again), and one inside the watched bytes names the code
+ * doing it, once per place, with the game function it is in. Writes from
+ * other threads in that one instruction's window slip by; it is for
+ * finding code, not for counting. */
+static uint8_t *watch_page, *watch_lo, *watch_hi;
+#ifdef _MSC_VER
+static __declspec(thread) int watch_rearm;    /* this thread stepped one write */
+#else
+static __thread int watch_rearm;
+#endif
+static uint64_t watch_seen[64];
+static int watch_nseen;
+
+static LONG CALLBACK watch_handler(EXCEPTION_POINTERS *ep)
+{
+    EXCEPTION_RECORD *er = ep->ExceptionRecord;
+    DWORD old;
+
+    if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && watch_page && er->NumberParameters >= 2 &&
+        er->ExceptionInformation[0] == 1) {
+        uint8_t *a = (uint8_t *)er->ExceptionInformation[1];
+        if (a < watch_page || a >= watch_page + 4096)
+            return EXCEPTION_CONTINUE_SEARCH;
+        if (a >= watch_lo && a < watch_hi) {
+            uint64_t rip = ep->ContextRecord->Rip, off = 0;
+            int i;
+            for (i = 0; i < watch_nseen && watch_seen[i] != rip; i++)
+                ;
+            if (i == watch_nseen && watch_nseen < 64) {
+                uint32_t va = game_function_at(rip, &off);
+                watch_seen[watch_nseen++] = rip;
+                fprintf(stderr, "watch: +0x%02X written by host 0x%llx%s", (unsigned)(a - watch_lo),
+                        (unsigned long long)rip, va ? "" : "\n");
+                if (va)
+                    fprintf(stderr, " (sub_%08X+0x%llx)\n", va, (unsigned long long)off);
+                fflush(stderr);
+            }
+        }
+        VirtualProtect(watch_page, 4096, PAGE_READWRITE, &old);
+        ep->ContextRecord->EFlags |= 0x100;     /* one instruction, then back here */
+        watch_rearm = 1;
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    if (er->ExceptionCode == EXCEPTION_SINGLE_STEP && watch_rearm) {
+        watch_rearm = 0;
+        VirtualProtect(watch_page, 4096, PAGE_READONLY, &old);
+        return EXCEPTION_CONTINUE_EXECUTION;
+    }
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
+void pdo_debug_watch_writes(void *host, size_t bytes)
+{
+    DWORD old;
+
+    if (watch_page)
+        return;                                 /* once a run */
+    watch_lo = host;
+    watch_hi = watch_lo + bytes;
+    watch_page = (uint8_t *)((uintptr_t)host & ~(uintptr_t)4095);
+    AddVectoredExceptionHandler(1, watch_handler);
+    if (!VirtualProtect(watch_page, 4096, PAGE_READONLY, &old)) {
+        fprintf(stderr, "watch: could not protect the page (%lu)\n", GetLastError());
+        watch_page = NULL;
+        return;
+    }
+    fprintf(stderr, "watch: writes to %p (%zu bytes) logged\n", host, bytes);
+    fflush(stderr);
+}
+
 /* F11: every thread's host call stack, for hangs. Generated functions are
  * named after their guest address, so this shows where each game thread
  * waits. Each thread is suspended only while its stack is unwound with
@@ -371,4 +444,13 @@ void pdo_dump_threads(void)
     fprintf(stderr, "thread dump: Windows only; on Linux use gdb (thread apply all bt)\n");
 }
 
+#endif
+
+#ifndef _WIN32
+void pdo_debug_watch_writes(void *host, size_t bytes)
+{
+    (void)host;
+    (void)bytes;
+    fprintf(stderr, "watch: Windows only\n");
+}
 #endif
