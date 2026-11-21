@@ -5638,6 +5638,13 @@ static float draw_distance(const frame_data *pf, const command *pc, const frame_
 
     if (!c->vsh && c->fvf < 0)
         return d;                           /* CPU-made: positions only */
+    /* The other draw's own state is read below as this one's kind: one of
+     * another kind (a pair across models can be: a program's or CPU-made
+     * against fixed-function vertices) has none of it (its fvf -1 read
+     * the uniforms before the list: a crash starting a stage). Not alike. */
+    if (pc->vsh != c->vsh || (!c->vsh && (pc->fvf < 0 || (uint32_t)pc->fvf >= pf->nfvf_us ||
+                                          (uint32_t)c->fvf >= cf->nfvf_us)))
+        return 3.4e38f;
     /* Another vertex program (key_of): only a tie-break, as the data. */
     float vsh_other = c->vsh && pc->vsh && (pc->vu.info[0] != c->vu.info[0] || pc->vu.info[1] != c->vu.info[1])
         ? 1e-3f : 0.0f;
@@ -6041,6 +6048,8 @@ static void match_frames(frame_data *prev, frame_data *cur)
                                 continue;
                         }
                         cand[nc2].d = draw_distance(prev, &prev->cmds[pk[i + a].cmd], cur, &cur->cmds[ck[j + b].cmd]);
+                        if (cand[nc2].d >= 3e38f)
+                            continue;           /* not alike (another kind): never paired */
                         /* Ties keep the draw order: a mesh drawn twice in one
                          * place (the dragon's passes, on other programs each)
                          * pairs first with first, second with second. As a
