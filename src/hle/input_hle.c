@@ -225,33 +225,37 @@ static int16_t axis_from_keys(const bool *k, SDL_Scancode neg, SDL_Scancode pos)
 
 /* PDO_AIM_SEARCH=1 (issue 51): which numbers the game keeps move with the
  * reticle. Each frame the floats of the player object (RETICLE's) and of
- * the two objects it points to at +0x14 and +0x3D4 are sampled beside the
+ * the objects it points to at +0x14, +0x3D4 and +0x3D0 (the reticle
+ * update sub_0007B5D0's own, from sub_00041880) are sampled beside the
  * reticle's screen position (+0xB8/+0xBC); every 4 s those that follow it
  * most closely (correlation over the last 240 samples) are logged with
  * their scale and offset. The smoothed aim the reticle is drawn from should
  * follow it exactly. */
-#define AIM_FIELDS 1536                 /* 0x1800 bytes of the player object, 0x400 of each other */
+#define AIM_FIELDS 2560                 /* 0x1000 bytes of the player and of [+0x3D0], 0x400 of the others */
 #define AIM_SAMPLES 240
 static void aim_search(uint32_t obj)
 {
     static float hist[AIM_SAMPLES][AIM_FIELDS], rx[AIM_SAMPLES], ry[AIM_SAMPLES];
-    static uint32_t base[3];
+    static uint32_t base[4];
     static int n, filled;
     static Uint64 last, last_report;
     Uint64 now = SDL_GetTicksNS();
-    uint32_t b[3] = { obj, MEM32(obj + 0x14), MEM32(obj + 0x3D4) };
+    uint32_t b[4] = { obj, MEM32(obj + 0x14), MEM32(obj + 0x3D4), MEM32(obj + 0x3D0) };
 
     if (now - last < 15000000ull)       /* once a frame */
         return;
     last = now;
-    for (int k = 0; k < 3; k++)
+    for (int k = 0; k < 4; k++)
         if (b[k] != base[k]) {
             memcpy(base, b, sizeof base);
             filled = 0;
             n = 0;
         }
     for (int i = 0; i < AIM_FIELDS; i++) {
-        uint32_t o = i < 1024 ? b[0] + i * 4u : (i < 1280 ? b[1] + (i - 1024) * 4u : b[2] + (i - 1280) * 4u);
+        uint32_t o = i < 1024 ? b[0] + i * 4u
+                   : i < 1280 ? b[1] + (i - 1024) * 4u
+                   : i < 1536 ? b[2] + (i - 1280) * 4u
+                              : b[3] + (i - 1536) * 4u;
         float v = (o >= 0x10000u && o < 0x04000000u) ? MEMF(o) : 0.0f;
         hist[n][i] = v == v && v > -1e7f && v < 1e7f ? v : 0.0f;
     }
@@ -301,8 +305,10 @@ static void aim_search(uint32_t obj)
         for (int k = 0; k < 6 && best[k].c != 0; k++) {
             int i = best[k].i;
             SDL_Log("aim search: reticle %s follows %s+0x%03X (correlation %+.4f, %.3f px a unit, at 0: %.1f, now %.4f)",
-                    axis ? "y" : "x", i < 1024 ? "player" : i < 1280 ? "[player+0x14]" : "[player+0x3D4]",
-                    (i < 1024 ? i : i < 1280 ? i - 1024 : i - 1280) * 4, best[k].c, best[k].slope, best[k].off,
+                    axis ? "y" : "x",
+                    i < 1024 ? "player" : i < 1280 ? "[player+0x14]" : i < 1536 ? "[player+0x3D4]" : "[player+0x3D0]",
+                    (i < 1024 ? i : i < 1280 ? i - 1024 : i < 1536 ? i - 1280 : i - 1536) * 4, best[k].c,
+                    best[k].slope, best[k].off,
                     hist[(n + AIM_SAMPLES - 1) % AIM_SAMPLES][i]);
         }
     }
