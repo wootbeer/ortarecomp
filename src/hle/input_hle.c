@@ -284,112 +284,61 @@ static void read_port(int port, pad_state *s)
         ry = axis_from_keys(k, SDL_SCANCODE_K, SDL_SCANCODE_I);
         if (lx) s->thumb[0] = lx;
         if (ly) s->thumb[1] = ly;
-        {   /* Mouse aim (issue 51). Orta's left stick sets how fast the
-             * reticle moves, and the reticle springs back to the centre when
-             * the stick is let go: tilting the stick only while the mouse
-             * moved let it spring back as soon as the mouse stopped, and a
-             * stick held where the mouse left it kept it moving. So in play
-             * the mouse moves a target over the reticle's own screen
-             * position (the reticle object at RETICLE: +0xB8/+0xBC, floats,
-             * recomputed each frame) and the stick steers the reticle there
-             * and holds it against the spring. Without a reticle (menus,
-             * pd1) the motion tilts the stick as before, full over at 15
-             * pixels a frame, keeping its direction. Start or Back (the
-             * pause menu), a controller's stick or the keys let go. */
-            const float TILT_FULL = 40.0f;      /* reticle pixels off target for a full tilt */
-            const float TARGET_LEAD = 160.0f;   /* how far the target may run ahead */
-            static bool steering;
-            static float tx, ty, ref_x, ref_y;  /* ref: the reticle as the check's half second began */
-            static Uint64 ref_at;
-            /* half a reticle pixel a mouse count at 100 %: a full turn of a
-             * 1600-count mouse was always far off the target */
-            float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 200.0f;
+        {   /* Mouse aim (issue 51). Orta's left stick places the reticle:
+             * held at a tilt t the reticle glides (about a quarter second)
+             * to the centre + t x its range and stays, and goes back to the
+             * centre as the stick does (a trace with a controller: full
+             * right settled at x 465 from 320, up and down about 200 from
+             * the centre). So in play the mouse moves a cursor and the stick
+             * reports where it is, as a fraction of that range: the reticle
+             * goes where the mouse points and stays. Tilting the stick only
+             * while the mouse moved sent it back to the centre whenever the
+             * mouse stopped. Outside play (no reticle object: menus, pd1)
+             * the motion tilts the stick as it moves, as before, keeping its
+             * direction. Start or Back (the pause menu), a controller's
+             * stick or the keys put the cursor back in the middle. */
+            const float RANGE_X = 145.0f, RANGE_Y = 200.0f;    /* reticle pixels at full tilt */
+            static float cx, cy;                /* the cursor, -1..1 of the range */
+            float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
             bool stick = s->thumb[0] > 8000 || s->thumb[0] < -8000 || s->thumb[1] > 8000 || s->thumb[1] < -8000;
-            bool have = false;
-            float rx_ = 0.0f, ry_ = 0.0f;
             uint32_t obj = RETICLE ? MEM32(RETICLE) : 0;
+            bool play = obj >= 0x10000u && obj < 0x04000000u;
 
             pdo_mouse_take(&dx, &dy);
-            if (obj >= 0x10000u && obj < 0x04000000u) {
-                rx_ = MEMF(obj + 0xB8);
-                ry_ = MEMF(obj + 0xBC);
-                have = rx_ == rx_ && ry_ == ry_ && rx_ > -1000.0f && rx_ < 2000.0f && ry_ > -1000.0f &&
-                       ry_ < 2000.0f;
-            }
-            if (!have || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
-                steering = false;
-            if (have && (dx != 0.0f || dy != 0.0f) && !stick && !lx && !ly) {
-                if (!steering) {
-                    tx = rx_;
-                    ty = ry_;
-                    steering = true;
-                    ref_at = 0;
+            if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
+                cx = cy = 0.0f;
+            if (play && !stick && !lx && !ly) {
+                /* a reticle pixel a mouse count at 100 % */
+                cx = SDL_clamp(cx + dx * speed / RANGE_X, -1.0f, 1.0f);
+                cy = SDL_clamp(cy - dy * speed / RANGE_Y, -1.0f, 1.0f);
+                if (cx != 0.0f || cy != 0.0f) {
+                    s->thumb[0] = clamp16((int)(cx * 32767.0f));
+                    s->thumb[1] = clamp16((int)(cy * 32767.0f));
                 }
-                tx += dx * speed;
-                ty += dy * speed;
-                /* not far past the reticle: at its limits the target would run on */
-                tx = SDL_clamp(tx, rx_ - TARGET_LEAD, rx_ + TARGET_LEAD);
-                ty = SDL_clamp(ty, ry_ - TARGET_LEAD, ry_ + TARGET_LEAD);
-            }
-            if (steering) {
-                /* A reticle that does not move towards the target in half a
-                 * second while steered far off is not the player's to move:
-                 * the game holds it at the centre as a stage starts (x stayed
-                 * at 320 while y wandered), or a menu is over a stale object.
-                 * Let go; the next motion starts again from where it is. A
-                 * reticle chasing a target the mouse keeps moving passes. */
-                Uint64 now = SDL_GetTicksNS();
-                float ox = tx - rx_, oy = ty - ry_, d = SDL_sqrtf(ox * ox + oy * oy);
-                if (ref_at == 0 || d < 20.0f) {
-                    ref_x = rx_;
-                    ref_y = ry_;
-                    ref_at = now;
-                } else if (now - ref_at > 500000000ull) {
-                    float towards = ((rx_ - ref_x) * ox + (ry_ - ref_y) * oy) / d;
-                    if (towards < 2.0f)
-                        steering = false;
-                    ref_x = rx_;
-                    ref_y = ry_;
-                    ref_at = now;
+            } else if (dx != 0.0f || dy != 0.0f) {
+                ex = dx * speed / 15.0f;        /* full over at 15 pixels a frame at 100 % */
+                ey = -dy * speed / 15.0f;
+                len = SDL_sqrtf(ex * ex + ey * ey);
+                if (len > 1.0f) {
+                    ex /= len;
+                    ey /= len;
                 }
+                s->thumb[0] = clamp16((int)(ex * 32767.0f));
+                s->thumb[1] = clamp16((int)(ey * 32767.0f));
             }
-            {   /* PDO_MOUSE_TRACE=1: what mouse aim sees, a few lines a second */
+            {   /* PDO_MOUSE_TRACE=1: what mouse aim does, a few lines a second */
                 static int trace = -1;
                 static Uint64 last_trace;
                 if (trace < 0) {
                     const char *e = SDL_getenv("PDO_MOUSE_TRACE");
                     trace = e && *e == '1';
                 }
-                if (trace && (dx != 0.0f || dy != 0.0f || steering || obj) &&
-                    SDL_GetTicksNS() - last_trace > 250000000ull) {
+                if (trace && (dx != 0.0f || dy != 0.0f || play) && SDL_GetTicksNS() - last_trace > 250000000ull) {
                     last_trace = SDL_GetTicksNS();
-                    SDL_Log("mouse: motion %+.0f %+.0f, stick %+6d %+6d, reticle object 0x%08x at %.1f %.1f (%s), "
-                            "aim %+.4f %+.4f, target %.1f %.1f, %s",
-                            dx, dy, s->thumb[0], s->thumb[1], obj, rx_, ry_, have ? "used" : "not used",
-                            have ? MEMF(obj + 0x830) : 0.0f, have ? MEMF(obj + 0x834) : 0.0f, tx, ty,
-                            steering ? "steering" : "tilting as it moves");
+                    SDL_Log("mouse: motion %+.0f %+.0f, stick %+6d %+6d, cursor %+.2f %+.2f, reticle %.1f %.1f%s",
+                            dx, dy, s->thumb[0], s->thumb[1], cx, cy, play ? MEMF(obj + 0xB8) : 0.0f,
+                            play ? MEMF(obj + 0xBC) : 0.0f, play ? "" : " (no reticle: tilting as it moves)");
                 }
-            }
-            if (steering) {
-                ex = (tx - rx_) / TILT_FULL;
-                ey = (ry_ - ty) / TILT_FULL;      /* screen down, stick up */
-                len = SDL_sqrtf(ex * ex + ey * ey);
-                if (len > 1.0f) {
-                    ex /= len;
-                    ey /= len;
-                }
-                s->thumb[0] = clamp16((int)(ex * 32767.0f));
-                s->thumb[1] = clamp16((int)(ey * 32767.0f));
-            } else if (dx != 0.0f || dy != 0.0f) {
-                ex = dx * speed * 2.0f / 15.0f;    /* as before: full over at 15 pixels at 100 % */
-                ey = -dy * speed * 2.0f / 15.0f;
-                len = SDL_sqrtf(ex * ex + ey * ey);
-                if (len > 1.0f) {
-                    ex /= len;
-                    ey /= len;
-                }
-                s->thumb[0] = clamp16((int)(ex * 32767.0f));
-                s->thumb[1] = clamp16((int)(ey * 32767.0f));
             }
         }
         if (rx) s->thumb[2] = rx;
