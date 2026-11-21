@@ -223,14 +223,6 @@ static int16_t axis_from_keys(const bool *k, SDL_Scancode neg, SDL_Scancode pos)
     return (int16_t)((k[pos] ? 32767 : 0) - (k[neg] ? 32767 : 0));
 }
 
-/* The mouse is aiming in play: src/guest/mouse_aim.c takes the game's glide
- * out of the reticle while it is. */
-static bool mouse_aiming;
-bool pdo_mouse_aim_active(void)
-{
-    return mouse_aiming;
-}
-
 /* PDO_AIM_SEARCH=1 (issue 51): which numbers the game keeps move with the
  * reticle. Each frame the floats of the player object (RETICLE's) and of
  * the objects it points to at +0x14, +0x3D4 and +0x3D0 (the reticle
@@ -408,14 +400,14 @@ static void read_port(int port, pad_state *s)
             pdo_mouse_take(&dx, &dy);
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK))) {
                 cx = cy = 0.0f;
-                mouse_aiming = false;
+                pdo_mouse_set_aiming(false);
             }
             if (play && !stick && !lx && !ly) {
                 if (dx != 0.0f || dy != 0.0f)
-                    mouse_aiming = true;
+                    pdo_mouse_set_aiming(true);
                 cx = SDL_clamp(cx + dx * speed * PIXELS_PER_COUNT / RANGE_X, -1.0f, 1.0f);
                 cy = SDL_clamp(cy - dy * speed * PIXELS_PER_COUNT / RANGE_Y, -1.0f, 1.0f);
-                if (mouse_aiming) {
+                if (pdo_mouse_aim_active()) {
                     s->thumb[0] = clamp16((int)(cx * 32767.0f));
                     s->thumb[1] = clamp16((int)(cy * 32767.0f));
                 }

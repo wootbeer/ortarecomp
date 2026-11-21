@@ -16,10 +16,7 @@
  */
 
 #include "recomp_types.h"
-
-#include <stdbool.h>
-
-bool pdo_mouse_aim_active(void);       /* src/hle/input_hle.c */
+#include "input_map.h"
 
 #define PLAYER 0x00472030u
 

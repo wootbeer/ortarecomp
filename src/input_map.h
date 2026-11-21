@@ -42,6 +42,11 @@ const char *pdo_input_pad_label(int pad);       /* short, for the menu: "A", "RB
  * pixels; input_hle.c takes it once a game frame). */
 void pdo_mouse_add(float dx, float dy);
 void pdo_mouse_take(float *dx, float *dy);
+/* The mouse is aiming in play (src/hle/input_hle.c sets it): the reticle's
+ * glide is taken out while it is (src/guest/mouse_aim.c). Here, not in
+ * src/hle/, which is built once for each program. */
+void pdo_mouse_set_aiming(bool on);
+bool pdo_mouse_aim_active(void);
 /* Whether the game has the mouse (held in the window): mouse buttons play
  * the game only then, so the click that takes the mouse back does not. */
 void pdo_mouse_set_captured(bool on);

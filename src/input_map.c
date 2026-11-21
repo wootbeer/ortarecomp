@@ -95,6 +95,18 @@ void pdo_mouse_add(float dx, float dy)
     SDL_UnlockSpinlock(&mouse_lock);
 }
 
+static SDL_AtomicInt mouse_aiming;
+
+void pdo_mouse_set_aiming(bool on)
+{
+    SDL_SetAtomicInt(&mouse_aiming, on);
+}
+
+bool pdo_mouse_aim_active(void)
+{
+    return SDL_GetAtomicInt(&mouse_aiming) != 0;
+}
+
 void pdo_mouse_take(float *dx, float *dy)
 {
     SDL_LockSpinlock(&mouse_lock);
