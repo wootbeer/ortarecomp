@@ -485,8 +485,10 @@
 /* d3d_hle.c:976: 0x002BEB08 -> 0x0022A368: used alike 3/3 */
 /* d3d_hle.c:1029: 0x002BC618 -> 0x00227EA0: used alike 1/1 */
 /* d3d_hle.c:2293: 0x0006A24B is Orta's own game code */
-/* d3d_hle.c:2522: 0x000688E3 is Orta's own game code */
-/* d3d_hle.c:2772: 0x004EB1EC -> 0x0098D99C: used alike 4/4 */
+/* d3d_hle.c:2400: 0x0006A24B is Orta's own game code */
+/* d3d_hle.c:2401: 0x0006A4D6 is Orta's own game code */
+/* d3d_hle.c:2557: 0x000688E3 is Orta's own game code */
+/* d3d_hle.c:2807: 0x004EB1EC -> 0x0098D99C: used alike 4/4 */
 /* dsound_hle.c:412: 0x002CCFD0 -> 0x00237C70: used alike 2/2 */
 /* dsound_hle.c:413: 0x002DE590 -> 0x00249230: used alike 1/1 */
 /* dsound_hle.c:1044: 0x000687E9 is Orta's own game code */

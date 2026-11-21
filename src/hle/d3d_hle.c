@@ -2380,7 +2380,8 @@ static void bars_log(const char *what, uint32_t color, float a, float b)
  * picture both ways: left out. Selecting a main-menu entry leaves one, a
  * white quad of about 0.8 x 0.9 pixels at (320, 70) (a capture); on the
  * console it lights at most one pixel of 640x480, at 4x it was a white dot
- * of a few. Textured sprites and anything bigger are drawn. */
+ * of a few. Only that draw (its callers checked); textured sprites, anything
+ * bigger and every other draw are drawn. */
 static bool speck(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
 {
     float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
@@ -2392,6 +2393,12 @@ static bool speck(uint32_t base, uint32_t stride, uint32_t first, uint32_t count
     return false;
 #endif
     if ((st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || st.tex[0] || count == 0 || count > 6 || stride < 16)
+        return false;
+    /* and only the one that leaves it: the 2D draw routine's call from the
+     * menu's selection effect (the capture's "drawn from"), so no other
+     * effect of the game's, however small its pieces, is touched */
+    if (MEM32(g_esp) != PROG_VA(0x0006A24Bu, 0) || g_ebp < 0x00010000u || g_ebp >= 0x04000000u ||
+        (g_ebp & 3) || MEM32(g_ebp + 4) != PROG_VA(0x0006A4D6u, 0))
         return false;
     for (uint32_t i = 0; i < count; i++) {
         uint32_t v = base + (first + i) * stride;
