@@ -223,6 +223,91 @@ static int16_t axis_from_keys(const bool *k, SDL_Scancode neg, SDL_Scancode pos)
     return (int16_t)((k[pos] ? 32767 : 0) - (k[neg] ? 32767 : 0));
 }
 
+/* PDO_AIM_SEARCH=1 (issue 51): which numbers the game keeps move with the
+ * reticle. Each frame the floats of the player object (RETICLE's) and of
+ * the two objects it points to at +0x14 and +0x3D4 are sampled beside the
+ * reticle's screen position (+0xB8/+0xBC); every 4 s those that follow it
+ * most closely (correlation over the last 240 samples) are logged with
+ * their scale and offset. The smoothed aim the reticle is drawn from should
+ * follow it exactly. */
+#define AIM_FIELDS 1536                 /* 0x1800 bytes of the player object, 0x400 of each other */
+#define AIM_SAMPLES 240
+static void aim_search(uint32_t obj)
+{
+    static float hist[AIM_SAMPLES][AIM_FIELDS], rx[AIM_SAMPLES], ry[AIM_SAMPLES];
+    static uint32_t base[3];
+    static int n, filled;
+    static Uint64 last, last_report;
+    Uint64 now = SDL_GetTicksNS();
+    uint32_t b[3] = { obj, MEM32(obj + 0x14), MEM32(obj + 0x3D4) };
+
+    if (now - last < 15000000ull)       /* once a frame */
+        return;
+    last = now;
+    for (int k = 0; k < 3; k++)
+        if (b[k] != base[k]) {
+            memcpy(base, b, sizeof base);
+            filled = 0;
+            n = 0;
+        }
+    for (int i = 0; i < AIM_FIELDS; i++) {
+        uint32_t o = i < 1024 ? b[0] + i * 4u : (i < 1280 ? b[1] + (i - 1024) * 4u : b[2] + (i - 1280) * 4u);
+        float v = (o >= 0x10000u && o < 0x04000000u) ? MEMF(o) : 0.0f;
+        hist[n][i] = v == v && v > -1e7f && v < 1e7f ? v : 0.0f;
+    }
+    rx[n] = MEMF(obj + 0xB8);
+    ry[n] = MEMF(obj + 0xBC);
+    n = (n + 1) % AIM_SAMPLES;
+    if (filled < AIM_SAMPLES)
+        filled++;
+    if (filled < AIM_SAMPLES || now - last_report < 4000000000ull)
+        return;
+    last_report = now;
+    for (int axis = 0; axis < 2; axis++) {
+        const float *r = axis ? ry : rx;
+        double mr = 0, vr = 0;
+        struct { double c, slope, off; int i; } best[6] = { { 0 } };
+        for (int t = 0; t < AIM_SAMPLES; t++)
+            mr += r[t];
+        mr /= AIM_SAMPLES;
+        for (int t = 0; t < AIM_SAMPLES; t++)
+            vr += (r[t] - mr) * (r[t] - mr);
+        if (vr < 100.0)                 /* the reticle hardly moved */
+            continue;
+        for (int i = 0; i < AIM_FIELDS; i++) {
+            double mf = 0, vf = 0, cov = 0, c;
+            if ((i == 0xB8 / 4 || i == 0xBC / 4))
+                continue;               /* the screen position itself */
+            for (int t = 0; t < AIM_SAMPLES; t++)
+                mf += hist[t][i];
+            mf /= AIM_SAMPLES;
+            for (int t = 0; t < AIM_SAMPLES; t++) {
+                vf += (hist[t][i] - mf) * (hist[t][i] - mf);
+                cov += (hist[t][i] - mf) * (r[t] - mr);
+            }
+            if (vf <= 1e-12)
+                continue;
+            c = cov / SDL_sqrt(vf * vr);
+            for (int k = 0; k < 6; k++)
+                if (SDL_fabs(c) > SDL_fabs(best[k].c)) {
+                    memmove(&best[k + 1], &best[k], (5 - k) * sizeof best[0]);
+                    best[k].c = c;
+                    best[k].slope = cov / vf;           /* reticle pixels a unit of the field */
+                    best[k].off = mr - best[k].slope * mf;
+                    best[k].i = i;
+                    break;
+                }
+        }
+        for (int k = 0; k < 6 && best[k].c != 0; k++) {
+            int i = best[k].i;
+            SDL_Log("aim search: reticle %s follows %s+0x%03X (correlation %+.4f, %.3f px a unit, at 0: %.1f, now %.4f)",
+                    axis ? "y" : "x", i < 1024 ? "player" : i < 1280 ? "[player+0x14]" : "[player+0x3D4]",
+                    (i < 1024 ? i : i < 1280 ? i - 1024 : i - 1280) * 4, best[k].c, best[k].slope, best[k].off,
+                    hist[(n + AIM_SAMPLES - 1) % AIM_SAMPLES][i]);
+        }
+    }
+}
+
 static int16_t clamp16(int v)
 {
     return (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
@@ -363,6 +448,8 @@ static void read_port(int port, pad_state *s)
                 s->thumb[0] = clamp16((int)(ex * 32767.0f));
                 s->thumb[1] = clamp16((int)(ey * 32767.0f));
             }
+            if (play && SDL_getenv("PDO_AIM_SEARCH"))
+                aim_search(obj);
             {   /* PDO_MOUSE_TRACE=1: what mouse aim does, a few lines a second */
                 static int trace = -1;
                 static Uint64 last_trace;
