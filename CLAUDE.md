@@ -22,7 +22,7 @@ one function by address or name instead.
 - **xboxrecomp patches must not overlap.** `recomp.py` and CMake decide a
   patch is applied with `git apply --reverse --check`, one patch at a time.
   To change lines an earlier patch added, edit that patch instead.
-  There are 44 now (0001-0044).
+  There are 45 now (0001-0045).
 - **Third-party projects** (Cxbx-Reloaded, xemu, the JSRF Decompilation,
   other ports): facts only, no code. Symbol databases and listings are read
   from a local clone at run time, never committed. Our own GPL code from
@@ -31,6 +31,10 @@ one function by address or name instead.
   xboxrecomp is used for the recompiler and the kernel layer only. No
   NV2A/APU emulation.
 - Accuracy over speed; keep fixes minimal and explain them in commit messages.
+- The owner builds on Windows (MSVC): before pushing C changes, syntax-check
+  the changed files as Windows sees them with `x86_64-w64-mingw32-gcc
+  -fsyntax-only` (package gcc-mingw-w64-x86-64). windows.h and the C
+  library there define names Linux does not (`tell`, `far`, `near`...).
 - Keep `docs/STATE.md` to one page: update it at the end of a session and
   move finished detail into `docs/archive/`. Facts about the game go in
   `docs/orta-facts.md`.

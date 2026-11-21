@@ -10,7 +10,7 @@ History and detail: `docs/archive/state-to-v0.1.md` (to the release) and
 ## How it fits together
 
 - `tools/recomp.py`: the USA `default.xbe` -> `gen/` through xboxrecomp
-  v0.13.1 and patches 0001-0044 (`patches/xboxrecomp/`), with seeds for
+  v0.13.1 and patches 0001-0045 (`patches/xboxrecomp/`), with seeds for
   functions the sweep misses (`tools/pdo_seeds.json`; every failed indirect
   call seen in play is seeded). 42 lifter jumps still go to stubs, all from
   data decoded as code.
@@ -84,7 +84,7 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
 2. A full play on the release build with no `[ICALL] Failed` in the log.
    The title's main thread runs without the guest CPU lock (run inline by
    PsCreateSystemThreadEx, the lock given up by that kernel call). Mad Dash
-   Recomp's patch 0045 makes it take the lock; not taken here: Orta plays
+   Recomp makes it take the lock (its own patch 0045); not taken here: Orta plays
    through as it is, and it would serialise the main thread with the sound,
    movie and file threads (speed, and hangs where a loop waits without a
    kernel call). Its 0044 (IO status order) is in.
