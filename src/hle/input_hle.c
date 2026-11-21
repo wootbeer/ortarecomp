@@ -298,6 +298,10 @@ static void read_port(int port, pad_state *s)
              * direction. Start or Back (the pause menu), a controller's
              * stick or the keys put the cursor back in the middle. */
             const float RANGE_X = 145.0f, RANGE_Y = 200.0f;    /* reticle pixels at full tilt */
+            /* reticle pixels a mouse count at 100 %: full right in about 725
+             * counts, half an inch of a 1600-count mouse (1 put a nudge of
+             * 125 counts at the edge) */
+            const float PIXELS_PER_COUNT = 0.2f;
             static float cx, cy;                /* the cursor, -1..1 of the range */
             float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
             bool stick = s->thumb[0] > 8000 || s->thumb[0] < -8000 || s->thumb[1] > 8000 || s->thumb[1] < -8000;
@@ -308,9 +312,8 @@ static void read_port(int port, pad_state *s)
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
                 cx = cy = 0.0f;
             if (play && !stick && !lx && !ly) {
-                /* a reticle pixel a mouse count at 100 % */
-                cx = SDL_clamp(cx + dx * speed / RANGE_X, -1.0f, 1.0f);
-                cy = SDL_clamp(cy - dy * speed / RANGE_Y, -1.0f, 1.0f);
+                cx = SDL_clamp(cx + dx * speed * PIXELS_PER_COUNT / RANGE_X, -1.0f, 1.0f);
+                cy = SDL_clamp(cy - dy * speed * PIXELS_PER_COUNT / RANGE_Y, -1.0f, 1.0f);
                 if (cx != 0.0f || cy != 0.0f) {
                     s->thumb[0] = clamp16((int)(cx * 32767.0f));
                     s->thumb[1] = clamp16((int)(cy * 32767.0f));
