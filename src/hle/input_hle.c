@@ -303,7 +303,7 @@ static void read_port(int port, pad_state *s)
             float dx, dy, ex, ey, len, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
             bool stick = s->thumb[0] > 8000 || s->thumb[0] < -8000 || s->thumb[1] > 8000 || s->thumb[1] < -8000;
             bool have = false;
-            float rx_, ry_ = 0.0f;
+            float rx_ = 0.0f, ry_ = 0.0f;
             uint32_t obj = RETICLE ? MEM32(RETICLE) : 0;
 
             pdo_mouse_take(&dx, &dy);
@@ -338,6 +338,20 @@ static void read_port(int port, pad_state *s)
                 last_y = ry_;
                 if (frozen > 30)
                     steering = false;
+            }
+            {   /* PDO_MOUSE_TRACE=1: what mouse aim sees, a few lines a second */
+                static int trace = -1;
+                static Uint64 last_trace;
+                if (trace < 0) {
+                    const char *e = SDL_getenv("PDO_MOUSE_TRACE");
+                    trace = e && *e == '1';
+                }
+                if (trace && (dx != 0.0f || dy != 0.0f || steering) && SDL_GetTicksNS() - last_trace > 250000000ull) {
+                    last_trace = SDL_GetTicksNS();
+                    SDL_Log("mouse: motion %+.0f %+.0f, reticle object 0x%08x at %.1f %.1f (%s), target %.1f %.1f, %s",
+                            dx, dy, obj, rx_, ry_, have ? "used" : "not used", tx, ty,
+                            steering ? "steering" : "tilting as it moves");
+                }
             }
             if (steering) {
                 ex = (tx - rx_) / TILT_FULL;
