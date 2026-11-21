@@ -297,7 +297,17 @@ static void read_port(int port, pad_state *s)
              * the motion tilts the stick as it moves, as before, keeping its
              * direction. Start or Back (the pause menu), a controller's
              * stick or the keys put the cursor back in the middle. */
-            const float RANGE_X = 145.0f, RANGE_Y = 200.0f;    /* reticle pixels at full tilt */
+            const float RANGE_X = 155.0f, RANGE_Y = 200.0f;    /* reticle pixels at full tilt */
+            /* The game's glide: each frame the reticle covers about 7 % of
+             * the way to where the stick puts it (a held tilt of 0.83 took
+             * a second to arrive: 320, 373, 424, 443, 449). The mouse is
+             * after the reticle itself, so the stick overshoots by what
+             * lets the glide cover LAND of the way a frame, easing off as
+             * it gets there: about five frames instead of a second. */
+            const float GLIDE = 0.07f, LAND = 0.35f;
+            static float centre_x = 320.0f, centre_y = 214.4f;   /* the reticle at rest */
+            static float rest_x, rest_y;
+            static Uint64 rest_since;
             /* reticle pixels a mouse count at 100 %: full right in about 725
              * counts, half an inch of a 1600-count mouse (1 put a nudge of
              * 125 counts at the edge) */
@@ -312,9 +322,33 @@ static void read_port(int port, pad_state *s)
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
                 cx = cy = 0.0f;
             if (play && !stick && !lx && !ly) {
+                float px = MEMF(obj + 0xB8), py = MEMF(obj + 0xBC);   /* the reticle, screen pixels */
+                bool seen = px == px && py == py && px > -1000.0f && px < 2000.0f && py > -1000.0f &&
+                            py < 2000.0f;
+                Uint64 now = SDL_GetTicksNS();
+
                 cx = SDL_clamp(cx + dx * speed * PIXELS_PER_COUNT / RANGE_X, -1.0f, 1.0f);
                 cy = SDL_clamp(cy - dy * speed * PIXELS_PER_COUNT / RANGE_Y, -1.0f, 1.0f);
-                if (cx != 0.0f || cy != 0.0f) {
+                if (cx == 0.0f && cy == 0.0f && seen) {
+                    /* idle: where the reticle settles is the centre (a stage
+                     * may hold it elsewhere) */
+                    if (SDL_fabsf(px - rest_x) > 0.5f || SDL_fabsf(py - rest_y) > 0.5f) {
+                        rest_x = px;
+                        rest_y = py;
+                        rest_since = now;
+                    } else if (now - rest_since > 500000000ull) {
+                        centre_x = px;
+                        centre_y = py;
+                    }
+                } else if (seen) {
+                    /* where the cursor wants it, in screen pixels (y down) */
+                    float want_x = centre_x + cx * RANGE_X, want_y = centre_y - cy * RANGE_Y;
+                    float tx_ = (px - centre_x + LAND * (want_x - px) / GLIDE) / RANGE_X;
+                    float ty_ = -(py - centre_y + LAND * (want_y - py) / GLIDE) / RANGE_Y;
+                    s->thumb[0] = clamp16((int)(SDL_clamp(tx_, -1.0f, 1.0f) * 32767.0f));
+                    s->thumb[1] = clamp16((int)(SDL_clamp(ty_, -1.0f, 1.0f) * 32767.0f));
+                    rest_since = now;
+                } else {
                     s->thumb[0] = clamp16((int)(cx * 32767.0f));
                     s->thumb[1] = clamp16((int)(cy * 32767.0f));
                 }
