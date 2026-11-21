@@ -335,7 +335,11 @@ an aiming object (+0x404/+0x408 left, +0x434/+0x438 right; the D-pad nudges
 the same values). 0x00033960 records the sticks for demos (4096 entries at
 0x0041CE28). The reticle object (pointer at 0x00472030) holds the reticle's
 screen position in pixels at +0xB8/+0xBC, recomputed every frame (writing it
-does not move the reticle); the state it comes from is not found yet.
+does not move the reticle). It is written by 0x00044C90 (a view-space point
+to the screen) from 0x0007E6A0, which takes the aim angles, player+0xF8
+(pitch) and +0xFC (yaw) in degrees, less the camera's ([player+0x3D0]+0xC0
+and +0xC4, below), turns them into a direction from the dragon
+(player+0x740..0x748) and projects it (found with a write watch).
 
 The left stick places the reticle: held at a tilt t it glides (about a
 quarter second) to the centre plus t times its range and stays, and goes

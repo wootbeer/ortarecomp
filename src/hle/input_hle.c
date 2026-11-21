@@ -412,8 +412,12 @@ static void read_port(int port, pad_state *s)
             pdo_mouse_take(&dx, &dy);
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK)))
                 cx = cy = 0.0f;
-            if (play && SDL_getenv("PDO_WATCH_RETICLE"))
-                pdo_debug_watch_writes((void *)XBOX_PTR(obj + 0xB8), 8);   /* src/guest/crash_report.c */
+            if (play && SDL_getenv("PDO_WATCH_RETICLE")) {
+                /* the player object's 8 bytes at the given offset (1: the
+                 * reticle's screen position, +0xB8; 0xF8: the aim angles) */
+                uint32_t at = (uint32_t)SDL_strtoul(SDL_getenv("PDO_WATCH_RETICLE"), NULL, 0);
+                pdo_debug_watch_writes((void *)XBOX_PTR(obj + (at >= 4 && at < 0x2000 ? at : 0xB8u)), 8);
+            }
             if (play && SDL_getenv("PDO_AIM_SEARCH"))
                 aim_search(obj);
             if (play && !stick && !lx && !ly) {
