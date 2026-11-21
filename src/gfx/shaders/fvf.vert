@@ -229,8 +229,9 @@ void main()
     }
     v_diffuse = interp.z != 0 ? vec4(1.0, 0.0, 1.0, 1.0) : diffuse;
     v_specular = specular;
-    // Fog: eye depth for table fog, else the specular alpha (lit: 0).
-    v_fog = (!pre && (flags & F_FOGTABLE) != 0) ? e.z : (hs ? specular.a : 1.0);
+    // Fog: eye depth for table fog (w for screen-space vertices), else the
+    // specular alpha (lit: 0).
+    v_fog = (flags & F_FOGTABLE) != 0 ? (pre ? gl_Position.w : e.z) : (hs ? specular.a : 1.0);
 
     vec4 tc[4];
     for (int s = 0; s < 4; s++) {

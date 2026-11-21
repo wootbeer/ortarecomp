@@ -1535,7 +1535,12 @@ static void fill_draw_state(pdo_draw *d, bool pretransformed)
     if (RS(RS_FOGENABLE)) {
         uint32_t v;
         d->ff.fog_mode[0] = 1;
-        d->ff.fog_mode[1] = pretransformed ? 0 : (int32_t)RS(RS_FOGTABLEMODE);
+        /* Table fog for screen-space (XYZRHW) vertices too: their depth is
+         * w (1 / RHW), as D3D does. They took the specular alpha as the
+         * factor instead, and the game leaves fog on (linear) when it draws
+         * its HUD with a specular alpha of 0: the pod scenarios' HUD and
+         * text came out in the fog colour (issue 48). */
+        d->ff.fog_mode[1] = (int32_t)RS(RS_FOGTABLEMODE);
         unpack_d3dcolor(RS(RS_FOGCOLOR), d->ff.fog_color);
         v = RS(RS_FOGSTART);   memcpy(&d->ff.fog_params[0], &v, 4);
         v = RS(RS_FOGEND);     memcpy(&d->ff.fog_params[1], &v, 4);
@@ -1748,10 +1753,11 @@ static bool fetch_fvf(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t fir
             o->diffuse = light_vertex(wp, wn, o->diffuse, o->specular, has_diffuse, has_specular, lights, nlights);
             o->specular = 0;
         }
-        /* Fog coordinate: eye depth for table fog, else the specular
-         * alpha as the factor (no specular: no fog). */
-        if (!*pretransformed && RS(RS_FOGTABLEMODE))
-            o->fog = x * wv[2] + y * wv[6] + z * wv[10] + wv[14];
+        /* Fog coordinate: eye depth for table fog (w for screen-space
+         * vertices), else the specular alpha as the factor (no specular: no
+         * fog). */
+        if (RS(RS_FOGTABLEMODE))
+            o->fog = *pretransformed ? o->pos[3] : x * wv[2] + y * wv[6] + z * wv[10] + wv[14];
         else
             o->fog = has_specular ? (float)(o->specular >> 24) / 255.0f : 1.0f;
         for (int s = 0; s < 4; s++) {
@@ -1815,7 +1821,7 @@ static bool fvf_gpu_job(uint32_t fvf, uint32_t base, uint32_t stride, uint32_t f
     if (l.has_specular) flags |= PDO_FVF_SPECULAR;
     if (l.has_normal) flags |= PDO_FVF_NORMAL;
     if (!l.pre && RS(RS_LIGHTING)) flags |= PDO_FVF_LIT;
-    if (!l.pre && RS(RS_FOGTABLEMODE)) flags |= PDO_FVF_FOGTABLE;
+    if (RS(RS_FOGTABLEMODE)) flags |= PDO_FVF_FOGTABLE;
     u->layout0[1] = (int32_t)stride;
     u->layout0[2] = flags;
     u->layout0[3] = (int32_t)l.ntc;

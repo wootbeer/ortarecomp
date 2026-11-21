@@ -317,6 +317,15 @@ Subtitles are several sprite draws of the batch, each with a dark outline.
 Menus draw a full-screen sprite of the batch before their items: the pause
 menu a dimming quad, the results screen its map.
 
+## HUD and fog
+
+The game draws its HUD and text as screen-space (XYZRHW) quads with fog
+still on from the scene: table fog (LINEAR, 200-700 in the pod scenarios),
+specular present with alpha 0, RHW 0.5. With table fog D3D fogs such
+vertices by their w (1 / RHW = 2: none); taken as vertex fog, the specular
+alpha 0 fogged them fully, in the fog colour (issue 48). Whether fog is
+still on at HUD time depends on the scene's last draw, so on the camera.
+
 ## Input and the reticle
 
 The pad state is copied per player each frame (0x0004F1D0) into blocks of
