@@ -25,7 +25,7 @@ char pdo_log_file[PDO_PATH_MAX];
 
 static pdo_settings settings = { .render_scale2 = 2, .msaa = 1, .aspect = PDO_ASPECT_4_3, .fit = PDO_FIT_BARS,
                                   .master_volume = 100, .gpu_vertex = true, .gpu_fixed = true,
-                                  .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100,
+                                  .lsfg_multiplier = 1, .anisotropy = 1, .mouse_aim = true, .mouse_speed = 100, .show_building = true,
                                   .skip_logos = true, .rumble = 100, .touch_size = 100, .touch_opacity = 30, .hrtf = true, .depth_reversed = PDO_DEPTH_REVERSED_DEFAULT, .pic_contrast = 100,
                                   .pic_gamma = 100, .pic_saturation = 100, .save_slot = 1 };
 
@@ -234,6 +234,8 @@ static bool load_setting(pdo_config *cfg, const char *line, const char *value)
             settings.master_volume = clamp_int(SDL_atoi(value), 0, 100);
         else if (strcmp(line, "show_fps") == 0)
             settings.show_fps = SDL_atoi(value) != 0;
+        else if (strcmp(line, "show_building") == 0)
+            settings.show_building = SDL_atoi(value) != 0;
         else if (strcmp(line, "gpu_vertex") == 0)
             settings.gpu_vertex = SDL_atoi(value) != 0;
         else if (strcmp(line, "gpu_fixed") == 0)
@@ -329,6 +331,7 @@ static int config_text(const pdo_config *cfg, char *text, size_t cap)
                  "soft_filter=%d\n"
                  "master_volume=%d\n"
                  "show_fps=%d\n"
+                 "show_building=%d\n"
                  "gpu_vertex=%d\n"
                  "gpu_fixed=%d\n"
                  "frame_interp=%d\n"
@@ -370,7 +373,7 @@ static int config_text(const pdo_config *cfg, char *text, size_t cap)
                  : settings.movie_fit == PDO_MOVIE_BARS ? "bars" : "original",
                  settings.hud_edges,
                  settings.soft_filter,
-                 settings.master_volume, settings.show_fps, settings.gpu_vertex,
+                 settings.master_volume, settings.show_fps, settings.show_building, settings.gpu_vertex,
                  settings.gpu_fixed, settings.frame_interp, settings.anisotropy, settings.bloom == 2 ? "high" : settings.bloom == 1 ? "low" : "off",
                  settings.lsfg_multiplier, settings.lsfg_performance,
                  settings.lsfg_dll, settings.fullscreen, settings.fxaa,
@@ -461,7 +464,7 @@ done:
 static const struct { const char *alias, *key; } aliases[] = {
     { "scale", "render_scale" }, { "resolution", "render_scale" }, { "output", "audio_3d" },
     { "audio_out", "audio_3d" }, { "hrtf", "audio_hrtf" }, { "volume", "master_volume" },
-    { "interp", "frame_interp" }, { "fps", "show_fps" }, { "save_file", "save_slot" },
+    { "interp", "frame_interp" }, { "fps", "show_fps" }, { "shader_note", "show_building" }, { "save_file", "save_slot" },
 };
 
 /* A command line's setting name as the file's key: false if it is none of

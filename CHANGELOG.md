@@ -2,6 +2,12 @@
 
 ## v0.1.16 (beta)
 
+### Added
+
+- Options > Advanced > Shader note: turn off the "Building shaders" note
+  in the corner (on by default). Also `--shader-note 0` on the command
+  line.
+
 ### Fixed
 
 - **HUD and text going dark** in Pandora's Box's extra pod scenarios (and

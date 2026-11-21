@@ -30,7 +30,7 @@
 #endif
 
 enum { ITEM_SCALE, ITEM_MSAA, ITEM_ANISO, ITEM_ASPECT, ITEM_HUD, ITEM_FIT, ITEM_MOVIES, ITEM_SOFT, ITEM_VSYNC, ITEM_RATE, ITEM_SHADOWS, ITEM_VOLUME,
-       ITEM_FPS, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
+       ITEM_FPS, ITEM_BUILDING, ITEM_VSH, ITEM_FVF, ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_BOX, ITEM_LOGOS, ITEM_LAUNCHER, ITEM_RUMBLE, ITEM_3D, ITEM_HRTF,
        ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA, ITEM_ABOUT, ITEM_CONTROLS, ITEM_CLOSE, ITEM_QUIT,
        /* the launcher's own */
        ITEM_START, ITEM_PICK, ITEM_SLOT, ITEM_GPU, ITEM_GPUDRV, ITEM_FULLSCREEN, ITEM_EXIT,
@@ -81,11 +81,11 @@ static const int touch_items[] = { ITEM_TOUCH, ITEM_TOUCH_SIZE, ITEM_TOUCH_ALPHA
 #ifdef __ANDROID__
 /* No Lossless Scaling on Android (CMakeLists.txt): frame generation is Off
  * or our interpolation, and there is no Lossless.dll to choose. */
-static const int advanced_game[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
-static const int advanced_launcher[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_game[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_BUILDING, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_BUILDING, ITEM_GPUDRV, ITEM_ABOUT, ITEM_BACK };
 #else
-static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_ABOUT, ITEM_BACK };
-static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_GPU,
+static const int advanced_game[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_BUILDING, ITEM_ABOUT, ITEM_BACK };
+static const int advanced_launcher[] = { ITEM_INTERP, ITEM_LSMODE, ITEM_LSDLL, ITEM_VSH, ITEM_FVF, ITEM_FPS, ITEM_BUILDING, ITEM_GPU,
                                          ITEM_ABOUT, ITEM_BACK };
 #endif
 
@@ -399,6 +399,7 @@ static void change(int dir)
         break;
     case ITEM_HRTF:   s->hrtf = !s->hrtf; break;
     case ITEM_FPS:    s->show_fps = !s->show_fps; break;
+    case ITEM_BUILDING: s->show_building = !s->show_building; break;
     case ITEM_VSH:    s->gpu_vertex = !s->gpu_vertex; break;
     case ITEM_FVF:    s->gpu_fixed = !s->gpu_fixed; break;
     case ITEM_INTERP: next_frame_gen(s, dir); break;
@@ -747,7 +748,7 @@ void pdo_overlay_frame(void)
             since = 0;
         else if (!since)
             since = now;
-        show = b && now - since >= 500;
+        show = b && now - since >= 500 && pdo_settings_get()->show_building;
         if (show != building) {
             building = show;
             dirty = true;
@@ -931,6 +932,7 @@ static float value_of(int item, char *v, size_t n)
     }
     case ITEM_SOFT:   snprintf(v, n, "%s", s->soft_filter ? "On" : "Off"); break;
     case ITEM_FPS:    snprintf(v, n, "%s", s->show_fps ? "On" : "Off"); break;
+    case ITEM_BUILDING: snprintf(v, n, "%s", s->show_building ? "On" : "Off"); break;
     case ITEM_FULLSCREEN: snprintf(v, n, "%s", s->fullscreen ? "On" : "Off"); break;
     case ITEM_VOLUME:  snprintf(v, n, "%d%%", s->master_volume); return s->master_volume / 100.0f;
     case ITEM_PIC_LOOK:     snprintf(v, n, "%s", s->picture_crt ? "CRT" : "Original"); break;
@@ -1025,6 +1027,7 @@ static const char *label_of(int item)
     case ITEM_HUD:    return "HUD";
     case ITEM_SOFT:   return "TV softening";
     case ITEM_FPS:    return "Show FPS";
+    case ITEM_BUILDING: return "Shader note";
     case ITEM_FULLSCREEN: return "Fullscreen";
     case ITEM_VOLUME:  return "Master";
     case ITEM_PIC_LOOK:     return "Look";
@@ -1095,6 +1098,7 @@ static const char *help_of(int item)
     }
     case ITEM_SOFT:   return "A slight TV-like blur.";
     case ITEM_FPS:    return "Frames per second, top left.";
+    case ITEM_BUILDING: return "\"Building shaders\" bottom right while new ones are made.";
     case ITEM_FULLSCREEN: return "Fullscreen or a window.";
     case ITEM_VOLUME:  return "Everything the game plays.";
     case ITEM_PIC_LOOK:     return "CRT: richer, like an old TV.";

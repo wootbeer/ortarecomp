@@ -26,6 +26,7 @@ typedef struct pdo_settings {
     bool soft_filter;       /* TV-like vertical softening at presentation */
     int  master_volume;     /* 0-100 % */
     bool show_fps;
+    bool show_building;     /* "Building shaders" in the corner while they are made */
     bool gpu_vertex;        /* vertex programs on the GPU (shaders/vsh.vert), not the CPU */
     bool gpu_fixed;         /* fixed-function vertices on the GPU (shaders/fvf.vert) */
     bool frame_interp;      /* frames between the game's 60, blended (renderer.c) */
