@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.1.16 (beta)
+
+### Fixed
+
+- **HUD and text going dark** in Pandora's Box's extra pod scenarios (and
+  anywhere the game leaves fog on while drawing its HUD), depending on where
+  the camera looked (issue 48).
+
 ## v0.1.15 (beta)
 
 ### Fixed
