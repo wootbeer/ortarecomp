@@ -233,7 +233,8 @@ if(EXISTS "${PDO_GEN_DIR}/recomp_dispatch.c")
         src/guest/difficulty.c
         src/guest/unlocks.c
         src/guest/intro_skip.c
-        src/guest/launch_guard.c)
+        src/guest/launch_guard.c
+        src/guest/mouse_aim.c)
     pdo_force_include(pdo_recomp "${CMAKE_CURRENT_SOURCE_DIR}/src/guest/orta_names.h")
     # The host's own code, the same whichever program runs.
     add_library(pdo_host OBJECT

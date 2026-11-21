@@ -2,11 +2,23 @@
 
 ## v0.1.16 (beta)
 
+### Added
+
+- Options > Advanced > Shader note: turn off the "Building shaders" note
+  in the corner (on by default). Also `--shader-note 0` on the command
+  line.
+- **Lightgun aiming:** Controls > Mouse aim > Lightgun puts the reticle
+  where the pointer is on the picture, for lightguns that act as a mouse.
+
 ### Fixed
 
 - **HUD and text going dark** in Pandora's Box's extra pod scenarios (and
   anywhere the game leaves fog on while drawing its HUD), depending on where
   the camera looked (issue 48).
+- **Mouse aim:** the mouse now turns the aim directly, like mouse-look in a
+  shooter: precise, no drift or float, and smooth (issue 51).
+- A white dot left where a main-menu entry was selected (the game's own
+  speck of a draw, about a pixel; at higher resolutions it showed).
 
 ## v0.1.15 (beta)
 

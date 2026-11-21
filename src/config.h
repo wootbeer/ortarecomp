@@ -11,6 +11,10 @@
  * tear). */
 enum { PDO_VSYNC_ON, PDO_VSYNC_FAST, PDO_VSYNC_OFF };
 
+/* Mouse aim: off, relative (the mouse turns the aim, as mouse-look), or a
+ * lightgun (the reticle goes to where the pointer is on the picture). */
+enum { PDO_MOUSE_OFF, PDO_MOUSE_RELATIVE, PDO_MOUSE_LIGHTGUN };
+
 typedef struct pdo_config {
     char game_dir[PDO_PATH_MAX];    /* folder holding default.xbe and media/ */
 } pdo_config;
@@ -26,6 +30,7 @@ typedef struct pdo_settings {
     bool soft_filter;       /* TV-like vertical softening at presentation */
     int  master_volume;     /* 0-100 % */
     bool show_fps;
+    bool show_building;     /* "Building shaders" in the corner while they are made */
     bool gpu_vertex;        /* vertex programs on the GPU (shaders/vsh.vert), not the CPU */
     bool gpu_fixed;         /* fixed-function vertices on the GPU (shaders/fvf.vert) */
     bool frame_interp;      /* frames between the game's 60, blended (renderer.c) */
@@ -42,7 +47,7 @@ typedef struct pdo_settings {
     int  bloom;             /* 0 off, 1 low, 2 high: on the scene, before the HUD (renderer.c) */
     int  win_x, win_y, win_w, win_h;    /* the window when not fullscreen (w 0: not set yet) */
     bool win_maximized;
-    bool mouse_aim;         /* the mouse steers the left stick (input_hle.c) */
+    int  mouse_aim;         /* PDO_MOUSE_*: how the mouse aims (input_hle.c) */
     int  mouse_speed;       /* 10-400 % */
     bool unlock_box;        /* every Pandora's Box item open, the save untouched (src/guest/unlocks.c) */
     bool skip_logos;        /* a press during the boot logos goes to the title (src/guest/intro_skip.c) */

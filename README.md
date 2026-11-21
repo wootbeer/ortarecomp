@@ -39,7 +39,8 @@ Available for Windows, Linux / Steam Deck and Android (preview).
   the console; or a simple pan), the movies' own 5.1 soundtracks, the
   game's room reverb and a master volume.
 - **Controls:** controllers (with vibration), keyboard and mouse (with
-  mouse aim), touch controls on Android, every button rebindable. Menus
+  mouse aim, or lightgun-style aiming at where the pointer is), touch
+  controls on Android, every button rebindable. Menus
   work with mouse and touch too.
 - **Three save files** (the original keeps one), picked in the launcher.
 - **The original Panzer Dragoon:** Pandora's Box > APPENDIX > PANZER

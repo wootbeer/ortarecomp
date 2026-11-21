@@ -335,7 +335,35 @@ an aiming object (+0x404/+0x408 left, +0x434/+0x438 right; the D-pad nudges
 the same values). 0x00033960 records the sticks for demos (4096 entries at
 0x0041CE28). The reticle object (pointer at 0x00472030) holds the reticle's
 screen position in pixels at +0xB8/+0xBC, recomputed every frame (writing it
-does not move the reticle); the state it comes from is not found yet.
+does not move the reticle). It is written by 0x00044C90 (a view-space point
+to the screen) from 0x0007E6A0, which takes the aim angles, player+0xF8
+(pitch) and +0xFC (yaw) in degrees, less the camera's ([player+0x3D0]+0xC0
+and +0xC4, below), turns them into a direction from the dragon
+(player+0x740..0x748) and projects it (found with a write watch).
+The aim angles are updated in 0x0007E6A0 too, on the aim block at
+player+0xB0: a rate per axis (+0xDC pitch, +0xD8 yaw; ramped towards what
+the stick asks by a step each frame) is added to them, and they are
+clamped to a range around the camera's angles; the camera then turns after
+the aim (the spring above), so a released stick leaves the aim on its spot
+in the world and the reticle back at the centre. Pitch grows downwards on
+the screen, yaw to the right. Mouse aim writes the angles directly.
+
+The left stick places the reticle: held at a tilt t it glides (about a
+quarter second) to the centre plus t times its range and stays, and goes
+back with the stick; full right settles about 155 pixels right of the
+centre (x 320), full up or down about 200 from y 214 (a controller trace).
+
+The camera follows the aim through a damped spring per axis in 0x0007B5D0
+(thiscall on [player+0x3D0], player at 0x00472030; called from
+0x00041880): the pull +0x120/+0x124 = +0x110/+0x114 + [player+0x380] x the
+error to the target angle, the velocity +0x130/+0x134 takes the pull and
+loses [player+0x384] of itself, and the angles take the velocity: +0xC0
+pitch (degrees, clamped to 90), +0xC4 yaw (wraps at 360). The targets come
+from the player's +0xF8/+0xFC. Run with stiffness 1 and no damping, the
+camera turns with the aim at once (tried for mouse aim, issue 51: the
+camera, not the reticle; it shook once round, at the yaw's wrap).
+[player+0x380]/+0x384 are read only here and by 0x0007B2D0, another
+spring.
 
 ## Difficulty
 

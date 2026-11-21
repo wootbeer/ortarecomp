@@ -2376,6 +2376,42 @@ static void bars_log(const char *what, uint32_t color, float a, float b)
  * shrink a picture of the screen's own shape: there they are not drawn
  * (true: drop the draw). The thin strips at the very top and bottom (16
  * lines, 0x0006A0A8) are in every frame and stay. */
+/* An untextured screen-space draw of a pixel or so of the game's
+ * picture both ways: left out. Selecting a main-menu entry leaves one, a
+ * white quad of about 0.8 x 0.9 to 0.8 x 1.0 pixels at (320, 70)
+ * (captures; under 2 pixels each way is left out); on the
+ * console it lights at most one pixel of 640x480, at 4x it was a white dot
+ * of a few. Only that draw (its callers checked); textured sprites, anything
+ * bigger and every other draw are drawn. */
+static bool speck(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
+{
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
+
+#ifdef PDO_PROGRAM_PD1
+    /* Orta's only: pd1 draws its world as screen-space polygons, a far one
+     * as small as this (this file is built for pd1 with that defined) */
+    (void)base; (void)stride; (void)first; (void)count;
+    return false;
+#endif
+    if ((st.vshader & 1) || (st.vshader & 0x00E) != 0x004 || st.tex[0] || count == 0 || count > 6 || stride < 16)
+        return false;
+    /* and only the one that leaves it: the 2D draw routine's call from the
+     * menu's selection effect (the capture's "drawn from"), so no other
+     * effect of the game's, however small its pieces, is touched */
+    if (MEM32(g_esp) != PROG_VA(0x0006A24Bu, 0) || g_ebp < 0x00010000u || g_ebp >= 0x04000000u ||
+        (g_ebp & 3) || MEM32(g_ebp + 4) != PROG_VA(0x0006A4D6u, 0))
+        return false;
+    for (uint32_t i = 0; i < count; i++) {
+        uint32_t v = base + (first + i) * stride;
+        float x = MEMF(v), y = MEMF(v + 4);
+        x0 = SDL_min(x0, x);
+        x1 = SDL_max(x1, x);
+        y0 = SDL_min(y0, y);
+        y1 = SDL_max(y1, y);
+    }
+    return x1 - x0 < 2.0f && y1 - y0 < 2.0f;
+}
+
 static bool cutscene_bars(uint32_t base, uint32_t stride, uint32_t first, uint32_t count)
 {
     float q[2][4], b[4];    /* each quad's x0, y0, x1, y1 */
@@ -2432,7 +2468,7 @@ static void submit_draw(uint32_t type, uint32_t base, uint32_t stride, uint32_t 
     float hud_k, hud_at;                    /* a HUD sprite's squeeze, on a wider screen, and about where */
 
     state_init();
-    if (cutscene_bars(base, stride, first, count))
+    if (cutscene_bars(base, stride, first, count) || speck(base, stride, first, count))
         return;
     hud_squeeze(base, stride, first, count, &hud_k, &hud_at);
     if (count > vcap) {
