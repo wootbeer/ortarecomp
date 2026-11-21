@@ -341,6 +341,20 @@ static void dual_stick(pad_state *s)
     x = (float)s->thumb[2] / 32767.0f;
     y = (float)s->thumb[3] / 32767.0f;
     s->thumb[2] = s->thumb[3] = 0;
+    {   /* PDO_DUAL_TRACE=1: the aim and the camera, a few lines a second */
+        static int trace = -1;
+        static Uint64 last_trace;
+        uint32_t cam = MEM32(obj + 0x3D0);
+        if (trace < 0)
+            trace = SDL_getenv("PDO_DUAL_TRACE") && *SDL_getenv("PDO_DUAL_TRACE") == '1';
+        if (trace && now - last_trace > 200000000ull && cam >= 0x10000u && cam < 0x04000000u) {
+            last_trace = now;
+            SDL_Log("dual: right %+.2f %+.2f left %+6d %+6d, aim pitch %+.1f yaw %+.1f, camera %+.1f %+.1f, "
+                    "rates %+.2f %+.2f, reticle %.0f %.0f", x, y, s->thumb[0], s->thumb[1], MEMF(obj + 0xF8),
+                    MEMF(obj + 0xFC), MEMF(cam + 0xC0), MEMF(cam + 0xC4), MEMF(obj + 0xDC), MEMF(obj + 0xD8),
+                    MEMF(obj + 0xB8), MEMF(obj + 0xBC));
+        }
+    }
     m = SDL_sqrtf(x * x + y * y);
     if (m <= DEAD || dt <= 0.0f)
         return;
@@ -354,6 +368,18 @@ static void dual_stick(pad_state *s)
         return;
     yaw += x * k * YAW_RATE * dt;
     pitch -= y * k * PITCH_RATE * dt;   /* stick up: look up */
+    {   /* within 180 degrees of the camera's yaw, which wraps at 360 */
+        uint32_t cam = MEM32(obj + 0x3D0);
+        float cy = cam >= 0x10000u && cam < 0x04000000u ? MEMF(cam + 0xC4) : yaw;
+        float d = yaw - cy;
+        if (d == d && d > -1e5f && d < 1e5f) {
+            while (d > 180.0f)
+                d -= 360.0f;
+            while (d < -180.0f)
+                d += 360.0f;
+            yaw = cy + d;
+        }
+    }
     MEMF(obj + 0xFC) = yaw;
     MEMF(obj + 0xF8) = SDL_clamp(pitch, -PITCH_MAX, PITCH_MAX);
 }

@@ -15,7 +15,9 @@
  * camera, so with the camera following it the aim goes all the way
  * round). The aim's yaw does not wrap as the camera's does: it is brought
  * to within 180 degrees of the camera's first (the same direction), or once
- * round the error is 360 and the camera shakes. The two constants are the
+ * round the error is 360 and the camera shakes; again after the update, as
+ * the camera can wrap in it and the game then clamps an aim a turn away
+ * (the shake again, the second try). The two constants are the
  * player's, read by another spring too (0x0007B2D0), so they are put back
  * as soon as the update returns. Off: the game's own.
  */
@@ -25,25 +27,32 @@
 
 #define PLAYER 0x00472030u
 
-extern void sub_0007B5D0_gen(void);
-void sub_0007B5D0(void)
+/* The aim's yaw brought within 180 degrees of the camera's: the same
+ * direction, as the game's clamp of the aim around the camera expects. */
+static void aim_near_camera(uint32_t player, uint32_t self)
 {
-    uint32_t player = MEM32(PLAYER), self = g_ecx, stiffness, damping;
-    float d;
+    float d = MEMF(player + 0xFC) - MEMF(self + 0xC4);
 
-    if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
-        self < 0x10000u || self != MEM32(player + 0x3D0)) {
-        sub_0007B5D0_gen();
-        return;
-    }
-    d = MEMF(player + 0xFC) - MEMF(self + 0xC4);
-    if (d == d && d > -1e5f && d < 1e5f) {
+    if (d == d && d > -1e5f && d < 1e5f && (d > 180.0f || d < -180.0f)) {
         while (d > 180.0f)
             d -= 360.0f;
         while (d < -180.0f)
             d += 360.0f;
         MEMF(player + 0xFC) = MEMF(self + 0xC4) + d;
     }
+}
+
+extern void sub_0007B5D0_gen(void);
+void sub_0007B5D0(void)
+{
+    uint32_t player = MEM32(PLAYER), self = g_ecx, stiffness, damping;
+
+    if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
+        self < 0x10000u || self != MEM32(player + 0x3D0)) {
+        sub_0007B5D0_gen();
+        return;
+    }
+    aim_near_camera(player, self);
     stiffness = MEM32(player + 0x380);
     damping = MEM32(player + 0x384);
     MEMF(player + 0x380) = 1.0f;
@@ -53,4 +62,5 @@ void sub_0007B5D0(void)
     sub_0007B5D0_gen();
     MEM32(player + 0x380) = stiffness;
     MEM32(player + 0x384) = damping;
+    aim_near_camera(player, self);      /* the camera may have wrapped in it */
 }
