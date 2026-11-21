@@ -340,6 +340,13 @@ to the screen) from 0x0007E6A0, which takes the aim angles, player+0xF8
 (pitch) and +0xFC (yaw) in degrees, less the camera's ([player+0x3D0]+0xC0
 and +0xC4, below), turns them into a direction from the dragon
 (player+0x740..0x748) and projects it (found with a write watch).
+The aim angles are updated in 0x0007E6A0 too, on the aim block at
+player+0xB0: a rate per axis (+0xDC pitch, +0xD8 yaw; ramped towards what
+the stick asks by a step each frame) is added to them, and they are
+clamped to a range around the camera's angles; the camera then turns after
+the aim (the spring above), so a released stick leaves the aim on its spot
+in the world and the reticle back at the centre. Pitch grows downwards on
+the screen, yaw to the right. Mouse aim writes the angles directly.
 
 The left stick places the reticle: held at a tilt t it glides (about a
 quarter second) to the centre plus t times its range and stays, and goes
