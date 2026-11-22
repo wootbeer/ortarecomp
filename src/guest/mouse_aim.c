@@ -17,6 +17,7 @@
 #include "recomp_types.h"
 #include "config.h"
 #include <SDL3/SDL.h>
+#include <stdbool.h>
 
 #define PLAYER 0x00472030u
 
@@ -28,7 +29,46 @@
  * the position springs read too: undamped, they swung, worst when turning
  * round (the shake). The pitch is left as the update clamps it (40 up,
  * about 32 down). The aim's yaw stays in -180..180, as the game keeps it
- * (past it the reticle went wild): the camera's takes the same value. */
+ * (past it the reticle went wild): the camera's takes the same value.
+ *
+ * The aim is a line from the dragon, so with the dragon flown off the
+ * centre (the left stick) the reticle and the shots followed it there
+ * (a trace: x 230, y 147 against 320, 214 at rest). The camera's angles
+ * get an offset that keeps the reticle where it rests, as a modern third
+ * person view keeps its crosshair: each frame a share of the angle between
+ * the reticle and that spot, through the projection's focal lengths. The
+ * rest's height is learnt while the left stick is idle and the offset
+ * small (it is about 214, its x 320). */
+#define PROJ_FOCAL_X 0x0041A13Cu
+#define PROJ_FOCAL_Y 0x0041A140u
+#define AIM_DIRS 0x0003C000u
+#define CENTRE_SHARE 0.3f
+
+static float off_yaw, off_pitch, rest_y = 214.0f;
+
+static void keep_centred(uint32_t player)
+{
+    float rx = MEMF(player + 0xB8), ry = MEMF(player + 0xBC);
+    float fx = SDL_fabsf(MEMF(PROJ_FOCAL_X)), fy = SDL_fabsf(MEMF(PROJ_FOCAL_Y));
+    bool idle = (MEM32(player + 0x3F8) & AIM_DIRS) == 0;
+
+    if (!(fx > 1.0f && fx < 1e5f))
+        fx = 300.0f;
+    if (!(fy > 1.0f && fy < 1e5f))
+        fy = 300.0f;
+    if (!(rx > -100.0f && rx < 740.0f && ry > -100.0f && ry < 580.0f)) {
+        off_yaw *= 0.9f;                /* no reticle to go by (or a wild one) */
+        off_pitch *= 0.9f;
+        return;
+    }
+    if (idle && SDL_fabsf(off_pitch) < 0.5f)
+        rest_y += 0.05f * (ry - rest_y);
+    off_yaw += CENTRE_SHARE * SDL_atanf((rx - 320.0f) / fx) * 57.29578f;
+    off_pitch += CENTRE_SHARE * SDL_atanf((ry - rest_y) / fy) * 57.29578f;
+    off_yaw = SDL_clamp(off_yaw, -25.0f, 25.0f);
+    off_pitch = SDL_clamp(off_pitch, -20.0f, 20.0f);
+}
+
 extern void sub_0007B5D0_gen(void);
 void sub_0007B5D0(void)
 {
@@ -37,6 +77,7 @@ void sub_0007B5D0(void)
 
     if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
         self < 0x10000u || self != MEM32(player + 0x3D0)) {
+        off_yaw = off_pitch = 0.0f;
         sub_0007B5D0_gen();
         return;
     }
@@ -46,12 +87,13 @@ void sub_0007B5D0(void)
         sub_0007B5D0_gen();
         return;
     }
-    MEMF(self + 0xC0) = pitch;
-    MEMF(self + 0xC4) = yaw;
+    keep_centred(player);
+    MEMF(self + 0xC0) = pitch + off_pitch;
+    MEMF(self + 0xC4) = yaw + off_yaw;
     MEMF(self + 0x130) = 0.0f;
     MEMF(self + 0x134) = 0.0f;
     sub_0007B5D0_gen();
-    MEMF(self + 0xC4) = yaw;
+    MEMF(self + 0xC4) = yaw + off_yaw;
     MEMF(self + 0x130) = 0.0f;
     MEMF(self + 0x134) = 0.0f;
 }
@@ -72,7 +114,6 @@ void sub_0007B5D0(void)
  * With dual-stick aiming the left stick flies the dragon only: the bits are
  * cleared for the call and the rates zeroed, the bits put back after it
  * for whatever else reads them. */
-#define AIM_DIRS 0x0003C000u
 extern void sub_0007E6A0_gen(void);
 void sub_0007E6A0(void)
 {
