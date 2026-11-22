@@ -385,6 +385,87 @@ static void dual_stick(pad_state *s)
     MEMF(obj + 0xF8) = SDL_clamp(pitch, -PITCH_MAX, PITCH_MAX);
 }
 
+#ifdef PDO_PROGRAM_PD1
+/* PDO_PD1_SEARCH=1: where pd1 keeps its cursor. pd1 reads the controller
+ * as a PC joystick (0x001C39B0 copies XInput's sticks into a DirectInput
+ * style state), and its cursor is somewhere in its data. Every other read,
+ * each 16-bit value of its .data (0x007C0C00-0x00E599A0) that changed is
+ * scored against the stick's direction: +1 when it moved the way the stick
+ * points, -1 the other way, and counted when it changed with the stick at
+ * rest. Every five seconds the best for x and for y are logged. */
+#define PD1_DATA_LO 0x007C0C00u
+#define PD1_DATA_HI 0x00E599A0u
+static void pd1_search(const pad_state *s)
+{
+    enum { N = (PD1_DATA_HI - PD1_DATA_LO) / 2 };
+    static int16_t *prev, *ax, *ay;
+    static uint16_t *idle;
+    static int on = -1, tick;
+    static Uint64 last_log;
+    int sx, sy;
+
+    if (on < 0) {
+        on = SDL_getenv("PDO_PD1_SEARCH") && *SDL_getenv("PDO_PD1_SEARCH") == '1';
+        if (on) {
+            prev = SDL_calloc(N, 2);
+            ax = SDL_calloc(N, 2);
+            ay = SDL_calloc(N, 2);
+            idle = SDL_calloc(N, 2);
+            on = prev && ax && ay && idle;
+            if (on)
+                memcpy(prev, (const void *)XBOX_PTR(PD1_DATA_LO), (size_t)N * 2);
+            SDL_Log("pd1 search: %s", on ? "on (move the cursor with the stick or the mouse)" : "no memory");
+        }
+    }
+    if (!on || (++tick & 1))
+        return;
+    sx = s->thumb[0] > 8000 ? 1 : s->thumb[0] < -8000 ? -1 : 0;
+    sy = s->thumb[1] > 8000 ? 1 : s->thumb[1] < -8000 ? -1 : 0;
+    {
+        const int16_t *cur = (const int16_t *)XBOX_PTR(PD1_DATA_LO);
+        for (uint32_t i = 0; i < N; i++) {
+            int d = cur[i] - prev[i];
+            if (!d)
+                continue;
+            prev[i] = cur[i];
+            if (d > 2000 || d < -2000)
+                continue;               /* a jump, not a glide */
+            if (sx)
+                ax[i] = (int16_t)SDL_clamp(ax[i] + (d > 0 ? sx : -sx), -30000, 30000);
+            if (sy)
+                ay[i] = (int16_t)SDL_clamp(ay[i] + (d > 0 ? sy : -sy), -30000, 30000);
+            if (!sx && !sy && idle[i] < 60000)
+                idle[i]++;
+        }
+    }
+    if (SDL_GetTicksNS() - last_log > 5000000000ull) {
+        last_log = SDL_GetTicksNS();
+        for (int axis = 0; axis < 2; axis++) {
+            const int16_t *a = axis ? ay : ax;
+            uint32_t best[8] = { 0 };
+            int score[8] = { 0 };
+            for (uint32_t i = 0; i < N; i++) {
+                int sc = SDL_abs(a[i]) - 3 * idle[i];
+                if (sc <= score[7])
+                    continue;
+                int k = 7;
+                while (k > 0 && sc > score[k - 1]) {
+                    score[k] = score[k - 1];
+                    best[k] = best[k - 1];
+                    k--;
+                }
+                score[k] = sc;
+                best[k] = i;
+            }
+            for (int k = 0; k < 8 && score[k] > 0; k++)
+                SDL_Log("pd1 search: %s follows 0x%08X (int16 %d, score %d, with the stick %+d, at rest %u)",
+                        axis ? "y" : "x", PD1_DATA_LO + best[k] * 2, (int)(int16_t)MEM16(PD1_DATA_LO + best[k] * 2),
+                        score[k], a[best[k]], idle[best[k]]);
+        }
+    }
+}
+#endif
+
 static int16_t clamp16(int v)
 {
     return (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
@@ -580,6 +661,9 @@ static void read_port(int port, pad_state *s)
         pdo_touch_add(&s->buttons, s->analog, s->thumb);
 #endif
         dual_stick(s);
+#ifdef PDO_PROGRAM_PD1
+        pd1_search(s);
+#endif
         apply_script(s);
     }
     {   /* The options overlay keeps the game's input while it is open. */
