@@ -400,7 +400,8 @@ static void dual_stick(pad_state *s)
  * since the last is held for that frame (a nudge taps it, a long sweep
  * holds it and the game accelerates), and kept one more frame as the mouse
  * slows, so slow motion does not stutter; moving the other way lets go at
- * once. Mouse speed scales the counts. Lightgun holds the directions towards
+ * once. At a slant, the smaller axis is held a share of the frames as
+ * large as its share of the motion. Mouse speed scales the counts. Lightgun holds the directions towards
  * where the pointer is (the cursor's limits sat at about 16-70 % across and
  * 8-80 % down the picture) until the cursor is near it. src/pd1/mouse.c sets
  * the bits for the cursor update and puts the button word back after it;
@@ -473,9 +474,40 @@ void pdo_pd1_cursor_before(uint32_t block)
         pd1_dir[0] = pd1_dir[1] = 0;
         return;
     }
+    /* The direction's angle: the larger axis held every frame, the smaller
+     * a share of the frames as large as its share of the motion (on/off
+     * directions, as a d-pad player taps one to go at a slant); under about
+     * 11 degrees not at all. Holding both whenever each moved went at 45
+     * degrees for a push at 15 (a trace). */
+    static float duty[2];
+    bool share_off[2] = { false, false }, share_on[2] = { false, false };
+    if (pd1_mode != PDO_MOUSE_LIGHTGUN) {
+        int major = SDL_fabsf(m[1]) > SDL_fabsf(m[0]) ? 1 : 0, minor = 1 - major;
+        float big = SDL_fabsf(m[major]), r = big > 0.0f ? SDL_fabsf(m[minor]) / big : 0.0f;
+        if (big > PD1_COUNTS) {
+            if (r < 0.2f) {
+                duty[minor] = 0.0f;
+                share_off[minor] = true;
+            } else {
+                duty[minor] += r;
+                if (duty[minor] >= 1.0f) {
+                    duty[minor] -= 1.0f;
+                    share_on[minor] = m[minor] != 0.0f;
+                } else
+                    share_off[minor] = true;
+            }
+        }
+    }
     for (int a = 0; a < 2; a++) {
         int dir = 0;
-        if (pd1_mode == PDO_MOUSE_LIGHTGUN) {
+        if (share_off[a]) {
+            pd1_dir[a] = 0;             /* not its frame: the other axis leads */
+            m[a] = 0.0f;
+            continue;
+        }
+        if (share_on[a]) {
+            dir = m[a] > 0.0f ? 1 : -1; /* its frame of the slant */
+        } else if (pd1_mode == PDO_MOUSE_LIGHTGUN) {
             if (pd1_pointer && pd1_gx >= 0.0f && pd1_gy >= 0.0f && pd1_gx <= 640.0f && pd1_gy <= 480.0f) {
                 float to = a ? (pd1_gy / 480.0f - PD1_GUN_Y0) / PD1_GUN_YS * 1020.0f
                              : (PD1_GUN_X0 - pd1_gx / 640.0f) / PD1_GUN_XS * 1020.0f;
