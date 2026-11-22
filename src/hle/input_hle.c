@@ -386,96 +386,6 @@ static void dual_stick(pad_state *s)
 }
 
 #ifdef PDO_PROGRAM_PD1
-/* Mouse aim in pd1. Its cursor is two 16-bit values in the cursor block
- * (+0xA x, +0xC y; -1020..1020, x growing to the left, y downward; at
- * 0x00D49208 in play), moved by the stick in 0x0005EA44 (cdecl, the block
- * at its argument +0x1C; +0 is its mode, 0 in flight). src/pd1/mouse.c
- * hooks that function and asks pdo_pd1_cursor() where the mouse puts the
- * cursor (which also marks flight): moved by the mouse's motion (Relative,
- * 1 unit a count at 100 %: about 2000 counts across, as Orta's aim; 2.5
- * crossed it in a frame or two at pd1's 20 fps), or where the pointer is on
- * the picture (Lightgun, the cursor's range taken as the picture's). Outside flight
- * (pd1's menus) the mouse tilts the stick as before. A controller's stick,
- * the keys, Start or Back hand the cursor back to them. */
-static Uint64 pd1_live;
-static uint32_t pd1_block;
-static bool pd1_aiming, pd1_pointer;
-static float pd1_dx, pd1_dy, pd1_gx, pd1_gy;
-static int pd1_mode;
-
-static bool pd1_mouse_input(float dx, float dy, bool pointer, float gx, float gy, int mode, bool reset)
-{
-    static float last_gx = -1e9f, last_gy = -1e9f;
-    bool live = pd1_live && SDL_GetTicksNS() - pd1_live < 250000000ull;
-    bool moved = dx != 0.0f || dy != 0.0f;
-
-    if (!live || mode == PDO_MOUSE_OFF) {
-        pd1_aiming = false;
-        return false;
-    }
-    if (reset) {
-        pd1_aiming = false;
-        pd1_dx = pd1_dy = 0.0f;
-        return true;                    /* the motion is not the stick's either */
-    }
-    if (mode == PDO_MOUSE_LIGHTGUN && pointer && (gx != last_gx || gy != last_gy)) {
-        moved = last_gx > -1e8f;
-        last_gx = gx;
-        last_gy = gy;
-    }
-    if (moved)
-        pd1_aiming = true;
-    pd1_dx += dx;
-    pd1_dy += dy;
-    pd1_mode = mode;
-    pd1_pointer = pointer;
-    pd1_gx = gx;
-    pd1_gy = gy;
-    return true;
-}
-
-/* Where the mouse puts pd1's cursor this frame, from where it is: false when
- * the mouse is not aiming (the game's own then). Called by src/pd1/mouse.c
- * before the game's cursor update, which then sets it again after the
- * update: the cursor is where the mouse put it in this very frame, without
- * the frame's delay or the game's slow pull back to the middle. */
-bool pdo_pd1_cursor(uint32_t block, int16_t *cx, int16_t *cy)
-{
-    /* range: past the game's own +-1020, which held the mouse's cursor short
-     * of the picture's edges ("its range is limited"); the update after
-     * the game's clamp keeps it. PDO_PD1_RANGE overrides it, to try. */
-    const float UNITS_PER_COUNT = 1.0f;
-    float range = SDL_getenv("PDO_PD1_RANGE") ? (float)SDL_atoi(SDL_getenv("PDO_PD1_RANGE")) : 1530.0f;
-    float x, y, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
-
-    if (!(range >= 500.0f && range <= 4000.0f))
-        range = 1530.0f;
-    pd1_live = SDL_GetTicksNS();
-    pd1_block = block;
-    if (SDL_getenv("PDO_PD1_TRACE"))
-        SDL_Log("pd1 mouse: %s motion %+.0f %+.0f pointer %.0f %.0f cursor %d %d", pd1_aiming ? "aiming" : "idle",
-                pd1_dx, pd1_dy, pd1_gx, pd1_gy, (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC));
-    if (!pd1_aiming) {
-        pd1_dx = pd1_dy = 0.0f;
-        return false;
-    }
-    x = (float)(int16_t)MEM16(block + 0xA);
-    y = (float)(int16_t)MEM16(block + 0xC);
-    if (pd1_mode == PDO_MOUSE_LIGHTGUN) {
-        if (pd1_pointer && pd1_gx >= 0.0f && pd1_gy >= 0.0f && pd1_gx <= 640.0f && pd1_gy <= 480.0f) {
-            x = (320.0f - pd1_gx) / 320.0f * range;
-            y = (pd1_gy - 240.0f) / 240.0f * range;
-        }
-    } else {
-        x -= pd1_dx * UNITS_PER_COUNT * speed;  /* the cursor's x grows to the left */
-        y += pd1_dy * UNITS_PER_COUNT * speed;
-    }
-    pd1_dx = pd1_dy = 0.0f;
-    *cx = (int16_t)SDL_clamp(x, -range, range);
-    *cy = (int16_t)SDL_clamp(y, -range, range);
-    return true;
-}
-
 /* PDO_PD1_SEARCH=1: where pd1 keeps its cursor. pd1 reads the controller
  * as a PC joystick (0x001C39B0 copies XInput's sticks into a DirectInput
  * style state), and its cursor is somewhere in its data. Every other read,
@@ -657,11 +567,6 @@ static void read_port(int port, pad_state *s)
             bool play = obj >= 0x10000u && obj < 0x04000000u;
 
             pdo_mouse_take(&dx, &dy);
-#ifdef PDO_PROGRAM_PD1
-            if (pd1_mouse_input(dx, dy, pointer, gx, gy, mode,
-                                stick || lx || ly || (s->buttons & (XB_START | XB_BACK)) != 0))
-                dx = dy = 0.0f;                 /* to pd1's cursor, not the stick */
-#endif
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK))) {
                 aiming = false;
                 carry_x = carry_y = 0.0f;
