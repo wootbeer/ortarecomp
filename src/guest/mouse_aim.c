@@ -1,7 +1,7 @@
 /*
  * The camera's follow of the aim, for dual-stick aiming (Controls > Dual
- * stk; the input is src/hle/input_hle.c): the camera on the aim, and the
- * aim free of the quarter it was held in.
+ * stk; the input is src/hle/input_hle.c): the camera on the aim, the aim
+ * free of the quarter it was held in and of the left stick.
  *
  * 0x0007B5D0 (thiscall on [player+0x3D0], player at 0x00472030) is a damped
  * spring per axis turning the camera after the aim: the pull +0x120/+0x124
@@ -64,11 +64,19 @@ void sub_0007B5D0(void)
  * pushed it on: the camera, on the aim, shook. While it is on, the update
  * runs without that clamp (the limits wide open for the call, put back
  * after it); the pitch's is kept, and the quarter turns (L/R) are the
- * game's. */
+ * game's.
+ *
+ * The left stick turns the aim there too: as direction bits in player
+ * +0x3F8 (0x20000 right, 0x10000 left, 0x4000 and 0x8000 the pitch), which
+ * ramp the turn rates (block +0x28 yaw, +0x2C pitch; player +0xD8/+0xDC).
+ * With dual-stick aiming the left stick flies the dragon only: the bits are
+ * cleared for the call and the rates zeroed, the bits put back after it
+ * for whatever else reads them. */
+#define AIM_DIRS 0x0003C000u
 extern void sub_0007E6A0_gen(void);
 void sub_0007E6A0(void)
 {
-    uint32_t player = MEM32(PLAYER), block = g_ecx, lo, hi;
+    uint32_t player = MEM32(PLAYER), block = g_ecx, lo, hi, dirs;
 
     if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
         block != player + 0xB0u) {
@@ -94,9 +102,16 @@ void sub_0007E6A0(void)
     }
     lo = MEM32(block + 0x94);
     hi = MEM32(block + 0x104);
+    dirs = MEM32(player + 0x3F8) & AIM_DIRS;
     MEMF(block + 0x94) = -1e9f;
     MEMF(block + 0x104) = 1e9f;
+    MEM32(player + 0x3F8) &= ~AIM_DIRS;
+    MEMF(block + 0x28) = 0.0f;
+    MEMF(block + 0x2C) = 0.0f;
     sub_0007E6A0_gen();
     MEM32(block + 0x94) = lo;
     MEM32(block + 0x104) = hi;
+    MEM32(player + 0x3F8) = (MEM32(player + 0x3F8) & ~AIM_DIRS) | dirs;
+    MEMF(block + 0x28) = 0.0f;
+    MEMF(block + 0x2C) = 0.0f;
 }

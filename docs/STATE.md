@@ -123,10 +123,10 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
    Dual-stick aiming: Controls > Dual stk (`dual_stick`, off by default).
-   The right stick turns the aim angles at a rate (input_hle.c
-   dual_stick()), the camera spring is held on the aim with the yaw's
-   wrap handled (src/guest/mouse_aim.c). First version, being tested:
-   what the left stick does with it, speeds, the game's own camera.
+   Right stick turns the aim (input_hle.c dual_stick()), the camera's
+   angles are put on it, the quarter's yaw clamp and the left stick's aim
+   bits are off for the aim update (src/guest/mouse_aim.c), RT is A.
+   Being tested: feel, speeds, L's quarter turn, lock-on.
 
 ## Testing
 
