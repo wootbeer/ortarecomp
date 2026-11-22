@@ -891,7 +891,7 @@ static void draw_controls(void)
         } else if (i == CTL_MSPEED) {
             snprintf(line, sizeof line, "%-9s %d%%", "Mouse spd", pdo_settings_get()->mouse_speed);
         } else if (i == CTL_DUAL) {
-            snprintf(line, sizeof line, "%-9s %s", "Dual stk", pdo_settings_get()->dual_stick ? "On (right stick aims)" : "Off");
+            snprintf(line, sizeof line, "%-9s %s", "Dual stk", pdo_settings_get()->dual_stick ? "On (RT fire, LT morph)" : "Off");
         } else {
             snprintf(line, sizeof line, "%s", i == CTL_RESET ? "Reset to defaults" : "Back");
         }
@@ -906,8 +906,13 @@ static void draw_controls(void)
         text(x0 + 2, y, line);
     }
     COLOR(COL_DIM);
-    text(x0 + 1.5f, y0 + h - 2.25f, "A/Enter rebind  Left clear");
-    text(x0 + 1.5f, y0 + h - 1.25f, "B/Esc back      Esc frees the mouse");
+    if (selected == CTL_DUAL) {         /* what the line does, in place of the keys' hint */
+        text(x0 + 1.5f, y0 + h - 2.25f, "Experimental: left stick flies,");
+        text(x0 + 1.5f, y0 + h - 1.25f, "right stick aims and turns view");
+    } else {
+        text(x0 + 1.5f, y0 + h - 2.25f, "A/Enter rebind  Left clear");
+        text(x0 + 1.5f, y0 + h - 1.25f, "B/Esc back      Esc frees the mouse");
+    }
 }
 
 /* A line's value as shown, and for a slider its fill (0..1), else -1. */
