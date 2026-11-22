@@ -45,14 +45,48 @@
 extern void sub_0007B5D0_gen(void);
 void sub_0007B5D0(void)
 {
+    static bool was_on;
+    static Uint64 off_at;
     uint32_t player = MEM32(PLAYER), self = g_ecx, lean[2];
     float pitch, yaw;
+    bool mine = player >= 0x10000u && player < 0x04000000u && self >= 0x10000u && self == MEM32(player + 0x3D0);
 
-    if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
-        self < 0x10000u || self != MEM32(player + 0x3D0)) {
+    if (!pdo_settings_get()->dual_stick || !mine) {
+        if (was_on && mine) {
+            /* Turned off in play: the aim and the camera back to the middle
+             * of the quarter the game holds them in (its yaw limits, aim
+             * block +0x94/+0x104), the pitch level, their velocities
+             * cleared, so the game's clamps and springs start from where
+             * they would be. */
+            float lo = MEMF(player + 0xB0 + 0x94), hi = MEMF(player + 0xB0 + 0x104);
+            float mid = lo == lo && hi == hi && hi > lo && hi - lo < 360.0f ? 0.5f * (lo + hi) : 0.0f;
+            MEMF(player + 0xFC) = mid;
+            MEMF(player + 0xF8) = 0.0f;
+            MEMF(player + 0xD8) = 0.0f;
+            MEMF(player + 0xDC) = 0.0f;
+            MEMF(self + 0xC4) = mid;
+            MEMF(self + 0xC0) = 0.0f;
+            MEMF(self + 0x130) = 0.0f;
+            MEMF(self + 0x134) = 0.0f;
+            off_at = SDL_GetTicksNS();
+            SDL_Log("dual-stick: off in play, the view back to %.1f", mid);
+        }
+        if (mine)
+            was_on = false;
         sub_0007B5D0_gen();
+        if (mine && off_at && SDL_GetTicksNS() - off_at < 4000000000ull && SDL_getenv("PDO_DUAL_TRACE")) {
+            static Uint64 last;
+            if (SDL_GetTicksNS() - last > 100000000ull) {   /* the first seconds after: what the game does */
+                last = SDL_GetTicksNS();
+                SDL_Log("dual off: aim %+.1f %+.1f camera %+.1f %+.1f (vel %+.2f %+.2f) lean %+.2f %+.2f "
+                        "reticle %.0f %.0f turn %u", MEMF(player + 0xF8), MEMF(player + 0xFC), MEMF(self + 0xC0),
+                        MEMF(self + 0xC4), MEMF(self + 0x130), MEMF(self + 0x134), MEMF(self + 0x230),
+                        MEMF(self + 0x234), MEMF(player + 0xB8), MEMF(player + 0xBC), MEM32(player + 0x3D8));
+            }
+        }
         return;
     }
+    was_on = true;
     pitch = MEMF(player + 0xF8);
     yaw = MEMF(player + 0xFC);
     if (pitch != pitch || yaw != yaw) {
