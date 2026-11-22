@@ -370,10 +370,12 @@ static void dual_stick(pad_state *s)
         return;
     yaw += x * k * YAW_RATE * dt;
     pitch -= y * k * PITCH_RATE * dt;   /* stick up: look up */
-    while (yaw > 180.0f)                /* -180..180, as the game keeps it */
-        yaw -= 360.0f;
-    while (yaw < -180.0f)
-        yaw += 360.0f;
+    {   /* within 180 degrees of the camera's yaw (src/guest/mouse_aim.c) */
+        uint32_t cam = MEM32(obj + 0x3D0);
+        float d = cam >= 0x10000u && cam < 0x04000000u ? yaw - MEMF(cam + 0xC4) : 0.0f;
+        if (d == d && d > -1e5f && d < 1e5f && (d > 180.0f || d < -180.0f))
+            yaw -= SDL_floorf((d + 180.0f) / 360.0f) * 360.0f;
+    }
     MEMF(obj + 0xFC) = yaw;
     MEMF(obj + 0xF8) = SDL_clamp(pitch, -PITCH_MAX, PITCH_MAX);
 }

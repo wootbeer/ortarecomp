@@ -14,10 +14,9 @@
  * velocity carried over, so the camera is on the aim each frame and the
  * view turns with the right stick (the game clamps the aim around the
  * camera, so with the camera following it the aim goes all the way
- * round). The game wraps the aim's yaw to -180..180 but the camera's
- * not at all, so after a turn they were 360 apart and the game's clamp held
- * the aim (it shook, then stuck): the camera's is moved by whole turns to
- * within 180 degrees of the aim's, before the update and after it. The two constants are the
+ * round). The game wraps the aim's yaw to -180..180 and not the camera's:
+ * the aim's is brought to within 180 degrees of the camera's (by whole
+ * turns), before the update and after it, and after the aim update. The two constants are the
  * player's, read by another spring too (0x0007B2D0), so they are put back
  * as soon as the update returns. Off: the game's own.
  */
@@ -28,17 +27,19 @@
 
 #define PLAYER 0x00472030u
 
-/* The camera's yaw brought within 180 degrees of the aim's by whole turns
- * (the same direction): the game wraps the aim's yaw to -180..180 but not
- * the camera's, and its clamp of the aim around the camera expects them
- * close (a trace: aim 50, camera 404, the aim held there). */
-static void camera_near_aim(uint32_t player, uint32_t self)
+/* The aim's yaw brought within 180 degrees of the camera's by whole turns
+ * (the same direction). The game wraps the aim's yaw to -180..180 and not
+ * the camera's, and both its clamp of the aim around the camera and the
+ * reticle take their difference. The camera's is left alone: what draws
+ * the view follows it smoothly, and a camera moved by a turn swung round
+ * (a shake at the back, the third try). */
+static void aim_near_camera(uint32_t player, uint32_t cam)
 {
-    float d = MEMF(self + 0xC4) - MEMF(player + 0xFC);
+    float d = MEMF(player + 0xFC) - MEMF(cam + 0xC4);
 
     if (d == d && d > -1e5f && d < 1e5f && (d > 180.0f || d < -180.0f)) {
         float turns = SDL_floorf((d + 180.0f) / 360.0f);
-        MEMF(self + 0xC4) -= turns * 360.0f;
+        MEMF(player + 0xFC) -= turns * 360.0f;
     }
 }
 
@@ -52,7 +53,7 @@ void sub_0007B5D0(void)
         sub_0007B5D0_gen();
         return;
     }
-    camera_near_aim(player, self);
+    aim_near_camera(player, self);
     stiffness = MEM32(player + 0x380);
     damping = MEM32(player + 0x384);
     MEMF(player + 0x380) = 1.0f;
@@ -62,7 +63,7 @@ void sub_0007B5D0(void)
     sub_0007B5D0_gen();
     MEM32(player + 0x380) = stiffness;
     MEM32(player + 0x384) = damping;
-    camera_near_aim(player, self);      /* the aim may have wrapped in it */
+    aim_near_camera(player, self);      /* the camera turned in it */
 }
 
 /* The aim update (0x0007E6A0, thiscall on the aim block, player+0xB0)
@@ -84,6 +85,23 @@ void sub_0007E6A0(void)
         sub_0007E6A0_gen();
         return;
     }
+    {   /* PDO_DUAL_TRACE=1: frames where the aim and the camera part, or
+         * the reticle leaves the picture (at most 300 lines) */
+        static int trace = -1, lines;
+        uint32_t cam = MEM32(player + 0x3D0);
+        if (trace < 0)
+            trace = SDL_getenv("PDO_DUAL_TRACE") && *SDL_getenv("PDO_DUAL_TRACE") == '1';
+        if (trace && lines < 300 && cam >= 0x10000u && cam < 0x04000000u) {
+            float dy = MEMF(player + 0xFC) - MEMF(cam + 0xC4), dp = MEMF(player + 0xF8) - MEMF(cam + 0xC0);
+            float rx = MEMF(player + 0xB8), ry = MEMF(player + 0xBC);
+            if (SDL_fabsf(dy) > 20.0f || SDL_fabsf(dp) > 20.0f || rx < 0.0f || rx > 640.0f || ry < 0.0f || ry > 480.0f) {
+                lines++;
+                SDL_Log("dual frame: aim %+.1f %+.1f camera %+.1f %+.1f (vel %+.2f %+.2f) reticle %.0f %.0f",
+                        MEMF(player + 0xF8), MEMF(player + 0xFC), MEMF(cam + 0xC0), MEMF(cam + 0xC4),
+                        MEMF(cam + 0x130), MEMF(cam + 0x134), rx, ry);
+            }
+        }
+    }
     lo = MEM32(block + 0x94);
     hi = MEM32(block + 0x104);
     MEMF(block + 0x94) = -1e9f;
@@ -91,4 +109,9 @@ void sub_0007E6A0(void)
     sub_0007E6A0_gen();
     MEM32(block + 0x94) = lo;
     MEM32(block + 0x104) = hi;
+    {
+        uint32_t cam = MEM32(player + 0x3D0);
+        if (cam >= 0x10000u && cam < 0x04000000u)
+            aim_near_camera(player, cam);   /* it may have wrapped the aim */
+    }
 }
