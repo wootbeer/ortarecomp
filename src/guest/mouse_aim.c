@@ -1,6 +1,7 @@
 /*
  * The camera's follow of the aim, for dual-stick aiming (Controls > Dual
- * stk; the input is src/hle/input_hle.c).
+ * stk; the input is src/hle/input_hle.c): the camera on the aim, and the
+ * aim free of the quarter it was held in.
  *
  * 0x0007B5D0 (thiscall on [player+0x3D0], player at 0x00472030) is a damped
  * spring per axis turning the camera after the aim: the pull +0x120/+0x124
@@ -62,4 +63,32 @@ void sub_0007B5D0(void)
     MEM32(player + 0x380) = stiffness;
     MEM32(player + 0x384) = damping;
     camera_near_aim(player, self);      /* the aim may have wrapped in it */
+}
+
+/* The aim update (0x0007E6A0, thiscall on the aim block, player+0xB0)
+ * clamps the aim's yaw (block +0x4C) between block +0x94 and +0x104: the
+ * view's quarter, about 50 degrees either way of it (a trace: held at
+ * 50, the camera at 46). With dual-stick aiming the right stick turns past
+ * them, and the clamp pulled the aim back each frame while the stick
+ * pushed it on: the camera, on the aim, shook. While it is on, the update
+ * runs without that clamp (the limits wide open for the call, put back
+ * after it); the pitch's is kept, and the quarter turns (L/R) are the
+ * game's. */
+extern void sub_0007E6A0_gen(void);
+void sub_0007E6A0(void)
+{
+    uint32_t player = MEM32(PLAYER), block = g_ecx, lo, hi;
+
+    if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
+        block != player + 0xB0u) {
+        sub_0007E6A0_gen();
+        return;
+    }
+    lo = MEM32(block + 0x94);
+    hi = MEM32(block + 0x104);
+    MEMF(block + 0x94) = -1e9f;
+    MEMF(block + 0x104) = 1e9f;
+    sub_0007E6A0_gen();
+    MEM32(block + 0x94) = lo;
+    MEM32(block + 0x104) = hi;
 }
