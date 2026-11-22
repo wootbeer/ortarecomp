@@ -386,6 +386,115 @@ static void dual_stick(pad_state *s)
 }
 
 #ifdef PDO_PROGRAM_PD1
+/* Mouse aim in pd1 (docs/orta-facts.md, pd1's input). Its cursor is two
+ * 16-bit values in a cursor block (+0xA x, +0xC y; -1020..1020, x growing
+ * to the left, y downward), moved by 0x0005EA44 about 60 a frame (20 frames
+ * a second) while the stick is held; and the stick itself, not the cursor,
+ * moves the dragon and turns the view (held at the edge, they keep going).
+ * Written into the cursor, the mouse lost all of that (the dragon did not
+ * follow, the range felt cut short); tilting the stick by the mouse's speed
+ * kept it but was not precise. So the mouse sets where the cursor should be
+ * (a target, 1 unit a count at 100 %, about 2000 counts across as Orta's
+ * aim; Lightgun: where the pointer is, the cursor's range taken as the
+ * picture's) and the stick is tilted towards it, by the distance over a
+ * frame's travel: the game moves the cursor, the dragon and the view as
+ * from a player's stick. Within a frame's travel the cursor is put on the
+ * target after the game's update (src/pd1/mouse.c), so it lands where the
+ * mouse is without overshooting. The mouse pushed on past the cursor's
+ * limit holds the stick over that way, as a stick held at the edge, for as
+ * long as it keeps going (and a little after). Outside flight (pd1's menus)
+ * the mouse tilts the stick as before; a controller's stick, the keys,
+ * Start or Back hand the cursor back to them. */
+static int16_t clamp16(int v);
+#define PD1_RANGE 1020.0f
+#define PD1_STEP 60.0f                  /* the cursor's travel a frame, stick held */
+static Uint64 pd1_live, pd1_push_until[2];
+static uint32_t pd1_block;
+static bool pd1_aiming;
+static float pd1_tx, pd1_ty;            /* where the mouse wants the cursor */
+static int pd1_push[2];                 /* -1, 0, 1: pushed past the limit */
+
+static bool pd1_mouse(pad_state *s, float dx, float dy, bool pointer, float gx, float gy, int mode, bool reset)
+{
+    static float last_gx = -1e9f, last_gy = -1e9f;
+    Uint64 now = SDL_GetTicksNS();
+    bool live = pd1_live && now - pd1_live < 250000000ull && pd1_block;
+    bool moved = dx != 0.0f || dy != 0.0f;
+    float cx, cy, speed = (float)pdo_settings_get()->mouse_speed / 100.0f, fx, fy;
+
+    if (!live || mode == PDO_MOUSE_OFF) {
+        pd1_aiming = false;
+        return false;
+    }
+    if (reset) {
+        pd1_aiming = false;
+        return true;                    /* the stick is the player's; the motion is dropped */
+    }
+    if (mode == PDO_MOUSE_LIGHTGUN && pointer && (gx != last_gx || gy != last_gy)) {
+        moved = last_gx > -1e8f;
+        last_gx = gx;
+        last_gy = gy;
+    }
+    cx = (float)(int16_t)MEM16(pd1_block + 0xA);
+    cy = (float)(int16_t)MEM16(pd1_block + 0xC);
+    if (!pd1_aiming) {
+        if (!moved)
+            return true;
+        pd1_aiming = true;
+        pd1_tx = cx;
+        pd1_ty = cy;
+        pd1_push[0] = pd1_push[1] = 0;
+    }
+    if (mode == PDO_MOUSE_LIGHTGUN) {
+        if (pointer && gx >= 0.0f && gy >= 0.0f && gx <= 640.0f && gy <= 480.0f) {
+            pd1_tx = (320.0f - gx) / 320.0f * PD1_RANGE;
+            pd1_ty = (gy - 240.0f) / 240.0f * PD1_RANGE;
+        }
+    } else {
+        float t[2] = { pd1_tx - dx * speed, pd1_ty + dy * speed };  /* x grows to the left */
+        for (int a = 0; a < 2; a++) {
+            if (t[a] > PD1_RANGE || t[a] < -PD1_RANGE) {
+                pd1_push[a] = t[a] > 0.0f ? 1 : -1;
+                pd1_push_until[a] = now + 150000000ull;
+                t[a] = SDL_clamp(t[a], -PD1_RANGE, PD1_RANGE);
+            }
+        }
+        pd1_tx = t[0];
+        pd1_ty = t[1];
+    }
+    for (int a = 0; a < 2; a++) {
+        float d = a ? pd1_ty - cy : pd1_tx - cx;
+        if (pd1_push[a] && (now > pd1_push_until[a] || (d != 0.0f && (d > 0.0f) != (pd1_push[a] > 0))))
+            pd1_push[a] = 0;            /* stopped pushing, or turned back */
+    }
+    fx = pd1_push[0] ? (float)pd1_push[0] : SDL_clamp((pd1_tx - cx) / PD1_STEP, -1.0f, 1.0f);
+    fy = pd1_push[1] ? (float)pd1_push[1] : SDL_clamp((pd1_ty - cy) / PD1_STEP, -1.0f, 1.0f);
+    /* the stick left raises x, up lowers y */
+    s->thumb[0] = clamp16((int)(-fx * 32767.0f));
+    s->thumb[1] = clamp16((int)(-fy * 32767.0f));
+    if (SDL_getenv("PDO_PD1_TRACE"))
+        SDL_Log("pd1 mouse: motion %+.0f %+.0f target %.0f %.0f cursor %.0f %.0f stick %+.2f %+.2f%s%s", dx, dy,
+                pd1_tx, pd1_ty, cx, cy, -fx, -fy, pd1_push[0] ? " (x held at the edge)" : "",
+                pd1_push[1] ? " (y held at the edge)" : "");
+    return true;
+}
+
+/* After pd1's cursor update (src/pd1/mouse.c), in flight: within a frame's
+ * travel of the target, the cursor is put on it. */
+void pdo_pd1_cursor(uint32_t block)
+{
+    pd1_live = SDL_GetTicksNS();
+    pd1_block = block;
+    if (!pd1_aiming)
+        return;
+    for (int a = 0; a < 2; a++) {
+        uint32_t at = block + (a ? 0xCu : 0xAu);
+        float c = (float)(int16_t)MEM16(at), t = a ? pd1_ty : pd1_tx;
+        if (!pd1_push[a] && SDL_fabsf(t - c) <= PD1_STEP + 1.0f)
+            MEM16(at) = (uint16_t)(int16_t)t;
+    }
+}
+
 /* PDO_PD1_SEARCH=1: where pd1 keeps its cursor. pd1 reads the controller
  * as a PC joystick (0x001C39B0 copies XInput's sticks into a DirectInput
  * style state), and its cursor is somewhere in its data. Every other read,
@@ -567,6 +676,11 @@ static void read_port(int port, pad_state *s)
             bool play = obj >= 0x10000u && obj < 0x04000000u;
 
             pdo_mouse_take(&dx, &dy);
+#ifdef PDO_PROGRAM_PD1
+            if (pd1_mouse(s, dx, dy, pointer, gx, gy, mode,
+                          stick || lx || ly || (s->buttons & (XB_START | XB_BACK)) != 0))
+                dx = dy = 0.0f;                 /* the stick is set for pd1's cursor */
+#endif
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK))) {
                 aiming = false;
                 carry_x = carry_y = 0.0f;

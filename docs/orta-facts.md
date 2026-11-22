@@ -504,11 +504,14 @@ downward, about 60 a frame at full tilt; at 0x00D49208 in a stage). The
 dragon follows it (0x00D49204, to about +-682, easing back to the middle),
 and 0x00D2446C ramps a turn rate to +-128. [0x00D24478] selects the control
 scheme.
-Mouse aim written straight into that cursor (before and after
-0x0005EA44, at 0.6 to 2.5 units a count, its range opened past +-1020)
-felt worse than the mouse tilting the stick and was taken out: the game
-pulls the cursor back to the middle each frame, runs at 20 fps, and its
-view and dragon react to the cursor in ways the writes fought.
+The stick does two things there: it moves the cursor, and held, it moves
+the dragon (0x00D49204) and ramps the turn (0x00D2446C) itself, at the
+cursor's limit too. Mouse aim written straight into the cursor lost the
+second (the dragon did not follow, the range felt cut short, and opened
+past +-1020 it left a dead zone where the game still clamped). Mouse aim
+therefore tilts the stick towards where the mouse wants the cursor and puts
+the cursor on that point once within a frame's travel (input_hle.c,
+src/pd1/mouse.c).
 
 ## Boost and brake ends
 

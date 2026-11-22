@@ -10,6 +10,7 @@
 #define pdo_dump_guest_waits pd1_pdo_dump_guest_waits
 #define pdo_input_skip_press pd1_pdo_input_skip_press
 #define pdo_movie_opened pd1_pdo_movie_opened
+#define pdo_pd1_cursor pd1_pdo_pd1_cursor
 #define recomp_call_all pd1_recomp_call_all
 #define recomp_dispatch_flat_bytes pd1_recomp_dispatch_flat_bytes
 #define recomp_dispatch_init pd1_recomp_dispatch_init
