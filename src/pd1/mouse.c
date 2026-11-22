@@ -2,9 +2,9 @@
  * Mouse aim in pd1 (src/hle/input_hle.c, pd1's build). Its cursor update,
  * 0x0005EA44 (cdecl, one argument: an object whose +0x1C is the cursor
  * block, +0 its mode, 0 in flight), runs as the game's, with the direction
- * bits set towards where the mouse wants the cursor for that call
- * (pdo_pd1_cursor_before) and the button word put back after it, the cursor
- * put on the target after it (pdo_pd1_cursor_after).
+ * bits the mouse holds this frame set for that call
+ * (pdo_pd1_cursor_before) and the button word put back after it
+ * (pdo_pd1_cursor_after).
  */
 
 #include <stdbool.h>

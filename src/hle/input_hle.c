@@ -386,88 +386,49 @@ static void dual_stick(pad_state *s)
 }
 
 #ifdef PDO_PROGRAM_PD1
-/* Mouse aim in pd1 (docs/orta-facts.md, pd1's input). Its cursor is two
- * 16-bit values in a cursor block (+0xA x, +0xC y; -1020..1020, x growing
- * to the left on screen, y downward), moved by 0x0005EA44 from four
- * direction bits of the button word [0x00D24440], tested through masks the
- * controls set ([0x00D246BC] x+, [0x00D246C0] x-, [0x00D246C4] y+,
- * [0x00D246C8] y-): its speed ramps by 3 a frame to 60 through a table, the
- * same bits move the dragon there too, and with none held the cursor eases
- * back to the middle. What tried before: written into the cursor, the
- * dragon did not follow and the game pulled it back; a stick tilted towards
- * a target went the wrong way with Up/Down Reverse and other setups (which
- * only change the masks) and pinned the cursor at an edge.
- *
- * So the mouse sets where the cursor should be (Relative: 0.4 units a count
- * at 100 %: at 1 a quick move crossed the whole range in a frame and kept
- * the cursor at the edges; Lightgun: where the pointer is),
- * and for pd1's cursor update only, the direction bits are set towards it
- * through the game's own masks (src/pd1/mouse.c calls pdo_pd1_cursor_before
- * and _after around the update, the button word put back after it): the
- * cursor moves, accelerates and leads the dragon as with a held stick, in
- * whatever setup, and the cursor is put on the target after the update
- * (the bits came from where it was before). A held direction also builds a
- * lead on the cursor's object (+0x17E x, +0x17C y: 30 a frame to +-1020),
- * which swings the view and the dragon that way: that is how a stick
- * reaches the screen's edges, the cursor's own range being only about
- * 16-70 % across and 8-80 % down. The mouse, which jumps the cursor there,
- * never built it ("can't reach the screen", the view and dragon wrong), so
- * after the update the lead goes towards the cursor's place at the game's
- * 30 a frame (back towards the middle three times as fast). The mouse gone
- * 100 past the cursor's limit (added up while it keeps pushing, not a
- * slight overshoot) holds the direction. Pushed on past the cursor's limit (or the pointer past
- * it), the direction is held, as a stick held at the edge, while it keeps
- * going and a little after. Outside flight (pd1's menus) the mouse tilts
- * the stick as before; a controller's stick, the keys, Start or Back hand
- * the cursor back to them. */
-#define PD1_RANGE 1020.0f
-#define PD1_LEAD_STEP 30              /* the lead's travel a frame, direction held */
-#define PD1_UNITS 0.4f                /* cursor units a mouse count at 100 % */
-#define PD1_PUSH_PAST 100.0f          /* the mouse this far past the limit holds the direction */
+/* Mouse aim in pd1 (docs/orta-facts.md, pd1's input). Its cursor is moved
+ * by 0x0005EA44 from four direction bits of the button word [0x00D24440],
+ * tested through masks the controls set ([0x00D246BC] x+, [0x00D246C0] x-,
+ * [0x00D246C4] y+, [0x00D246C8] y-; the cursor's x grows to the left on
+ * screen, y downward): on or off, its speed coming from how long one is
+ * held (it ramps over about 20 frames, 20 frames a second); held, the same
+ * bits also build the dragon's lead, which swings the view. Placing the
+ * cursor where the mouse pointed (several tries) fought all of that: the
+ * view and the dragon are made for a held direction, not for a cursor that
+ * jumps. So the mouse holds directions, as a stick would: for each of
+ * pd1's frames, a direction the mouse moved more than a few counts in
+ * since the last is held for that frame (a nudge taps it, a long sweep
+ * holds it and the game accelerates), and kept one more frame as the mouse
+ * slows, so slow motion does not stutter; moving the other way lets go at
+ * once. Mouse speed scales the counts. Lightgun holds the directions towards
+ * where the pointer is (the cursor's limits sat at about 16-70 % across and
+ * 8-80 % down the picture) until the cursor is near it. src/pd1/mouse.c sets
+ * the bits for the cursor update and puts the button word back after it;
+ * where the cursor goes, its limits, the dragon and the view are the game's.
+ * Outside flight (pd1's menus) the mouse tilts the stick as before; a
+ * controller's stick, the keys, Start or Back hand it back to them. */
 #define PD1_BUTTONS 0x00D24440u
 #define PD1_MASK_XP 0x00D246BCu
 #define PD1_MASK_XM 0x00D246C0u
 #define PD1_MASK_YP 0x00D246C4u
 #define PD1_MASK_YM 0x00D246C8u
-/* Lightgun: where the cursor's limits showed on the picture (two captures,
- * the owner's): x -1020 at 70 % across, +1020 at 16 %; y -1020 at 8 % down,
- * +1020 at 80 %. */
-#define PD1_GUN_X0 0.43f
+#define PD1_COUNTS 4.0f                 /* counts in a frame (at 100 %) that hold a direction */
+#define PD1_NEAR 40.0f                  /* Lightgun: this close to the pointer is there */
+#define PD1_GUN_X0 0.43f                /* Lightgun: the cursor's middle and half range on the picture */
 #define PD1_GUN_XS 0.27f
 #define PD1_GUN_Y0 0.44f
 #define PD1_GUN_YS 0.36f
-static Uint64 pd1_live, pd1_push_until[2];
+static Uint64 pd1_live;
 static uint32_t pd1_block, pd1_buttons;
-static bool pd1_aiming, pd1_held;
-static float pd1_tx, pd1_ty;            /* where the mouse wants the cursor */
-static int pd1_push[2];                 /* -1, 0, 1: pushed past the limit */
-
-static void pd1_target(int a, float t, Uint64 now)
-{
-    static float over[2];               /* how far past the limit the mouse has gone lately */
-    float past = t > PD1_RANGE ? t - PD1_RANGE : t < -PD1_RANGE ? t + PD1_RANGE : 0.0f;
-
-    if (past == 0.0f || (past > 0.0f) != (over[a] > 0.0f))
-        over[a] = 0.0f;
-    over[a] += past;
-    if (over[a] > PD1_PUSH_PAST || over[a] < -PD1_PUSH_PAST) {
-        pd1_push[a] = over[a] > 0.0f ? 1 : -1;
-        pd1_push_until[a] = now + 150000000ull;
-    }
-    t = SDL_clamp(t, -PD1_RANGE, PD1_RANGE);
-    if (a)
-        pd1_ty = t;
-    else
-        pd1_tx = t;
-}
+static bool pd1_aiming, pd1_held, pd1_pointer;
+static float pd1_mx, pd1_my, pd1_gx, pd1_gy;  /* the mouse's motion since the last frame; the pointer */
+static int pd1_mode, pd1_dir[2];              /* the direction held last frame, -1, 0, 1 */
 
 static bool pd1_mouse(float dx, float dy, bool pointer, float gx, float gy, int mode, bool reset)
 {
     static float last_gx = -1e9f, last_gy = -1e9f;
-    Uint64 now = SDL_GetTicksNS();
-    bool live = pd1_live && now - pd1_live < 250000000ull && pd1_block;
+    bool live = pd1_live && SDL_GetTicksNS() - pd1_live < 250000000ull && pd1_block;
     bool moved = dx != 0.0f || dy != 0.0f;
-    float speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
 
     if (!live || mode == PDO_MOUSE_OFF) {
         pd1_aiming = false;
@@ -475,6 +436,7 @@ static bool pd1_mouse(float dx, float dy, bool pointer, float gx, float gy, int 
     }
     if (reset) {
         pd1_aiming = false;
+        pd1_mx = pd1_my = 0.0f;
         return true;                    /* the stick is the player's; the motion is dropped */
     }
     if (mode == PDO_MOUSE_LIGHTGUN && pointer && (gx != last_gx || gy != last_gy)) {
@@ -482,84 +444,76 @@ static bool pd1_mouse(float dx, float dy, bool pointer, float gx, float gy, int 
         last_gx = gx;
         last_gy = gy;
     }
-    if (!pd1_aiming) {
-        if (!moved)
-            return true;
+    if (moved)
         pd1_aiming = true;
-        pd1_tx = (float)(int16_t)MEM16(pd1_block + 0xA);
-        pd1_ty = (float)(int16_t)MEM16(pd1_block + 0xC);
-        pd1_push[0] = pd1_push[1] = 0;
-    }
-    if (mode == PDO_MOUSE_LIGHTGUN) {
-        if (pointer && moved) {
-            pd1_target(0, (PD1_GUN_X0 - gx / 640.0f) / PD1_GUN_XS * PD1_RANGE, now);
-            pd1_target(1, (gy / 480.0f - PD1_GUN_Y0) / PD1_GUN_YS * PD1_RANGE, now);
-        }
-    } else if (moved) {
-        pd1_target(0, pd1_tx - dx * PD1_UNITS * speed, now);   /* the cursor's x grows to the left */
-        pd1_target(1, pd1_ty + dy * PD1_UNITS * speed, now);
-    }
+    pd1_mx += dx;
+    pd1_my += dy;
+    pd1_mode = mode;
+    pd1_pointer = pointer;
+    pd1_gx = gx;
+    pd1_gy = gy;
     return true;
 }
 
-/* Before pd1's cursor update, in flight: the direction bits towards the
- * target, through the game's masks (the button word kept, to put back). */
+/* Before pd1's cursor update, in flight: the directions to hold this frame,
+ * set through the game's masks (the button word kept, to put back). */
 void pdo_pd1_cursor_before(uint32_t block)
 {
-    Uint64 now = SDL_GetTicksNS();
     uint32_t masks[4] = { MEM32(PD1_MASK_XP), MEM32(PD1_MASK_XM), MEM32(PD1_MASK_YP), MEM32(PD1_MASK_YM) };
+    float speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
+    /* in the cursor's terms: mouse right is x-, mouse down is y+ */
+    float m[2] = { -pd1_mx * speed, pd1_my * speed }, raw[2] = { pd1_mx, pd1_my };
     uint32_t b;
 
-    pd1_live = now;
+    pd1_live = SDL_GetTicksNS();
     pd1_block = block;
     pd1_held = false;
-    if (!pd1_aiming)
+    pd1_mx = pd1_my = 0.0f;
+    if (!pd1_aiming) {
+        pd1_dir[0] = pd1_dir[1] = 0;
         return;
+    }
+    for (int a = 0; a < 2; a++) {
+        int dir = 0;
+        if (pd1_mode == PDO_MOUSE_LIGHTGUN) {
+            if (pd1_pointer && pd1_gx >= 0.0f && pd1_gy >= 0.0f && pd1_gx <= 640.0f && pd1_gy <= 480.0f) {
+                float to = a ? (pd1_gy / 480.0f - PD1_GUN_Y0) / PD1_GUN_YS * 1020.0f
+                             : (PD1_GUN_X0 - pd1_gx / 640.0f) / PD1_GUN_XS * 1020.0f;
+                float d = to - (float)(int16_t)MEM16(block + (a ? 0xCu : 0xAu));
+                dir = d > PD1_NEAR ? 1 : d < -PD1_NEAR ? -1 : 0;
+            }
+        } else if (m[a] > PD1_COUNTS || m[a] < -PD1_COUNTS) {
+            dir = m[a] > 0.0f ? 1 : -1;
+        } else if (pd1_dir[a] && (m[a] == 0.0f || (m[a] > 0.0f) == (pd1_dir[a] > 0))) {
+            dir = pd1_dir[a] * 2;       /* slowing: once more, then let go */
+        }
+        pd1_dir[a] = dir == 2 || dir == -2 ? 0 : dir;
+        if (dir)
+            m[a] = (float)(dir > 0 ? 1 : -1);
+        else
+            m[a] = 0.0f;
+    }
     pd1_buttons = MEM32(PD1_BUTTONS);
     b = pd1_buttons & ~(masks[0] | masks[1] | masks[2] | masks[3]);
-    for (int a = 0; a < 2; a++) {
-        float c = (float)(int16_t)MEM16(block + (a ? 0xCu : 0xAu)), d = (a ? pd1_ty : pd1_tx) - c;
-        int dir;
-        if (pd1_push[a] && (now > pd1_push_until[a] || (d != 0.0f && (d > 0.0f) != (pd1_push[a] > 0))))
-            pd1_push[a] = 0;            /* stopped pushing, or turned back */
-        dir = pd1_push[a] ? pd1_push[a] : d > 2.0f ? 1 : d < -2.0f ? -1 : 0;
-        if (dir)
-            b |= masks[2 * a + (dir > 0 ? 0 : 1)];
-    }
+    for (int a = 0; a < 2; a++)
+        if (m[a] != 0.0f)
+            b |= masks[2 * a + (m[a] > 0.0f ? 0 : 1)];
     MEM32(PD1_BUTTONS) = b;
     pd1_held = true;
     if (SDL_getenv("PDO_PD1_TRACE"))
-        SDL_Log("pd1 mouse: target %.0f %.0f cursor %d %d lead %d %d buttons %08x -> %08x%s%s", pd1_tx, pd1_ty,
-                (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC), (int16_t)MEM16(block - 0x1Cu + 0x17Eu),
-                (int16_t)MEM16(block - 0x1Cu + 0x17Cu), pd1_buttons, b,
-                pd1_push[0] ? " (x held at the edge)" : "", pd1_push[1] ? " (y held at the edge)" : "");
+        SDL_Log("pd1 mouse: motion %+.0f %+.0f cursor %d %d lead %d %d held %+.0f %+.0f", raw[0], raw[1],
+                (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC),
+                (int16_t)MEM16(block - 0x1Cu + 0x17Eu), (int16_t)MEM16(block - 0x1Cu + 0x17Cu), m[0], m[1]);
 }
 
-/* After it: the button word back, and the cursor on the target. (Only
- * within a frame's travel, it trailed fast mouse moves by most of a second:
- * the game's cursor goes at most about 144 a frame, 20 frames a second.) */
+/* After it: the button word back. */
 void pdo_pd1_cursor_after(uint32_t block)
 {
+    (void)block;
     if (!pd1_held)
         return;
     MEM32(PD1_BUTTONS) = pd1_buttons;
     pd1_held = false;
-    for (int a = 0; a < 2; a++) {
-        uint32_t at = block + (a ? 0xCu : 0xAu), lead_at = block - 0x1Cu + (a ? 0x17Cu : 0x17Eu);
-        float c = (float)(int16_t)MEM16(at), t = a ? pd1_ty : pd1_tx;
-        int lead = (int16_t)MEM16(lead_at), to = (int)t;
-        if (!pd1_push[a] && c != t)
-            MEM16(at) = (uint16_t)(int16_t)t;
-        /* the lead after the cursor's place, at the game's own 30 a frame
-         * (pushed at the edge, the held direction drives it already) */
-        if (!pd1_push[a] && lead != to) {
-            /* out from the middle at the game's pace, back three times as
-             * fast (it held the view at the bottom for a second and a half
-             * after the mouse had left it) */
-            int step = SDL_abs(to) < SDL_abs(lead) || (to < 0) != (lead < 0) ? 3 * PD1_LEAD_STEP : PD1_LEAD_STEP;
-            MEM16(lead_at) = (uint16_t)(int16_t)(lead + SDL_clamp(to - lead, -step, step));
-        }
-    }
 }
 
 /* PDO_PD1_SEARCH=1: where pd1 keeps its cursor. pd1 reads the controller
