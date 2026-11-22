@@ -84,19 +84,32 @@ void sub_0007E6A0(void)
         return;
     }
     {   /* PDO_DUAL_TRACE=1: frames where the aim and the camera part, or
-         * the reticle leaves the picture (at most 300 lines) */
+         * the reticle leaves the picture, and a few a second (at most 2000) */
         static int trace = -1, lines;
         uint32_t cam = MEM32(player + 0x3D0);
         if (trace < 0)
             trace = SDL_getenv("PDO_DUAL_TRACE") && *SDL_getenv("PDO_DUAL_TRACE") == '1';
-        if (trace && lines < 300 && cam >= 0x10000u && cam < 0x04000000u) {
+        if (trace && lines < 2000 && cam >= 0x10000u && cam < 0x04000000u) {
             float dy = MEMF(player + 0xFC) - MEMF(cam + 0xC4), dp = MEMF(player + 0xF8) - MEMF(cam + 0xC0);
             float rx = MEMF(player + 0xB8), ry = MEMF(player + 0xBC);
-            if (SDL_fabsf(dy) > 20.0f || SDL_fabsf(dp) > 20.0f || rx < 0.0f || rx > 640.0f || ry < 0.0f || ry > 480.0f) {
+            static Uint64 last;
+            Uint64 now = SDL_GetTicksNS();
+            bool off = SDL_fabsf(dy) > 20.0f || SDL_fabsf(dp) > 20.0f || rx < 0.0f || rx > 640.0f || ry < 0.0f ||
+                       ry > 480.0f;
+            if (off || now - last > 150000000ull) {
+                /* also a few times a second: what may hold the view's
+                 * quarter (the yaw limits, the turn state, the camera's
+                 * own +0x10..+0x20 and +0x230..) */
+                last = now;
                 lines++;
-                SDL_Log("dual frame: aim %+.1f %+.1f camera %+.1f %+.1f (vel %+.2f %+.2f) reticle %.0f %.0f",
-                        MEMF(player + 0xF8), MEMF(player + 0xFC), MEMF(cam + 0xC0), MEMF(cam + 0xC4),
-                        MEMF(cam + 0x130), MEMF(cam + 0x134), rx, ry);
+                SDL_Log("dual frame%s: aim %+.1f %+.1f camera %+.1f %+.1f reticle %.0f %.0f | limits %+.1f %+.1f "
+                        "turn %u flags %08x | cam10 %+.1f %+.1f %+.1f %+.1f %+.1f | cam230 %+.2f %+.2f %+.2f | "
+                        "dragon %+.1f %+.1f %+.1f", off ? " OFF" : "",
+                        MEMF(player + 0xF8), MEMF(player + 0xFC), MEMF(cam + 0xC0), MEMF(cam + 0xC4), rx, ry,
+                        MEMF(block + 0x94), MEMF(block + 0x104), MEM32(player + 0x3D8), MEM32(player + 0x3F8),
+                        MEMF(cam + 0x10), MEMF(cam + 0x14), MEMF(cam + 0x18), MEMF(cam + 0x1C), MEMF(cam + 0x20),
+                        MEMF(cam + 0x230), MEMF(cam + 0x234), MEMF(cam + 0x238),
+                        MEMF(player + 0x740), MEMF(player + 0x744), MEMF(player + 0x748));
             }
         }
     }
