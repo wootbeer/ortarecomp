@@ -495,6 +495,16 @@ one list renderer (0x001B6AE0, from the main loop 0x00121B10) through
 0x001A8500. It loads TNRoman.bin, pad_alert.bmp, wave_00.cmp and
 NARATION.CGZ first, then OPENING.CGZ before the opening movie.
 
+pd1's input: 0x001C39B0 reads XInput and fills a DirectInput style joystick
+state (lX = left stick x, lY = -y, ...), as the PC version it was ported
+from. Its cursor is moved by 0x0005EA44 (cdecl, an object whose +0x1C is
+the cursor block: +0 the mode, 0 in flight, 0xA and 0xC switch it off; +0xA
+x and +0xC y as 16-bit values, -1020..1020, x growing to the left and y
+downward, about 60 a frame at full tilt; at 0x00D49208 in a stage). The
+dragon follows it (0x00D49204, to about +-682, easing back to the middle),
+and 0x00D2446C ramps a turn rate to +-128. [0x00D24478] selects the control
+scheme.
+
 ## Boost and brake ends
 
 At the end of a boost or a brake the game renders the scene at another
