@@ -364,9 +364,9 @@ from the player's +0xF8/+0xFC. Run with stiffness 1 and no damping, the
 camera turns with the aim at once (tried for mouse aim, issue 51: the
 camera, not the reticle; it shook once round: the aim's yaw wraps and the
 camera's does not, and the clamp of the aim around the camera then held the
-aim a turn away. Moving the camera's yaw by a turn made the view swing round
-(what draws it follows the camera's yaw smoothly): dual-stick aiming moves
-the aim's instead). The aim update clamps the aim's yaw between aim block
+aim a turn away. Stiffness and damping are read by the camera's position
+springs in the same update too: undamped, they swung as the view turned round
+(the shake); dual-stick aiming sets the camera's angles instead). The aim update clamps the aim's yaw between aim block
 (player+0xB0) +0x94 and +0x104, the quarter the view faces, about 50 either
 way.
 [player+0x380]/+0x384 are read only here and by 0x0007B2D0, another

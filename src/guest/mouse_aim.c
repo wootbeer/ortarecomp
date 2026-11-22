@@ -10,15 +10,8 @@
  * velocity: +0xC0 pitch (held to 40 either way), +0xC4 yaw (not wrapped). The
  * targets are the aim angles, player +0xF8/+0xFC.
  *
- * With dual-stick aiming on, it runs with stiffness 1, no damping and no
- * velocity carried over, so the camera is on the aim each frame and the
- * view turns with the right stick (the game clamps the aim around the
- * camera, so with the camera following it the aim goes all the way
- * round). The game wraps the aim's yaw to -180..180 and not the camera's:
- * the aim's is brought to within 180 degrees of the camera's (by whole
- * turns), before the update and after it, and after the aim update. The two constants are the
- * player's, read by another spring too (0x0007B2D0), so they are put back
- * as soon as the update returns. Off: the game's own.
+ * With dual-stick aiming on, the camera's angles are put on the aim (below);
+ * the springs themselves are the game's. Off: the game's own.
  */
 
 #include "recomp_types.h"
@@ -27,43 +20,40 @@
 
 #define PLAYER 0x00472030u
 
-/* The aim's yaw brought within 180 degrees of the camera's by whole turns
- * (the same direction). The game wraps the aim's yaw to -180..180 and not
- * the camera's, and both its clamp of the aim around the camera and the
- * reticle take their difference. The camera's is left alone: what draws
- * the view follows it smoothly, and a camera moved by a turn swung round
- * (a shake at the back, the third try). */
-static void aim_near_camera(uint32_t player, uint32_t cam)
-{
-    float d = MEMF(player + 0xFC) - MEMF(cam + 0xC4);
-
-    if (d == d && d > -1e5f && d < 1e5f && (d > 180.0f || d < -180.0f)) {
-        float turns = SDL_floorf((d + 180.0f) / 360.0f);
-        MEMF(player + 0xFC) -= turns * 360.0f;
-    }
-}
-
+/* With dual-stick aiming on, the camera's angles are set to the aim's
+ * before its update and the yaw again after it, their velocities cleared:
+ * the view points where the aim does, and the rest of the update (where
+ * the camera sits behind the dragon, its own springs) runs as the game's.
+ * Earlier tries changed the spring's stiffness and damping instead, which
+ * the position springs read too: undamped, they swung, worst when turning
+ * round (the shake). The pitch is left as the update clamps it (40 up,
+ * about 32 down). The aim's yaw stays in -180..180, as the game keeps it
+ * (past it the reticle went wild): the camera's takes the same value. */
 extern void sub_0007B5D0_gen(void);
 void sub_0007B5D0(void)
 {
-    uint32_t player = MEM32(PLAYER), self = g_ecx, stiffness, damping;
+    uint32_t player = MEM32(PLAYER), self = g_ecx;
+    float pitch, yaw;
 
     if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
         self < 0x10000u || self != MEM32(player + 0x3D0)) {
         sub_0007B5D0_gen();
         return;
     }
-    aim_near_camera(player, self);
-    stiffness = MEM32(player + 0x380);
-    damping = MEM32(player + 0x384);
-    MEMF(player + 0x380) = 1.0f;
-    MEMF(player + 0x384) = 0.0f;
+    pitch = MEMF(player + 0xF8);
+    yaw = MEMF(player + 0xFC);
+    if (pitch != pitch || yaw != yaw) {
+        sub_0007B5D0_gen();
+        return;
+    }
+    MEMF(self + 0xC0) = pitch;
+    MEMF(self + 0xC4) = yaw;
     MEMF(self + 0x130) = 0.0f;
     MEMF(self + 0x134) = 0.0f;
     sub_0007B5D0_gen();
-    MEM32(player + 0x380) = stiffness;
-    MEM32(player + 0x384) = damping;
-    aim_near_camera(player, self);      /* the camera turned in it */
+    MEMF(self + 0xC4) = yaw;
+    MEMF(self + 0x130) = 0.0f;
+    MEMF(self + 0x134) = 0.0f;
 }
 
 /* The aim update (0x0007E6A0, thiscall on the aim block, player+0xB0)
@@ -109,9 +99,4 @@ void sub_0007E6A0(void)
     sub_0007E6A0_gen();
     MEM32(block + 0x94) = lo;
     MEM32(block + 0x104) = hi;
-    {
-        uint32_t cam = MEM32(player + 0x3D0);
-        if (cam >= 0x10000u && cam < 0x04000000u)
-            aim_near_camera(player, cam);   /* it may have wrapped the aim */
-    }
 }
