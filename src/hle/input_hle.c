@@ -390,11 +390,11 @@ static void dual_stick(pad_state *s)
  * (+0xA x, +0xC y; -1020..1020, x growing to the left, y downward; at
  * 0x00D49208 in play), moved by the stick in 0x0005EA44 (cdecl, the block
  * at its argument +0x1C; +0 is its mode, 0 in flight). src/pd1/mouse.c
- * hooks that function and calls pdo_pd1_cursor() after it, which marks
- * flight and moves the cursor by the mouse: by its motion (Relative, 0.6
- * units a count at 100 %, about a fifth of a pixel as in Orta; 2.5 crossed
- * the picture in a frame or two at pd1's 20 fps), or to where the pointer
- * is on the picture (Lightgun, the cursor's range taken as the picture's). Outside flight
+ * hooks that function and asks pdo_pd1_cursor() where the mouse puts the
+ * cursor (which also marks flight): moved by the mouse's motion (Relative,
+ * 1 unit a count at 100 %: about 2000 counts across, as Orta's aim; 2.5
+ * crossed it in a frame or two at pd1's 20 fps), or where the pointer is on
+ * the picture (Lightgun, the cursor's range taken as the picture's). Outside flight
  * (pd1's menus) the mouse tilts the stick as before. A controller's stick,
  * the keys, Start or Back hand the cursor back to them. */
 static Uint64 pd1_live;
@@ -434,9 +434,14 @@ static bool pd1_mouse_input(float dx, float dy, bool pointer, float gx, float gy
     return true;
 }
 
-void pdo_pd1_cursor(uint32_t block)
+/* Where the mouse puts pd1's cursor this frame, from where it is: false when
+ * the mouse is not aiming (the game's own then). Called by src/pd1/mouse.c
+ * before the game's cursor update, which then sets it again after the
+ * update: the cursor is where the mouse put it in this very frame, without
+ * the frame's delay or the game's slow pull back to the middle. */
+bool pdo_pd1_cursor(uint32_t block, int16_t *cx, int16_t *cy)
 {
-    const float UNITS_PER_COUNT = 0.6f, RANGE = 1020.0f;
+    const float UNITS_PER_COUNT = 1.0f, RANGE = 1020.0f;
     float x, y, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
 
     pd1_live = SDL_GetTicksNS();
@@ -446,7 +451,7 @@ void pdo_pd1_cursor(uint32_t block)
                 pd1_dx, pd1_dy, pd1_gx, pd1_gy, (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC));
     if (!pd1_aiming) {
         pd1_dx = pd1_dy = 0.0f;
-        return;
+        return false;
     }
     x = (float)(int16_t)MEM16(block + 0xA);
     y = (float)(int16_t)MEM16(block + 0xC);
@@ -460,8 +465,9 @@ void pdo_pd1_cursor(uint32_t block)
         y += pd1_dy * UNITS_PER_COUNT * speed;
     }
     pd1_dx = pd1_dy = 0.0f;
-    MEM16(block + 0xA) = (uint16_t)(int16_t)SDL_clamp(x, -RANGE, RANGE);
-    MEM16(block + 0xC) = (uint16_t)(int16_t)SDL_clamp(y, -RANGE, RANGE);
+    *cx = (int16_t)SDL_clamp(x, -RANGE, RANGE);
+    *cy = (int16_t)SDL_clamp(y, -RANGE, RANGE);
+    return true;
 }
 
 /* PDO_PD1_SEARCH=1: where pd1 keeps its cursor. pd1 reads the controller
