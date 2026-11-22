@@ -405,13 +405,20 @@ static void dual_stick(pad_state *s)
  * and _after around the update, the button word put back after it): the
  * cursor moves, accelerates and leads the dragon as with a held stick, in
  * whatever setup, and the cursor is put on the target after the update
- * (the bits came from where it was before, so with the mouse moving the
- * dragon leads as with a held direction, and with it still none is held). Pushed on past the cursor's limit (or the pointer past
+ * (the bits came from where it was before). A held direction also builds a
+ * lead on the cursor's object (+0x17E x, +0x17C y: 30 a frame to +-1020),
+ * which swings the view and the dragon that way: that is how a stick
+ * reaches the screen's edges, the cursor's own range being only about
+ * 16-70 % across and 8-80 % down. The mouse, which jumps the cursor there,
+ * never built it ("can't reach the screen", the view and dragon wrong), so
+ * after the update the lead goes towards the cursor's place at the game's
+ * 30 a frame. Pushed on past the cursor's limit (or the pointer past
  * it), the direction is held, as a stick held at the edge, while it keeps
  * going and a little after. Outside flight (pd1's menus) the mouse tilts
  * the stick as before; a controller's stick, the keys, Start or Back hand
  * the cursor back to them. */
 #define PD1_RANGE 1020.0f
+#define PD1_LEAD_STEP 30              /* the lead's travel a frame, direction held */
 #define PD1_BUTTONS 0x00D24440u
 #define PD1_MASK_XP 0x00D246BCu
 #define PD1_MASK_XM 0x00D246C0u
@@ -511,8 +518,9 @@ void pdo_pd1_cursor_before(uint32_t block)
     MEM32(PD1_BUTTONS) = b;
     pd1_held = true;
     if (SDL_getenv("PDO_PD1_TRACE"))
-        SDL_Log("pd1 mouse: target %.0f %.0f cursor %d %d buttons %08x -> %08x%s%s", pd1_tx, pd1_ty,
-                (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC), pd1_buttons, b,
+        SDL_Log("pd1 mouse: target %.0f %.0f cursor %d %d lead %d %d buttons %08x -> %08x%s%s", pd1_tx, pd1_ty,
+                (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC), (int16_t)MEM16(block - 0x1Cu + 0x17Eu),
+                (int16_t)MEM16(block - 0x1Cu + 0x17Cu), pd1_buttons, b,
                 pd1_push[0] ? " (x held at the edge)" : "", pd1_push[1] ? " (y held at the edge)" : "");
 }
 
@@ -526,10 +534,15 @@ void pdo_pd1_cursor_after(uint32_t block)
     MEM32(PD1_BUTTONS) = pd1_buttons;
     pd1_held = false;
     for (int a = 0; a < 2; a++) {
-        uint32_t at = block + (a ? 0xCu : 0xAu);
+        uint32_t at = block + (a ? 0xCu : 0xAu), lead_at = block - 0x1Cu + (a ? 0x17Cu : 0x17Eu);
         float c = (float)(int16_t)MEM16(at), t = a ? pd1_ty : pd1_tx;
+        int lead = (int16_t)MEM16(lead_at), to = (int)t;
         if (!pd1_push[a] && c != t)
             MEM16(at) = (uint16_t)(int16_t)t;
+        /* the lead after the cursor's place, at the game's own 30 a frame
+         * (pushed at the edge, the held direction drives it already) */
+        if (!pd1_push[a] && lead != to)
+            MEM16(lead_at) = (uint16_t)(int16_t)(lead + SDL_clamp(to - lead, -PD1_LEAD_STEP, PD1_LEAD_STEP));
     }
 }
 
