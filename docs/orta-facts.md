@@ -506,3 +506,12 @@ also switches programs, but not the size. The dragon is skinned through
 its program's constants, read through a0 (all 192 registers). The seven
 3D draws that read a render target in play are the dragon's parts reading
 the shadow map (0x00708000).
+
+The camera update also leans the camera sideways and up or down: a spring
+at camera +0x230/+0x234 towards +0x140/+0x144, which are the camera's yaw x
+0x0035F840 (0x0035F838 when player +0x1C is not 9) and its pitch x
+0x0035F83C (0x0035F834), zero while a quarter turn runs (player +0x3D8 not
+0). The aim update builds the reticle's and the shots' direction from that
+lean (a vector from -k x +0x230, -k x +0x234), turned by the aim less the
+camera. About 1/15 of the yaw: small within a quarter, but past 120 degrees
+it points the aim sideways and behind the camera.

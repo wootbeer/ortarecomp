@@ -28,11 +28,24 @@
  * the position springs read too: undamped, they swung, worst when turning
  * round (the shake). The pitch is left as the update clamps it (40 up,
  * about 32 down). The aim's yaw stays in -180..180, as the game keeps it
- * (past it the reticle went wild): the camera's takes the same value. */
+ * (past it the reticle went wild): the camera's takes the same value.
+ *
+ * The update also leans the camera sideways (+0x230, a spring towards
+ * +0x140 = a constant x the camera's yaw: 0x0035F840, or 0x0035F838 in
+ * another mode; zero while the game turns a quarter), and the aim update
+ * builds the reticle's and the shots' direction from that lean. Within a
+ * quarter (+-50) it is small; turned round with the right stick it grew
+ * to +-10, flipped across the back (the view jerked) and turned the aim's
+ * direction sideways and behind the camera (the reticle ran off one side
+ * and came back from the other; a trace). With dual-stick aiming the yaw
+ * lean's constants are 0 for the update, put back after it: the lean
+ * settles at 0. The pitch's lean is the game's. */
+#define LEAN_YAW_A 0x0035F840u
+#define LEAN_YAW_B 0x0035F838u
 extern void sub_0007B5D0_gen(void);
 void sub_0007B5D0(void)
 {
-    uint32_t player = MEM32(PLAYER), self = g_ecx;
+    uint32_t player = MEM32(PLAYER), self = g_ecx, lean[2];
     float pitch, yaw;
 
     if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
@@ -50,7 +63,13 @@ void sub_0007B5D0(void)
     MEMF(self + 0xC4) = yaw;
     MEMF(self + 0x130) = 0.0f;
     MEMF(self + 0x134) = 0.0f;
+    lean[0] = MEM32(LEAN_YAW_A);
+    lean[1] = MEM32(LEAN_YAW_B);
+    MEMF(LEAN_YAW_A) = 0.0f;
+    MEMF(LEAN_YAW_B) = 0.0f;
     sub_0007B5D0_gen();
+    MEM32(LEAN_YAW_A) = lean[0];
+    MEM32(LEAN_YAW_B) = lean[1];
     MEMF(self + 0xC4) = yaw;
     MEMF(self + 0x130) = 0.0f;
     MEMF(self + 0x134) = 0.0f;
