@@ -121,7 +121,8 @@ static int nitems(void)
 
 /* The Controls page: a line per Xbox button, then these two. While a line
  * waits for its new key or controller button, capture is set. */
-enum { CTL_MOUSE = PDO_IN_COUNT, CTL_MSPEED, CTL_RESET, CTL_BACK, CTL_COUNT };
+enum { CTL_MOUSE = PDO_IN_COUNT, CTL_MSPEED, CTL_DUAL, CTL_RESET, CTL_BACK, CTL_COUNT };
+#define CTL_GAP 0.5f        /* between the buttons and the lines after them */
 static bool controls, capture;
 
 static bool open_, dirty = true, swallow;
@@ -487,6 +488,8 @@ static void control_act(int a, int dir)
         st->mouse_aim = (st->mouse_aim + (dir < 0 ? 2 : 1)) % 3;    /* Off, Relative, Lightgun */
     } else if (selected == CTL_MSPEED) {
         st->mouse_speed = SDL_clamp(st->mouse_speed + 10 * dir, 10, 400);
+    } else if (selected == CTL_DUAL) {
+        st->dual_stick = !st->dual_stick;
     } else if (selected == CTL_BACK || (a < 0 && dir < 0 && selected >= PDO_IN_COUNT)) {
         controls = false;
         page = PAGE_MAIN;
@@ -643,7 +646,7 @@ static void click(SDL_WindowID id, float x, float y, bool touch)
     if (controls) {
         const float w = 38, x0 = (cols - w) / 2, y0 = 0.75f;
         for (i = 0; i < CTL_COUNT; i++) {
-            float ry = y0 + 5 + i * 1.0f + (i >= PDO_IN_COUNT ? 0.75f : 0);
+            float ry = y0 + 5 + i * 1.0f + (i >= PDO_IN_COUNT ? CTL_GAP : 0);
             if (col >= x0 && col < x0 + w && row >= ry - 0.0625f && row < ry + 1.0625f)
                 break;
         }
@@ -868,13 +871,13 @@ static void help(float col, float row, int cols, const char *s)
 static void draw_controls(void)
 {
     const pdo_binding *b = pdo_input_bindings();
-    const float w = 38, x0 = (cols - w) / 2, y0 = 0.75f, h = 28.5f;
+    const float w = 38, x0 = (cols - w) / 2, y0 = 0.75f, h = 29.0f;
 
     frame(x0, y0, w, h, "CONTROLS");
     COLOR(COL_DIM);
     text(x0 + 3, y0 + 3.5f, "button    key       pad       mouse");
     for (int i = 0; i < CTL_COUNT; i++) {
-        float y = y0 + 5 + i * 1.0f + (i >= PDO_IN_COUNT ? 0.75f : 0);
+        float y = y0 + 5 + i * 1.0f + (i >= PDO_IN_COUNT ? CTL_GAP : 0);
         char line[64];
         if (i < PDO_IN_COUNT) {
             const char *k = b[i].key != SDL_SCANCODE_UNKNOWN ? SDL_GetScancodeName(b[i].key) : "-";
@@ -887,6 +890,8 @@ static void draw_controls(void)
             snprintf(line, sizeof line, "%-9s %s", "Mouse aim", modes[SDL_clamp(pdo_settings_get()->mouse_aim, 0, 2)]);
         } else if (i == CTL_MSPEED) {
             snprintf(line, sizeof line, "%-9s %d%%", "Mouse spd", pdo_settings_get()->mouse_speed);
+        } else if (i == CTL_DUAL) {
+            snprintf(line, sizeof line, "%-9s %s", "Dual stk", pdo_settings_get()->dual_stick ? "On (RT fire, LT morph)" : "Off");
         } else {
             snprintf(line, sizeof line, "%s", i == CTL_RESET ? "Reset to defaults" : "Back");
         }
@@ -901,8 +906,13 @@ static void draw_controls(void)
         text(x0 + 2, y, line);
     }
     COLOR(COL_DIM);
-    text(x0 + 1.5f, y0 + h - 2.25f, "A/Enter rebind  Left clear");
-    text(x0 + 1.5f, y0 + h - 1.25f, "B/Esc back      Esc frees the mouse");
+    if (selected == CTL_DUAL) {         /* what the line does, in place of the keys' hint */
+        text(x0 + 1.5f, y0 + h - 2.25f, "Experimental: left stick flies,");
+        text(x0 + 1.5f, y0 + h - 1.25f, "right stick aims and turns view");
+    } else {
+        text(x0 + 1.5f, y0 + h - 2.25f, "A/Enter rebind  Left clear");
+        text(x0 + 1.5f, y0 + h - 1.25f, "B/Esc back      Esc frees the mouse");
+    }
 }
 
 /* A line's value as shown, and for a slider its fill (0..1), else -1. */

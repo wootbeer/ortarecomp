@@ -318,6 +318,73 @@ static void aim_search(uint32_t obj)
     }
 }
 
+/* Dual-stick aiming (Controls > Dual stk): in play the right stick turns
+ * the aim angles (player +0xF8 pitch, +0xFC yaw, degrees; pitch grows
+ * downwards) at up to YAW_RATE / PITCH_RATE degrees a second, and the
+ * camera is held on the aim (src/guest/mouse_aim.c), so the view turns
+ * with it all the way round, as in modern games. The right stick is not
+ * passed on in play, the right trigger is A there (fire) and the left Y
+ * (the dragon's form); the right stick turns the view, so the triggers'
+ * quarter turns are not needed. The left stick
+ * flies the dragon only (src/guest/mouse_aim.c). Pitch is held
+ * to 40 degrees either way, where the camera stops (past it the reticle
+ * left the screen). Outside play
+ * (menus, pd1: no player object) nothing changes. Real time, not the
+ * game's reads, so the speed is the same at any frame rate. */
+static void dual_stick(pad_state *s)
+{
+    const float YAW_RATE = 200.0f, PITCH_RATE = 120.0f, DEAD = 0.15f, PITCH_MAX = 40.0f;
+    static Uint64 last;
+    Uint64 now = SDL_GetTicksNS();
+    float dt = last ? (float)(now - last) * 1e-9f : 0.0f;
+    uint32_t obj = RETICLE ? MEM32(RETICLE) : 0;
+    float x, y, m, k, pitch, yaw;
+
+    last = now;
+    if (!pdo_settings_get()->dual_stick || obj < 0x10000u || obj >= 0x04000000u)
+        return;
+    if (s->analog[AB_RTRIG] > s->analog[AB_A])
+        s->analog[AB_A] = s->analog[AB_RTRIG];  /* the right trigger shoots (A) */
+    s->analog[AB_RTRIG] = 0;
+    if (s->analog[AB_LTRIG] > s->analog[AB_Y])
+        s->analog[AB_Y] = s->analog[AB_LTRIG];  /* the left trigger morphs (Y) */
+    s->analog[AB_LTRIG] = 0;
+    x = (float)s->thumb[2] / 32767.0f;
+    y = (float)s->thumb[3] / 32767.0f;
+    s->thumb[2] = s->thumb[3] = 0;
+    {   /* PDO_DUAL_TRACE=1: the aim and the camera, a few lines a second */
+        static int trace = -1;
+        static Uint64 last_trace;
+        uint32_t cam = MEM32(obj + 0x3D0);
+        if (trace < 0)
+            trace = SDL_getenv("PDO_DUAL_TRACE") && *SDL_getenv("PDO_DUAL_TRACE") == '1';
+        if (trace && now - last_trace > 200000000ull && cam >= 0x10000u && cam < 0x04000000u) {
+            last_trace = now;
+            SDL_Log("dual: right %+.2f %+.2f left %+6d %+6d, aim pitch %+.1f yaw %+.1f, camera %+.1f %+.1f, "
+                    "rates %+.2f %+.2f, reticle %.0f %.0f", x, y, s->thumb[0], s->thumb[1], MEMF(obj + 0xF8),
+                    MEMF(obj + 0xFC), MEMF(cam + 0xC0), MEMF(cam + 0xC4), MEMF(obj + 0xDC), MEMF(obj + 0xD8),
+                    MEMF(obj + 0xB8), MEMF(obj + 0xBC));
+        }
+    }
+    m = SDL_sqrtf(x * x + y * y);
+    if (m <= DEAD || dt <= 0.0f)
+        return;
+    if (dt > 0.05f)
+        dt = 0.05f;                     /* after a pause: no jump */
+    k = (m > 1.0f ? 1.0f : (m - DEAD) / (1.0f - DEAD));
+    k = k * k / m;                      /* squared past the dead zone: fine aim near the centre */
+    pitch = MEMF(obj + 0xF8);
+    yaw = MEMF(obj + 0xFC);
+    if (pitch != pitch || yaw != yaw || SDL_fabsf(yaw) > 1e5f)
+        return;
+    yaw += x * k * YAW_RATE * dt;
+    pitch -= y * k * PITCH_RATE * dt;   /* stick up: look up */
+    if (yaw > 180.0f || yaw < -180.0f)  /* -180..180, as the game keeps it */
+        yaw -= SDL_floorf((yaw + 180.0f) / 360.0f) * 360.0f;
+    MEMF(obj + 0xFC) = yaw;
+    MEMF(obj + 0xF8) = SDL_clamp(pitch, -PITCH_MAX, PITCH_MAX);
+}
+
 static int16_t clamp16(int v)
 {
     return (int16_t)(v < -32768 ? -32768 : v > 32767 ? 32767 : v);
@@ -512,6 +579,7 @@ static void read_port(int port, pad_state *s)
         /* The on-screen controls, as the first controller too (src/android/). */
         pdo_touch_add(&s->buttons, s->analog, s->thumb);
 #endif
+        dual_stick(s);
         apply_script(s);
     }
     {   /* The options overlay keeps the game's input while it is open. */

@@ -358,10 +358,17 @@ The camera follows the aim through a damped spring per axis in 0x0007B5D0
 0x00041880): the pull +0x120/+0x124 = +0x110/+0x114 + [player+0x380] x the
 error to the target angle, the velocity +0x130/+0x134 takes the pull and
 loses [player+0x384] of itself, and the angles take the velocity: +0xC0
-pitch (degrees, clamped to 90), +0xC4 yaw (wraps at 360). The targets come
+pitch (degrees; it stopped at 40 up in a trace), +0xC4 yaw (not wrapped: past
+404 in a trace, while the game keeps the aim's yaw in -180..180). The targets come
 from the player's +0xF8/+0xFC. Run with stiffness 1 and no damping, the
 camera turns with the aim at once (tried for mouse aim, issue 51: the
-camera, not the reticle; it shook once round, at the yaw's wrap).
+camera, not the reticle; it shook once round: the aim's yaw wraps and the
+camera's does not, and the clamp of the aim around the camera then held the
+aim a turn away. Stiffness and damping are read by the camera's position
+springs in the same update too: undamped, they swung as the view turned round
+(the shake); dual-stick aiming sets the camera's angles instead). The aim update clamps the aim's yaw between aim block
+(player+0xB0) +0x94 and +0x104, the quarter the view faces, about 50 either
+way.
 [player+0x380]/+0x384 are read only here and by 0x0007B2D0, another
 spring.
 
@@ -488,6 +495,35 @@ one list renderer (0x001B6AE0, from the main loop 0x00121B10) through
 0x001A8500. It loads TNRoman.bin, pad_alert.bmp, wave_00.cmp and
 NARATION.CGZ first, then OPENING.CGZ before the opening movie.
 
+pd1's input: 0x001C39B0 reads XInput and fills a DirectInput style joystick
+state (lX = left stick x, lY = -y, ...), as the PC version it was ported
+from. Its cursor is moved by 0x0005EA44 (cdecl, an object whose +0x1C is
+the cursor block: +0 the mode, 0 in flight, 0xA and 0xC switch it off; +0xA
+x and +0xC y as 16-bit values, -1020..1020, x growing to the left and y
+downward, about 60 a frame at full tilt; at 0x00D49208 in a stage). The
+dragon follows it (0x00D49204, to about +-682, easing back to the middle),
+and 0x00D2446C ramps a turn rate to +-128. [0x00D24478] selects the control
+scheme.
+0x0005EA44 moves the cursor from four direction bits of the button word
+[0x00D24440], tested through masks the controls set ([0x00D246BC] x+,
+[0x00D246C0] x-, [0x00D246C4] y+, [0x00D246C8] y-; Up/Down Reverse and
+other setups change only the masks): the block's +0x16/+0x18 count how long
+each way is held, +0x12 ramps by 3 to 60 and steps the cursor through a
+table at 0x00435968, the object's +0x17E/+0x17C (the dragon's lead) move
+by 30 to +-1020 with it, and with no direction held the cursor eases back
+to the middle. On screen the cursor's limits sat at about 16-70 % across
+and 8-80 % down (x +1020 left, y +1020 down; two captures). With none held
+the cursor eases back by 3 a frame and the lead is left.
+
+Mouse aim on that cursor was tried several ways and not kept (pd1's mouse
+still tilts the stick): written into the cursor, the dragon did not follow
+and the game pulled it back; a stick tilted towards a target went the wrong
+way with Up/Down Reverse; the direction bits set through the masks, the
+cursor placed and its lead moved after it, fought the view; holding the
+bits a frame at a time from the mouse's motion went at a slant, and shared
+between the axes lost left and right. A held direction is what pd1's view
+is built on; a later try should start from there.
+
 ## Boost and brake ends
 
 At the end of a boost or a brake the game renders the scene at another
@@ -499,3 +535,12 @@ also switches programs, but not the size. The dragon is skinned through
 its program's constants, read through a0 (all 192 registers). The seven
 3D draws that read a render target in play are the dragon's parts reading
 the shadow map (0x00708000).
+
+The camera update also leans the camera sideways and up or down: a spring
+at camera +0x230/+0x234 towards +0x140/+0x144, which are the camera's yaw x
+0x0035F840 (0x0035F838 when player +0x1C is not 9) and its pitch x
+0x0035F83C (0x0035F834), zero while a quarter turn runs (player +0x3D8 not
+0). The aim update builds the reticle's and the shots' direction from that
+lean (a vector from -k x +0x230, -k x +0x234), turned by the aim less the
+camera. About 1/15 of the yaw: small within a quarter, but past 120 degrees
+it points the aim sideways and behind the camera.

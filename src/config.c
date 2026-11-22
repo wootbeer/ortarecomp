@@ -272,6 +272,8 @@ static bool load_setting(pdo_config *cfg, const char *line, const char *value)
             settings.mouse_aim = clamp_int(SDL_atoi(value), PDO_MOUSE_OFF, PDO_MOUSE_LIGHTGUN);
         else if (strcmp(line, "mouse_speed") == 0)
             settings.mouse_speed = clamp_int(SDL_atoi(value), 10, 400);
+        else if (strcmp(line, "dual_stick") == 0)
+            settings.dual_stick = SDL_atoi(value) != 0;
         else if (strcmp(line, "unlock_box") == 0)
             settings.unlock_box = SDL_atoi(value) != 0;
         else if (strcmp(line, "skip_logos") == 0)
@@ -349,6 +351,7 @@ static int config_text(const pdo_config *cfg, char *text, size_t cap)
                  "window_maximized=%d\n"
                  "mouse_aim=%d\n"
                  "mouse_speed=%d\n"
+                 "dual_stick=%d\n"
                  "unlock_box=%d\n"
                  "skip_logos=%d\n"
                  "skip_launcher=%d\n"
@@ -381,7 +384,7 @@ static int config_text(const pdo_config *cfg, char *text, size_t cap)
                  settings.fps30 ? 30 : 60,
                  settings.shadow_original ? "low" : "high",
                  settings.win_x, settings.win_y, settings.win_w, settings.win_h, settings.win_maximized,
-                 settings.mouse_aim, settings.mouse_speed, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble,
+                 settings.mouse_aim, settings.mouse_speed, settings.dual_stick, settings.unlock_box, settings.skip_logos, settings.skip_launcher, settings.rumble,
                  settings.touch_buttons == PDO_TOUCH_ALWAYS ? "always" : settings.touch_buttons == PDO_TOUCH_OFF ? "off" : "auto",
                  settings.touch_size, settings.touch_opacity, settings.gpu_driver, settings.depth_reversed,
                  settings.picture_crt, settings.pic_brightness, settings.pic_contrast, settings.pic_gamma,
@@ -554,11 +557,14 @@ void pdo_settings_log(void)
     char line[512];
     const pdo_settings *s = pdo_settings_get();
     snprintf(line, sizeof line, "%gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, "
-             "fixed function on %s, aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
+             "fixed function on %s, aspect %s%s, frame rate %d, save file %d, mouse aim %s %d%%%s",
+             s->render_scale2 / 2.0, s->msaa, s->fxaa,
              s->anisotropy, s->bloom, s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
              s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
              s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
-             s->fps30 ? 30 : 60, s->save_slot);
+             s->fps30 ? 30 : 60, s->save_slot,
+             s->mouse_aim == PDO_MOUSE_OFF ? "off" : s->mouse_aim == PDO_MOUSE_LIGHTGUN ? "lightgun" : "relative",
+             s->mouse_speed, s->dual_stick ? ", dual-stick" : "");
     if (strcmp(line, last)) {
         SDL_Log("settings%s: %s", last[0] ? " changed" : "", line);
         SDL_strlcpy(last, line, sizeof last);

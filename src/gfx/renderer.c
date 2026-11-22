@@ -5058,6 +5058,11 @@ bool pdo_gfx_pump_events(void)
         /* The game has the mouse (hidden, held in the window) for mouse
          * aim while it is the window in front and the options are shut. */
         int mode = pdo_settings_get()->mouse_aim;
+        /* pd1's mouse tilts the stick from the mouse's motion, which only a
+         * held mouse gives: Lightgun (the pointer's place) has nothing to
+         * give it there, so in pd1 it is Relative */
+        if (mode == PDO_MOUSE_LIGHTGUN && pdo_program_active() == PDO_PROGRAM_PD1)
+            mode = PDO_MOUSE_RELATIVE;
         bool held = mode != PDO_MOUSE_OFF && !mouse_released && !pdo_overlay_open() &&
                     (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
         bool want = held && mode == PDO_MOUSE_RELATIVE;
@@ -5069,6 +5074,17 @@ bool pdo_gfx_pump_events(void)
         else if (!hide && !want && !SDL_CursorVisible())
             SDL_ShowCursor();
         pdo_mouse_set_captured(held);
+        {   /* when the game takes or gives back the mouse, and why */
+            static int was = -1;
+            if (was != (int)held) {
+                was = held;
+                SDL_Log("mouse: %s%s%s%s%s", held ? "held by the game" : "not held",
+                        held ? "" : mode == PDO_MOUSE_OFF ? " (mouse aim off)" : "",
+                        held || mode == PDO_MOUSE_OFF ? "" : mouse_released ? " (Escape gave it back; a click takes it)" : "",
+                        held || mode == PDO_MOUSE_OFF || mouse_released ? "" : pdo_overlay_open() ? " (the menu is open)" : "",
+                        held || mode == PDO_MOUSE_OFF || mouse_released || pdo_overlay_open() ? "" : " (the window is not in front)");
+            }
+        }
     }
     return keep_going;
 }
@@ -5638,6 +5654,13 @@ static float draw_distance(const frame_data *pf, const command *pc, const frame_
 
     if (!c->vsh && c->fvf < 0)
         return d;                           /* CPU-made: positions only */
+    /* The other draw's own state is read below as this one's kind: one of
+     * another kind (a pair across models can be: a program's or CPU-made
+     * against fixed-function vertices) has none of it (its fvf -1 read
+     * the uniforms before the list: a crash starting a stage). Not alike. */
+    if (pc->vsh != c->vsh || (!c->vsh && (pc->fvf < 0 || (uint32_t)pc->fvf >= pf->nfvf_us ||
+                                          (uint32_t)c->fvf >= cf->nfvf_us)))
+        return 3.4e38f;
     /* Another vertex program (key_of): only a tie-break, as the data. */
     float vsh_other = c->vsh && pc->vsh && (pc->vu.info[0] != c->vu.info[0] || pc->vu.info[1] != c->vu.info[1])
         ? 1e-3f : 0.0f;
@@ -6041,6 +6064,8 @@ static void match_frames(frame_data *prev, frame_data *cur)
                                 continue;
                         }
                         cand[nc2].d = draw_distance(prev, &prev->cmds[pk[i + a].cmd], cur, &cur->cmds[ck[j + b].cmd]);
+                        if (cand[nc2].d >= 3e38f)
+                            continue;           /* not alike (another kind): never paired */
                         /* Ties keep the draw order: a mesh drawn twice in one
                          * place (the dragon's passes, on other programs each)
                          * pairs first with first, second with second. As a

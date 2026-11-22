@@ -122,13 +122,13 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
-   Dual-stick aiming, as an option: the right stick turning the view all
-   the way round and the left moving, as modern games do. The camera
-   spring in 0x0007B5D0 can be driven directly (`docs/orta-facts.md`,
-   Input and the reticle); taking its damping out made the camera follow
-   the aim at once, which is the start of it. Needs the yaw's 360 wrap
-   handled (it shook) and a choice of how the game's own camera moves
-   with it.
+   Dual-stick aiming (experimental, v0.1.16): Controls > Dual stk.
+   Right stick turns the aim (input_hle.c dual_stick()); the camera's
+   angles are put on it, its yaw lean off, the quarter's yaw clamp
+   widened after its springs and the left stick's aim bits off for the
+   aim update (src/guest/mouse_aim.c); RT is A, LT is Y.
+   pd1 mouse aim: tried and not kept; what was learnt is in
+   docs/orta-facts.md (pd1's input). pd1's mouse tilts the stick.
 
 ## Testing
 

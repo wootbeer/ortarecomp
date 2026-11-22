@@ -8,7 +8,11 @@
   in the corner (on by default). Also `--shader-note 0` on the command
   line.
 - **Lightgun aiming:** Controls > Mouse aim > Lightgun puts the reticle
-  where the pointer is on the picture, for lightguns that act as a mouse.
+  where the pointer is on the picture, for lightguns that act as a mouse
+  (Orta; in the original Panzer Dragoon it works as Relative).
+- **Dual-stick aiming (experimental):** Controls > Dual stk (off by default, or
+  `--dual-stick 1`). Left stick flies the dragon, right stick aims and
+  turns the view all the way round, RT shoots, LT changes the dragon.
 
 ### Fixed
 
@@ -19,6 +23,7 @@
   shooter: precise, no drift or float, and smooth (issue 51).
 - A white dot left where a main-menu entry was selected (the game's own
   speck of a draw, about a pixel; at higher resolutions it showed).
+- A rare crash when a stage starts with frame interpolation on.
 
 ## v0.1.15 (beta)
 
