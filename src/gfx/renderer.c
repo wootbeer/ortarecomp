@@ -5058,6 +5058,11 @@ bool pdo_gfx_pump_events(void)
         /* The game has the mouse (hidden, held in the window) for mouse
          * aim while it is the window in front and the options are shut. */
         int mode = pdo_settings_get()->mouse_aim;
+        /* pd1's mouse tilts the stick from the mouse's motion, which only a
+         * held mouse gives: Lightgun (the pointer's place) has nothing to
+         * give it there, so in pd1 it is Relative */
+        if (mode == PDO_MOUSE_LIGHTGUN && pdo_program_active() == PDO_PROGRAM_PD1)
+            mode = PDO_MOUSE_RELATIVE;
         bool held = mode != PDO_MOUSE_OFF && !mouse_released && !pdo_overlay_open() &&
                     (SDL_GetWindowFlags(window) & SDL_WINDOW_INPUT_FOCUS);
         bool want = held && mode == PDO_MOUSE_RELATIVE;
