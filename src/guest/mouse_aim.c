@@ -116,7 +116,7 @@ void sub_0007B5D0(void)
  * them, and the clamp pulled the aim back each frame while the stick
  * pushed it on: the camera, on the aim, shook. While it is on, the update
  * runs without that clamp (the limits wide open for the call, put back
- * after it); the pitch's is kept, and the quarter turns (L/R) are the
+ * after it; above); the pitch's is kept, and the quarter turns (L/R) are the
  * game's.
  *
  * The left stick turns the aim there too: as direction bits in player
@@ -126,10 +126,35 @@ void sub_0007B5D0(void)
  * cleared for the call and the rates zeroed, the bits put back after it
  * for whatever else reads them. */
 #define AIM_DIRS 0x0003C000u
+/* The two yaw limits are themselves the outputs of springs (0x000677B0 on
+ * aim block +0x90 and +0x100, the first thing the aim update does; the
+ * limit is each one's +4). They are widened after those springs have run
+ * and put back to the springs' own values once the update is done, so the
+ * springs never see them wide. (Widened before the call instead, the
+ * springs pulled against +-1e9 for as long as dual-stick was on, and once
+ * it was turned off they threw the limits, the aim and the camera out by
+ * millions of degrees: the view shook, a trace.) */
+static uint32_t widen_block, limit[2];
+static bool widened[2];
+
+extern void sub_000677B0_gen(void);
+void sub_000677B0(void)
+{
+    uint32_t self = g_ecx;
+    int k = !widen_block ? -1 : self == widen_block + 0x90u ? 0 : self == widen_block + 0x100u ? 1 : -1;
+
+    sub_000677B0_gen();
+    if (k >= 0) {
+        limit[k] = MEM32(self + 4);
+        widened[k] = true;
+        MEMF(self + 4) = k ? 1e9f : -1e9f;
+    }
+}
+
 extern void sub_0007E6A0_gen(void);
 void sub_0007E6A0(void)
 {
-    uint32_t player = MEM32(PLAYER), block = g_ecx, lo, hi, dirs;
+    uint32_t player = MEM32(PLAYER), block = g_ecx, dirs;
 
     if (!pdo_settings_get()->dual_stick || player < 0x10000u || player >= 0x04000000u ||
         block != player + 0xB0u) {
@@ -166,17 +191,18 @@ void sub_0007E6A0(void)
             }
         }
     }
-    lo = MEM32(block + 0x94);
-    hi = MEM32(block + 0x104);
     dirs = MEM32(player + 0x3F8) & AIM_DIRS;
-    MEMF(block + 0x94) = -1e9f;
-    MEMF(block + 0x104) = 1e9f;
     MEM32(player + 0x3F8) &= ~AIM_DIRS;
     MEMF(block + 0x28) = 0.0f;
     MEMF(block + 0x2C) = 0.0f;
+    widen_block = block;
+    widened[0] = widened[1] = false;
     sub_0007E6A0_gen();
-    MEM32(block + 0x94) = lo;
-    MEM32(block + 0x104) = hi;
+    widen_block = 0;
+    if (widened[0])
+        MEM32(block + 0x94) = limit[0];
+    if (widened[1])
+        MEM32(block + 0x104) = limit[1];
     MEM32(player + 0x3F8) = (MEM32(player + 0x3F8) & ~AIM_DIRS) | dirs;
     MEMF(block + 0x28) = 0.0f;
     MEMF(block + 0x2C) = 0.0f;
