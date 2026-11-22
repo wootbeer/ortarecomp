@@ -397,6 +397,7 @@ static void dual_stick(pad_state *s)
  * (pd1's menus) the mouse tilts the stick as before. A controller's stick,
  * the keys, Start or Back hand the cursor back to them. */
 static Uint64 pd1_live;
+static uint32_t pd1_block;
 static bool pd1_aiming, pd1_pointer;
 static float pd1_dx, pd1_dy, pd1_gx, pd1_gy;
 static int pd1_mode;
@@ -438,6 +439,10 @@ void pdo_pd1_cursor(uint32_t block)
     float x, y, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
 
     pd1_live = SDL_GetTicksNS();
+    pd1_block = block;
+    if (SDL_getenv("PDO_PD1_TRACE"))
+        SDL_Log("pd1 mouse: %s motion %+.0f %+.0f pointer %.0f %.0f cursor %d %d", pd1_aiming ? "aiming" : "idle",
+                pd1_dx, pd1_dy, pd1_gx, pd1_gy, (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC));
     if (!pd1_aiming) {
         pd1_dx = pd1_dy = 0.0f;
         return;
@@ -465,6 +470,86 @@ void pdo_pd1_cursor(uint32_t block)
  * scored against the stick's direction: +1 when it moved the way the stick
  * points, -1 the other way, and counted when it changed with the stick at
  * rest. Every five seconds the best for x and for y are logged. */
+/* PDO_PD1_SEARCH=2: what follows the cursor (as the reticle on screen
+ * might, eased): over 0x00D20000-0x00D50000, each 16-bit value's
+ * correlation with the cursor's x and y now and ten reads before, logged
+ * every five seconds. Move the mouse in big, quick jumps and hold. */
+static void pd1_follow(void)
+{
+    enum { LO = 0x00D20000u, N = (0x00D50000u - 0x00D20000u) / 2, LAG = 10 };
+    static float *sv, *svv, *sc[2][2], *scc;   /* sums: v, v^2, v*c (x, y; now, lagged) */
+    static float hist[LAG][2];
+    static int n, h;
+    static Uint64 last_log;
+    float c[2], cl[2];
+
+    if (!pd1_block)
+        return;
+    if (!sv) {
+        sv = SDL_calloc(N, sizeof *sv);
+        svv = SDL_calloc(N, sizeof *svv);
+        scc = SDL_calloc(4, sizeof *scc);
+        for (int a = 0; a < 2; a++)
+            for (int l = 0; l < 2; l++)
+                sc[a][l] = SDL_calloc(N, sizeof(float));
+        if (!sv || !svv || !scc || !sc[0][0] || !sc[0][1] || !sc[1][0] || !sc[1][1])
+            return;
+        SDL_Log("pd1 follow: on (move the mouse in big jumps and hold)");
+    }
+    c[0] = (float)(int16_t)MEM16(pd1_block + 0xA);
+    c[1] = (float)(int16_t)MEM16(pd1_block + 0xC);
+    cl[0] = hist[h][0];
+    cl[1] = hist[h][1];
+    hist[h][0] = c[0];
+    hist[h][1] = c[1];
+    h = (h + 1) % LAG;
+    if (++n <= LAG)
+        return;
+    {   /* the cursor's own sums: x, x^2, y, y^2 (now; the lagged are alike) */
+        scc[0] += c[0]; scc[1] += c[0] * c[0]; scc[2] += c[1]; scc[3] += c[1] * c[1];
+    }
+    for (uint32_t i = 0; i < N; i++) {
+        float v = (float)(int16_t)MEM16(LO + i * 2);
+        sv[i] += v;
+        svv[i] += v * v;
+        sc[0][0][i] += v * c[0];
+        sc[0][1][i] += v * cl[0];
+        sc[1][0][i] += v * c[1];
+        sc[1][1][i] += v * cl[1];
+    }
+    if (SDL_GetTicksNS() - last_log > 5000000000ull) {
+        float m = (float)(n - LAG);
+        last_log = SDL_GetTicksNS();
+        for (int a = 0; a < 2; a++) {
+            float mc = scc[2 * a] / m, vc = scc[2 * a + 1] / m - mc * mc;
+            for (int l = 0; l < 2; l++) {
+                uint32_t best[6] = { 0 };
+                float r_best[6] = { 0 };
+                for (uint32_t i = 0; i < N; i++) {
+                    float mv = sv[i] / m, vv = svv[i] / m - mv * mv, r;
+                    if (vv < 1.0f || vc < 1.0f || LO + i * 2 == pd1_block + 0xA + 2u * a)
+                        continue;
+                    r = (sc[a][l][i] / m - mv * mc) / SDL_sqrtf(vv * vc);
+                    if (SDL_fabsf(r) <= SDL_fabsf(r_best[5]))
+                        continue;
+                    int k = 5;
+                    while (k > 0 && SDL_fabsf(r) > SDL_fabsf(r_best[k - 1])) {
+                        r_best[k] = r_best[k - 1];
+                        best[k] = best[k - 1];
+                        k--;
+                    }
+                    r_best[k] = r;
+                    best[k] = i;
+                }
+                for (int k = 0; k < 6 && r_best[k] != 0.0f; k++)
+                    SDL_Log("pd1 follow: cursor %s %s ~ 0x%08X (r %+.3f, now %d)", a ? "y" : "x",
+                            l ? "10 reads before" : "now", LO + best[k] * 2, r_best[k],
+                            (int)(int16_t)MEM16(LO + best[k] * 2));
+            }
+        }
+    }
+}
+
 #define PD1_DATA_LO 0x007C0C00u
 #define PD1_DATA_HI 0x00E599A0u
 static void pd1_search(const pad_state *s)
@@ -740,6 +825,8 @@ static void read_port(int port, pad_state *s)
         dual_stick(s);
 #ifdef PDO_PROGRAM_PD1
         pd1_search(s);
+        if (SDL_getenv("PDO_PD1_SEARCH") && *SDL_getenv("PDO_PD1_SEARCH") == '2')
+            pd1_follow();
         if (SDL_getenv("PDO_PD1_WATCH")) {
             /* PDO_PD1_WATCH=1: the search's best, 10 times a second */
             static Uint64 last;
