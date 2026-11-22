@@ -323,8 +323,9 @@ static void aim_search(uint32_t obj)
  * downwards) at up to YAW_RATE / PITCH_RATE degrees a second, and the
  * camera is held on the aim (src/guest/mouse_aim.c), so the view turns
  * with it all the way round, as in modern games. The right stick is not
- * passed on in play, and the right trigger is A there (fire; the right
- * stick turns the view, so R's quarter turn is not needed). The left stick
+ * passed on in play, the right trigger is A there (fire) and the left X
+ * (the dragon's form); the right stick turns the view, so the triggers'
+ * quarter turns are not needed. The left stick
  * flies the dragon only (src/guest/mouse_aim.c). Pitch is held
  * to 40 degrees either way, where the camera stops (past it the reticle
  * left the screen). Outside play
@@ -345,6 +346,9 @@ static void dual_stick(pad_state *s)
     if (s->analog[AB_RTRIG] > s->analog[AB_A])
         s->analog[AB_A] = s->analog[AB_RTRIG];  /* the right trigger shoots (A) */
     s->analog[AB_RTRIG] = 0;
+    if (s->analog[AB_LTRIG] > s->analog[AB_X])
+        s->analog[AB_X] = s->analog[AB_LTRIG];  /* the left trigger morphs (X) */
+    s->analog[AB_LTRIG] = 0;
     x = (float)s->thumb[2] / 32767.0f;
     y = (float)s->thumb[3] / 32767.0f;
     s->thumb[2] = s->thumb[3] = 0;
