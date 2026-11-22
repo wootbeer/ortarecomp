@@ -404,14 +404,14 @@ static void dual_stick(pad_state *s)
  * through the game's own masks (src/pd1/mouse.c calls pdo_pd1_cursor_before
  * and _after around the update, the button word put back after it): the
  * cursor moves, accelerates and leads the dragon as with a held stick, in
- * whatever setup. Within a frame's travel the cursor is put on the target
- * after the update. Pushed on past the cursor's limit (or the pointer past
+ * whatever setup, and the cursor is put on the target after the update
+ * (the bits came from where it was before, so with the mouse moving the
+ * dragon leads as with a held direction, and with it still none is held). Pushed on past the cursor's limit (or the pointer past
  * it), the direction is held, as a stick held at the edge, while it keeps
  * going and a little after. Outside flight (pd1's menus) the mouse tilts
  * the stick as before; a controller's stick, the keys, Start or Back hand
  * the cursor back to them. */
 #define PD1_RANGE 1020.0f
-#define PD1_STEP 60.0f                  /* the cursor's most travel a frame */
 #define PD1_BUTTONS 0x00D24440u
 #define PD1_MASK_XP 0x00D246BCu
 #define PD1_MASK_XM 0x00D246C0u
@@ -516,8 +516,9 @@ void pdo_pd1_cursor_before(uint32_t block)
                 pd1_push[0] ? " (x held at the edge)" : "", pd1_push[1] ? " (y held at the edge)" : "");
 }
 
-/* After it: the button word back, and within a frame's travel of the
- * target the cursor on it. */
+/* After it: the button word back, and the cursor on the target. (Only
+ * within a frame's travel, it trailed fast mouse moves by most of a second:
+ * the game's cursor goes at most about 144 a frame, 20 frames a second.) */
 void pdo_pd1_cursor_after(uint32_t block)
 {
     if (!pd1_held)
@@ -527,7 +528,7 @@ void pdo_pd1_cursor_after(uint32_t block)
     for (int a = 0; a < 2; a++) {
         uint32_t at = block + (a ? 0xCu : 0xAu);
         float c = (float)(int16_t)MEM16(at), t = a ? pd1_ty : pd1_tx;
-        if (!pd1_push[a] && SDL_fabsf(t - c) <= PD1_STEP + 1.0f)
+        if (!pd1_push[a] && c != t)
             MEM16(at) = (uint16_t)(int16_t)t;
     }
 }

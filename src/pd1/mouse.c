@@ -4,7 +4,7 @@
  * block, +0 its mode, 0 in flight), runs as the game's, with the direction
  * bits set towards where the mouse wants the cursor for that call
  * (pdo_pd1_cursor_before) and the button word put back after it, the cursor
- * put on the target once within a frame's travel (pdo_pd1_cursor_after).
+ * put on the target after it (pdo_pd1_cursor_after).
  */
 
 #include <stdbool.h>
