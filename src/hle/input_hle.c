@@ -398,8 +398,9 @@ static void dual_stick(pad_state *s)
  * a target went the wrong way with Up/Down Reverse and other setups (which
  * only change the masks) and pinned the cursor at an edge.
  *
- * So the mouse sets where the cursor should be (Relative: 1 unit a count at
- * 100 %, about 2000 across, as Orta's aim; Lightgun: where the pointer is),
+ * So the mouse sets where the cursor should be (Relative: 0.4 units a count
+ * at 100 %: at 1 a quick move crossed the whole range in a frame and kept
+ * the cursor at the edges; Lightgun: where the pointer is),
  * and for pd1's cursor update only, the direction bits are set towards it
  * through the game's own masks (src/pd1/mouse.c calls pdo_pd1_cursor_before
  * and _after around the update, the button word put back after it): the
@@ -412,13 +413,17 @@ static void dual_stick(pad_state *s)
  * 16-70 % across and 8-80 % down. The mouse, which jumps the cursor there,
  * never built it ("can't reach the screen", the view and dragon wrong), so
  * after the update the lead goes towards the cursor's place at the game's
- * 30 a frame. Pushed on past the cursor's limit (or the pointer past
+ * 30 a frame (back towards the middle three times as fast). The mouse gone
+ * 100 past the cursor's limit (added up while it keeps pushing, not a
+ * slight overshoot) holds the direction. Pushed on past the cursor's limit (or the pointer past
  * it), the direction is held, as a stick held at the edge, while it keeps
  * going and a little after. Outside flight (pd1's menus) the mouse tilts
  * the stick as before; a controller's stick, the keys, Start or Back hand
  * the cursor back to them. */
 #define PD1_RANGE 1020.0f
 #define PD1_LEAD_STEP 30              /* the lead's travel a frame, direction held */
+#define PD1_UNITS 0.4f                /* cursor units a mouse count at 100 % */
+#define PD1_PUSH_PAST 100.0f          /* the mouse this far past the limit holds the direction */
 #define PD1_BUTTONS 0x00D24440u
 #define PD1_MASK_XP 0x00D246BCu
 #define PD1_MASK_XM 0x00D246C0u
@@ -439,11 +444,17 @@ static int pd1_push[2];                 /* -1, 0, 1: pushed past the limit */
 
 static void pd1_target(int a, float t, Uint64 now)
 {
-    if (t > PD1_RANGE || t < -PD1_RANGE) {
-        pd1_push[a] = t > 0.0f ? 1 : -1;
+    static float over[2];               /* how far past the limit the mouse has gone lately */
+    float past = t > PD1_RANGE ? t - PD1_RANGE : t < -PD1_RANGE ? t + PD1_RANGE : 0.0f;
+
+    if (past == 0.0f || (past > 0.0f) != (over[a] > 0.0f))
+        over[a] = 0.0f;
+    over[a] += past;
+    if (over[a] > PD1_PUSH_PAST || over[a] < -PD1_PUSH_PAST) {
+        pd1_push[a] = over[a] > 0.0f ? 1 : -1;
         pd1_push_until[a] = now + 150000000ull;
-        t = SDL_clamp(t, -PD1_RANGE, PD1_RANGE);
     }
+    t = SDL_clamp(t, -PD1_RANGE, PD1_RANGE);
     if (a)
         pd1_ty = t;
     else
@@ -485,8 +496,8 @@ static bool pd1_mouse(float dx, float dy, bool pointer, float gx, float gy, int 
             pd1_target(1, (gy / 480.0f - PD1_GUN_Y0) / PD1_GUN_YS * PD1_RANGE, now);
         }
     } else if (moved) {
-        pd1_target(0, pd1_tx - dx * speed, now);       /* the cursor's x grows to the left */
-        pd1_target(1, pd1_ty + dy * speed, now);
+        pd1_target(0, pd1_tx - dx * PD1_UNITS * speed, now);   /* the cursor's x grows to the left */
+        pd1_target(1, pd1_ty + dy * PD1_UNITS * speed, now);
     }
     return true;
 }
@@ -541,8 +552,13 @@ void pdo_pd1_cursor_after(uint32_t block)
             MEM16(at) = (uint16_t)(int16_t)t;
         /* the lead after the cursor's place, at the game's own 30 a frame
          * (pushed at the edge, the held direction drives it already) */
-        if (!pd1_push[a] && lead != to)
-            MEM16(lead_at) = (uint16_t)(int16_t)(lead + SDL_clamp(to - lead, -PD1_LEAD_STEP, PD1_LEAD_STEP));
+        if (!pd1_push[a] && lead != to) {
+            /* out from the middle at the game's pace, back three times as
+             * fast (it held the view at the bottom for a second and a half
+             * after the mouse had left it) */
+            int step = SDL_abs(to) < SDL_abs(lead) || (to < 0) != (lead < 0) ? 3 * PD1_LEAD_STEP : PD1_LEAD_STEP;
+            MEM16(lead_at) = (uint16_t)(int16_t)(lead + SDL_clamp(to - lead, -step, step));
+        }
     }
 }
 
