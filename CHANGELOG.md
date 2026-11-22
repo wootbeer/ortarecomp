@@ -9,6 +9,9 @@
   line.
 - **Lightgun aiming:** Controls > Mouse aim > Lightgun puts the reticle
   where the pointer is on the picture, for lightguns that act as a mouse.
+- **Dual-stick aiming:** Controls > Dual stk (off by default, or
+  `--dual-stick 1`). Left stick flies the dragon, right stick aims and
+  turns the view all the way round, RT shoots, LT changes the dragon.
 
 ### Fixed
 

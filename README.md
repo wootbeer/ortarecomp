@@ -39,7 +39,9 @@ Available for Windows, Linux / Steam Deck and Android (preview).
   the console; or a simple pan), the movies' own 5.1 soundtracks, the
   game's room reverb and a master volume.
 - **Controls:** controllers (with vibration), keyboard and mouse (with
-  mouse aim, or lightgun-style aiming at where the pointer is), touch
+  mouse aim, or lightgun-style aiming at where the pointer is), optional
+  dual-stick aiming (left stick flies, right stick aims and turns the view
+  all the way round), touch
   controls on Android, every button rebindable. Menus
   work with mouse and touch too.
 - **Three save files** (the original keeps one), picked in the launcher.
