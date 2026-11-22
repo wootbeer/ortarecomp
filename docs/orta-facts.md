@@ -504,14 +504,19 @@ downward, about 60 a frame at full tilt; at 0x00D49208 in a stage). The
 dragon follows it (0x00D49204, to about +-682, easing back to the middle),
 and 0x00D2446C ramps a turn rate to +-128. [0x00D24478] selects the control
 scheme.
-The stick does two things there: it moves the cursor, and held, it moves
-the dragon (0x00D49204) and ramps the turn (0x00D2446C) itself, at the
-cursor's limit too. Mouse aim written straight into the cursor lost the
-second (the dragon did not follow, the range felt cut short, and opened
-past +-1020 it left a dead zone where the game still clamped). Mouse aim
-therefore tilts the stick towards where the mouse wants the cursor and puts
-the cursor on that point once within a frame's travel (input_hle.c,
-src/pd1/mouse.c).
+0x0005EA44 moves the cursor from four direction bits of the button word
+[0x00D24440], tested through masks the controls set ([0x00D246BC] x+,
+[0x00D246C0] x-, [0x00D246C4] y+, [0x00D246C8] y-; Up/Down Reverse and
+other setups change only the masks): the block's +0x16/+0x18 count how long
+each way is held, +0x12 ramps by 3 to 60 and steps the cursor through a
+table at 0x00435968, the object's +0x17E/+0x17C (the dragon's lead) move
+by 30 to +-1020 with it, and with no direction held the cursor eases back
+to the middle. On screen the cursor's limits sat at about 16-70 % across
+and 8-80 % down (x +1020 left, y +1020 down; two captures). Mouse aim:
+written into the cursor, the dragon did not follow and the game pulled it
+back; a stick tilted towards a target went the wrong way with Up/Down
+Reverse and pinned the cursor; now the direction bits are set through the
+masks for that call (input_hle.c, src/pd1/mouse.c).
 
 ## Boost and brake ends
 

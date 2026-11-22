@@ -388,39 +388,68 @@ static void dual_stick(pad_state *s)
 #ifdef PDO_PROGRAM_PD1
 /* Mouse aim in pd1 (docs/orta-facts.md, pd1's input). Its cursor is two
  * 16-bit values in a cursor block (+0xA x, +0xC y; -1020..1020, x growing
- * to the left, y downward), moved by 0x0005EA44 about 60 a frame (20 frames
- * a second) while the stick is held; and the stick itself, not the cursor,
- * moves the dragon and turns the view (held at the edge, they keep going).
- * Written into the cursor, the mouse lost all of that (the dragon did not
- * follow, the range felt cut short); tilting the stick by the mouse's speed
- * kept it but was not precise. So the mouse sets where the cursor should be
- * (a target, 1 unit a count at 100 %, about 2000 counts across as Orta's
- * aim; Lightgun: where the pointer is, the cursor's range taken as the
- * picture's) and the stick is tilted towards it, by the distance over a
- * frame's travel: the game moves the cursor, the dragon and the view as
- * from a player's stick. Within a frame's travel the cursor is put on the
- * target after the game's update (src/pd1/mouse.c), so it lands where the
- * mouse is without overshooting. The mouse pushed on past the cursor's
- * limit holds the stick over that way, as a stick held at the edge, for as
- * long as it keeps going (and a little after). Outside flight (pd1's menus)
- * the mouse tilts the stick as before; a controller's stick, the keys,
- * Start or Back hand the cursor back to them. */
-static int16_t clamp16(int v);
+ * to the left on screen, y downward), moved by 0x0005EA44 from four
+ * direction bits of the button word [0x00D24440], tested through masks the
+ * controls set ([0x00D246BC] x+, [0x00D246C0] x-, [0x00D246C4] y+,
+ * [0x00D246C8] y-): its speed ramps by 3 a frame to 60 through a table, the
+ * same bits move the dragon there too, and with none held the cursor eases
+ * back to the middle. What tried before: written into the cursor, the
+ * dragon did not follow and the game pulled it back; a stick tilted towards
+ * a target went the wrong way with Up/Down Reverse and other setups (which
+ * only change the masks) and pinned the cursor at an edge.
+ *
+ * So the mouse sets where the cursor should be (Relative: 1 unit a count at
+ * 100 %, about 2000 across, as Orta's aim; Lightgun: where the pointer is),
+ * and for pd1's cursor update only, the direction bits are set towards it
+ * through the game's own masks (src/pd1/mouse.c calls pdo_pd1_cursor_before
+ * and _after around the update, the button word put back after it): the
+ * cursor moves, accelerates and leads the dragon as with a held stick, in
+ * whatever setup. Within a frame's travel the cursor is put on the target
+ * after the update. Pushed on past the cursor's limit (or the pointer past
+ * it), the direction is held, as a stick held at the edge, while it keeps
+ * going and a little after. Outside flight (pd1's menus) the mouse tilts
+ * the stick as before; a controller's stick, the keys, Start or Back hand
+ * the cursor back to them. */
 #define PD1_RANGE 1020.0f
-#define PD1_STEP 60.0f                  /* the cursor's travel a frame, stick held */
+#define PD1_STEP 60.0f                  /* the cursor's most travel a frame */
+#define PD1_BUTTONS 0x00D24440u
+#define PD1_MASK_XP 0x00D246BCu
+#define PD1_MASK_XM 0x00D246C0u
+#define PD1_MASK_YP 0x00D246C4u
+#define PD1_MASK_YM 0x00D246C8u
+/* Lightgun: where the cursor's limits showed on the picture (two captures,
+ * the owner's): x -1020 at 70 % across, +1020 at 16 %; y -1020 at 8 % down,
+ * +1020 at 80 %. */
+#define PD1_GUN_X0 0.43f
+#define PD1_GUN_XS 0.27f
+#define PD1_GUN_Y0 0.44f
+#define PD1_GUN_YS 0.36f
 static Uint64 pd1_live, pd1_push_until[2];
-static uint32_t pd1_block;
-static bool pd1_aiming;
+static uint32_t pd1_block, pd1_buttons;
+static bool pd1_aiming, pd1_held;
 static float pd1_tx, pd1_ty;            /* where the mouse wants the cursor */
 static int pd1_push[2];                 /* -1, 0, 1: pushed past the limit */
 
-static bool pd1_mouse(pad_state *s, float dx, float dy, bool pointer, float gx, float gy, int mode, bool reset)
+static void pd1_target(int a, float t, Uint64 now)
+{
+    if (t > PD1_RANGE || t < -PD1_RANGE) {
+        pd1_push[a] = t > 0.0f ? 1 : -1;
+        pd1_push_until[a] = now + 150000000ull;
+        t = SDL_clamp(t, -PD1_RANGE, PD1_RANGE);
+    }
+    if (a)
+        pd1_ty = t;
+    else
+        pd1_tx = t;
+}
+
+static bool pd1_mouse(float dx, float dy, bool pointer, float gx, float gy, int mode, bool reset)
 {
     static float last_gx = -1e9f, last_gy = -1e9f;
     Uint64 now = SDL_GetTicksNS();
     bool live = pd1_live && now - pd1_live < 250000000ull && pd1_block;
     bool moved = dx != 0.0f || dy != 0.0f;
-    float cx, cy, speed = (float)pdo_settings_get()->mouse_speed / 100.0f, fx, fy;
+    float speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
 
     if (!live || mode == PDO_MOUSE_OFF) {
         pd1_aiming = false;
@@ -435,58 +464,66 @@ static bool pd1_mouse(pad_state *s, float dx, float dy, bool pointer, float gx, 
         last_gx = gx;
         last_gy = gy;
     }
-    cx = (float)(int16_t)MEM16(pd1_block + 0xA);
-    cy = (float)(int16_t)MEM16(pd1_block + 0xC);
     if (!pd1_aiming) {
         if (!moved)
             return true;
         pd1_aiming = true;
-        pd1_tx = cx;
-        pd1_ty = cy;
+        pd1_tx = (float)(int16_t)MEM16(pd1_block + 0xA);
+        pd1_ty = (float)(int16_t)MEM16(pd1_block + 0xC);
         pd1_push[0] = pd1_push[1] = 0;
     }
     if (mode == PDO_MOUSE_LIGHTGUN) {
-        if (pointer && gx >= 0.0f && gy >= 0.0f && gx <= 640.0f && gy <= 480.0f) {
-            pd1_tx = (320.0f - gx) / 320.0f * PD1_RANGE;
-            pd1_ty = (gy - 240.0f) / 240.0f * PD1_RANGE;
+        if (pointer && moved) {
+            pd1_target(0, (PD1_GUN_X0 - gx / 640.0f) / PD1_GUN_XS * PD1_RANGE, now);
+            pd1_target(1, (gy / 480.0f - PD1_GUN_Y0) / PD1_GUN_YS * PD1_RANGE, now);
         }
-    } else {
-        float t[2] = { pd1_tx - dx * speed, pd1_ty + dy * speed };  /* x grows to the left */
-        for (int a = 0; a < 2; a++) {
-            if (t[a] > PD1_RANGE || t[a] < -PD1_RANGE) {
-                pd1_push[a] = t[a] > 0.0f ? 1 : -1;
-                pd1_push_until[a] = now + 150000000ull;
-                t[a] = SDL_clamp(t[a], -PD1_RANGE, PD1_RANGE);
-            }
-        }
-        pd1_tx = t[0];
-        pd1_ty = t[1];
+    } else if (moved) {
+        pd1_target(0, pd1_tx - dx * speed, now);       /* the cursor's x grows to the left */
+        pd1_target(1, pd1_ty + dy * speed, now);
     }
-    for (int a = 0; a < 2; a++) {
-        float d = a ? pd1_ty - cy : pd1_tx - cx;
-        if (pd1_push[a] && (now > pd1_push_until[a] || (d != 0.0f && (d > 0.0f) != (pd1_push[a] > 0))))
-            pd1_push[a] = 0;            /* stopped pushing, or turned back */
-    }
-    fx = pd1_push[0] ? (float)pd1_push[0] : SDL_clamp((pd1_tx - cx) / PD1_STEP, -1.0f, 1.0f);
-    fy = pd1_push[1] ? (float)pd1_push[1] : SDL_clamp((pd1_ty - cy) / PD1_STEP, -1.0f, 1.0f);
-    /* the stick left raises x, up lowers y */
-    s->thumb[0] = clamp16((int)(-fx * 32767.0f));
-    s->thumb[1] = clamp16((int)(-fy * 32767.0f));
-    if (SDL_getenv("PDO_PD1_TRACE"))
-        SDL_Log("pd1 mouse: motion %+.0f %+.0f target %.0f %.0f cursor %.0f %.0f stick %+.2f %+.2f%s%s", dx, dy,
-                pd1_tx, pd1_ty, cx, cy, -fx, -fy, pd1_push[0] ? " (x held at the edge)" : "",
-                pd1_push[1] ? " (y held at the edge)" : "");
     return true;
 }
 
-/* After pd1's cursor update (src/pd1/mouse.c), in flight: within a frame's
- * travel of the target, the cursor is put on it. */
-void pdo_pd1_cursor(uint32_t block)
+/* Before pd1's cursor update, in flight: the direction bits towards the
+ * target, through the game's masks (the button word kept, to put back). */
+void pdo_pd1_cursor_before(uint32_t block)
 {
-    pd1_live = SDL_GetTicksNS();
+    Uint64 now = SDL_GetTicksNS();
+    uint32_t masks[4] = { MEM32(PD1_MASK_XP), MEM32(PD1_MASK_XM), MEM32(PD1_MASK_YP), MEM32(PD1_MASK_YM) };
+    uint32_t b;
+
+    pd1_live = now;
     pd1_block = block;
+    pd1_held = false;
     if (!pd1_aiming)
         return;
+    pd1_buttons = MEM32(PD1_BUTTONS);
+    b = pd1_buttons & ~(masks[0] | masks[1] | masks[2] | masks[3]);
+    for (int a = 0; a < 2; a++) {
+        float c = (float)(int16_t)MEM16(block + (a ? 0xCu : 0xAu)), d = (a ? pd1_ty : pd1_tx) - c;
+        int dir;
+        if (pd1_push[a] && (now > pd1_push_until[a] || (d != 0.0f && (d > 0.0f) != (pd1_push[a] > 0))))
+            pd1_push[a] = 0;            /* stopped pushing, or turned back */
+        dir = pd1_push[a] ? pd1_push[a] : d > 2.0f ? 1 : d < -2.0f ? -1 : 0;
+        if (dir)
+            b |= masks[2 * a + (dir > 0 ? 0 : 1)];
+    }
+    MEM32(PD1_BUTTONS) = b;
+    pd1_held = true;
+    if (SDL_getenv("PDO_PD1_TRACE"))
+        SDL_Log("pd1 mouse: target %.0f %.0f cursor %d %d buttons %08x -> %08x%s%s", pd1_tx, pd1_ty,
+                (int16_t)MEM16(block + 0xA), (int16_t)MEM16(block + 0xC), pd1_buttons, b,
+                pd1_push[0] ? " (x held at the edge)" : "", pd1_push[1] ? " (y held at the edge)" : "");
+}
+
+/* After it: the button word back, and within a frame's travel of the
+ * target the cursor on it. */
+void pdo_pd1_cursor_after(uint32_t block)
+{
+    if (!pd1_held)
+        return;
+    MEM32(PD1_BUTTONS) = pd1_buttons;
+    pd1_held = false;
     for (int a = 0; a < 2; a++) {
         uint32_t at = block + (a ? 0xCu : 0xAu);
         float c = (float)(int16_t)MEM16(at), t = a ? pd1_ty : pd1_tx;
@@ -677,9 +714,9 @@ static void read_port(int port, pad_state *s)
 
             pdo_mouse_take(&dx, &dy);
 #ifdef PDO_PROGRAM_PD1
-            if (pd1_mouse(s, dx, dy, pointer, gx, gy, mode,
+            if (pd1_mouse(dx, dy, pointer, gx, gy, mode,
                           stick || lx || ly || (s->buttons & (XB_START | XB_BACK)) != 0))
-                dx = dy = 0.0f;                 /* the stick is set for pd1's cursor */
+                dx = dy = 0.0f;                 /* to pd1's cursor (pdo_pd1_cursor_before), not the stick */
 #endif
             if (!play || stick || lx || ly || (s->buttons & (XB_START | XB_BACK))) {
                 aiming = false;
