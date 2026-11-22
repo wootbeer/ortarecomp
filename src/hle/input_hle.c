@@ -441,9 +441,15 @@ static bool pd1_mouse_input(float dx, float dy, bool pointer, float gx, float gy
  * the frame's delay or the game's slow pull back to the middle. */
 bool pdo_pd1_cursor(uint32_t block, int16_t *cx, int16_t *cy)
 {
-    const float UNITS_PER_COUNT = 1.0f, RANGE = 1020.0f;
+    /* range: past the game's own +-1020, which held the mouse's cursor short
+     * of the picture's edges ("its range is limited"); the update after
+     * the game's clamp keeps it. PDO_PD1_RANGE overrides it, to try. */
+    const float UNITS_PER_COUNT = 1.0f;
+    float range = SDL_getenv("PDO_PD1_RANGE") ? (float)SDL_atoi(SDL_getenv("PDO_PD1_RANGE")) : 1530.0f;
     float x, y, speed = (float)pdo_settings_get()->mouse_speed / 100.0f;
 
+    if (!(range >= 500.0f && range <= 4000.0f))
+        range = 1530.0f;
     pd1_live = SDL_GetTicksNS();
     pd1_block = block;
     if (SDL_getenv("PDO_PD1_TRACE"))
@@ -457,16 +463,16 @@ bool pdo_pd1_cursor(uint32_t block, int16_t *cx, int16_t *cy)
     y = (float)(int16_t)MEM16(block + 0xC);
     if (pd1_mode == PDO_MOUSE_LIGHTGUN) {
         if (pd1_pointer && pd1_gx >= 0.0f && pd1_gy >= 0.0f && pd1_gx <= 640.0f && pd1_gy <= 480.0f) {
-            x = (320.0f - pd1_gx) / 320.0f * RANGE;
-            y = (pd1_gy - 240.0f) / 240.0f * RANGE;
+            x = (320.0f - pd1_gx) / 320.0f * range;
+            y = (pd1_gy - 240.0f) / 240.0f * range;
         }
     } else {
         x -= pd1_dx * UNITS_PER_COUNT * speed;  /* the cursor's x grows to the left */
         y += pd1_dy * UNITS_PER_COUNT * speed;
     }
     pd1_dx = pd1_dy = 0.0f;
-    *cx = (int16_t)SDL_clamp(x, -RANGE, RANGE);
-    *cy = (int16_t)SDL_clamp(y, -RANGE, RANGE);
+    *cx = (int16_t)SDL_clamp(x, -range, range);
+    *cy = (int16_t)SDL_clamp(y, -range, range);
     return true;
 }
 
