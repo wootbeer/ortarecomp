@@ -125,7 +125,7 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    Dual-stick aiming: Controls > Dual stk (`dual_stick`, off by default).
    Right stick turns the aim (input_hle.c dual_stick()), the camera's
    angles are put on it, the quarter's yaw clamp and the left stick's aim
-   bits are off for the aim update (src/guest/mouse_aim.c), RT is A, LT is X.
+   bits are off for the aim update (src/guest/mouse_aim.c), RT is A, LT is Y (the dragon's form).
    Being tested: feel, speeds, L's quarter turn, lock-on.
 
 ## Testing
