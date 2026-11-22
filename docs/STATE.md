@@ -122,11 +122,13 @@ offsets and the nearest game function (`sub_XXXXXXXX`), no symbols needed.
    recognised now (its hash in `src/xbe.c`, `tools/recomp.py`); PAL is a
    different XBE, so its own recompile, addresses and hooks. Asked for by
    a player; the owner has the ISO.
-   Dual-stick aiming: Controls > Dual stk (`dual_stick`, off by default).
-   Right stick turns the aim (input_hle.c dual_stick()), the camera's
-   angles are put on it, the quarter's yaw clamp and the left stick's aim
-   bits are off for the aim update (src/guest/mouse_aim.c), RT is A, LT is Y (the dragon's form).
-   Being tested: feel, speeds, L's quarter turn, lock-on.
+   Dual-stick aiming (experimental, v0.1.16): Controls > Dual stk.
+   Right stick turns the aim (input_hle.c dual_stick()); the camera's
+   angles are put on it, its yaw lean off, the quarter's yaw clamp
+   widened after its springs and the left stick's aim bits off for the
+   aim update (src/guest/mouse_aim.c); RT is A, LT is Y.
+   pd1 mouse aim: tried and not kept; what was learnt is in
+   docs/orta-facts.md (pd1's input). pd1's mouse tilts the stick.
 
 ## Testing
 

@@ -22,6 +22,7 @@
   shooter: precise, no drift or float, and smooth (issue 51).
 - A white dot left where a main-menu entry was selected (the game's own
   speck of a draw, about a pixel; at higher resolutions it showed).
+- A rare crash when a stage starts with frame interpolation on.
 
 ## v0.1.15 (beta)
 

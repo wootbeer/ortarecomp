@@ -512,17 +512,17 @@ each way is held, +0x12 ramps by 3 to 60 and steps the cursor through a
 table at 0x00435968, the object's +0x17E/+0x17C (the dragon's lead) move
 by 30 to +-1020 with it, and with no direction held the cursor eases back
 to the middle. On screen the cursor's limits sat at about 16-70 % across
-and 8-80 % down (x +1020 left, y +1020 down; two captures). Mouse aim:
-written into the cursor, the dragon did not follow and the game pulled it
-back; a stick tilted towards a target went the wrong way with Up/Down
-Reverse and pinned the cursor; now the direction bits are set through the
-masks for that call, the cursor put on the target after it, and the lead
-moved after the cursor's place: that kept fighting the view, made for a
-held direction ("the whole thing" felt wrong). Mouse aim now only holds
-the directions, a frame at a time, as a stick would: a direction the mouse
-moved a few counts in since the last frame is held, once more as it slows
-(input_hle.c, src/pd1/mouse.c). With none held the cursor eases back by 3
-a frame and the lead is left.
+and 8-80 % down (x +1020 left, y +1020 down; two captures). With none held
+the cursor eases back by 3 a frame and the lead is left.
+
+Mouse aim on that cursor was tried several ways and not kept (pd1's mouse
+still tilts the stick): written into the cursor, the dragon did not follow
+and the game pulled it back; a stick tilted towards a target went the wrong
+way with Up/Down Reverse; the direction bits set through the masks, the
+cursor placed and its lead moved after it, fought the view; holding the
+bits a frame at a time from the mouse's motion went at a slant, and shared
+between the axes lost left and right. A held direction is what pd1's view
+is built on; a later try should start from there.
 
 ## Boost and brake ends
 
