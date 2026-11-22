@@ -5069,6 +5069,17 @@ bool pdo_gfx_pump_events(void)
         else if (!hide && !want && !SDL_CursorVisible())
             SDL_ShowCursor();
         pdo_mouse_set_captured(held);
+        {   /* when the game takes or gives back the mouse, and why */
+            static int was = -1;
+            if (was != (int)held) {
+                was = held;
+                SDL_Log("mouse: %s%s%s%s%s", held ? "held by the game" : "not held",
+                        held ? "" : mode == PDO_MOUSE_OFF ? " (mouse aim off)" : "",
+                        held || mode == PDO_MOUSE_OFF ? "" : mouse_released ? " (Escape gave it back; a click takes it)" : "",
+                        held || mode == PDO_MOUSE_OFF || mouse_released ? "" : pdo_overlay_open() ? " (the menu is open)" : "",
+                        held || mode == PDO_MOUSE_OFF || mouse_released || pdo_overlay_open() ? "" : " (the window is not in front)");
+            }
+        }
     }
     return keep_going;
 }

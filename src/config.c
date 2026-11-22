@@ -557,11 +557,14 @@ void pdo_settings_log(void)
     char line[512];
     const pdo_settings *s = pdo_settings_get();
     snprintf(line, sizeof line, "%gx, msaa %d, fxaa %d, anisotropy %d, bloom %d, frame interp %d, vertex programs on %s, "
-             "fixed function on %s, aspect %s%s, frame rate %d, save file %d", s->render_scale2 / 2.0, s->msaa, s->fxaa,
+             "fixed function on %s, aspect %s%s, frame rate %d, save file %d, mouse aim %s %d%%%s",
+             s->render_scale2 / 2.0, s->msaa, s->fxaa,
              s->anisotropy, s->bloom, s->frame_interp, s->gpu_vertex ? "GPU" : "CPU", s->gpu_fixed ? "GPU" : "CPU",
              s->aspect == PDO_ASPECT_16_9 ? "16:9" : s->aspect == PDO_ASPECT_21_9 ? "21:9" : "4:3",
              s->aspect == PDO_ASPECT_21_9 ? (s->hud_edges ? " (HUD edges)" : " (HUD centered)") : "",
-             s->fps30 ? 30 : 60, s->save_slot);
+             s->fps30 ? 30 : 60, s->save_slot,
+             s->mouse_aim == PDO_MOUSE_OFF ? "off" : s->mouse_aim == PDO_MOUSE_LIGHTGUN ? "lightgun" : "relative",
+             s->mouse_speed, s->dual_stick ? ", dual-stick" : "");
     if (strcmp(line, last)) {
         SDL_Log("settings%s: %s", last[0] ? " changed" : "", line);
         SDL_strlcpy(last, line, sizeof last);
