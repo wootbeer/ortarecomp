@@ -663,6 +663,18 @@ static void read_port(int port, pad_state *s)
         dual_stick(s);
 #ifdef PDO_PROGRAM_PD1
         pd1_search(s);
+        if (SDL_getenv("PDO_PD1_WATCH")) {
+            /* PDO_PD1_WATCH=1: the search's best, 10 times a second */
+            static Uint64 last;
+            if (SDL_GetTicksNS() - last > 100000000ull) {
+                last = SDL_GetTicksNS();
+                SDL_Log("pd1 watch: stick %+6d %+6d | D49204 %6d %6d | D49208 %6d %6d | D491A0 %6d | "
+                        "D2446C %6d %6d | D254BA %6d D254C2 %6d", s->thumb[0], s->thumb[1],
+                        (int16_t)MEM16(0x00D49204u), (int16_t)MEM16(0x00D49206u), (int16_t)MEM16(0x00D49208u),
+                        (int16_t)MEM16(0x00D4920Au), (int16_t)MEM16(0x00D491A0u), (int16_t)MEM16(0x00D2446Cu),
+                        (int16_t)MEM16(0x00D24470u), (int16_t)MEM16(0x00D254BAu), (int16_t)MEM16(0x00D254C2u));
+            }
+        }
 #endif
         apply_script(s);
     }
